@@ -53,7 +53,8 @@ data class Ban(val until: Long = 0L, val days: Int = 0, val reason: String = "")
 /** مدة القصة: 24 ساعة بالضبط من لحظة النشر */
 const val STORY_MS = 24L * 60 * 60 * 1000
 
-data class Story(val text: String, val color: Int, val image: String, val createdAt: Long) {
+/** bg = رقم خلفية القصة (تدرج) من قائمة StoryBgs بالواجهة. القصص القديمة بدون الحقل تطلع 0 */
+data class Story(val text: String, val color: Int, val image: String, val createdAt: Long, val bg: Int = 0) {
     val expiresAt: Long get() = createdAt + STORY_MS
 }
 
@@ -379,7 +380,8 @@ object Repo {
                         text = it["text"] as? String ?: "",
                         color = (it["color"] as? Number)?.toInt() ?: -1,
                         image = it["image"] as? String ?: "",
-                        createdAt = (it["createdAt"] as? Number)?.toLong() ?: 0L
+                        createdAt = (it["createdAt"] as? Number)?.toLong() ?: 0L,
+                        bg = (it["bg"] as? Number)?.toInt() ?: 0
                     )
                 }
                 trySend(
@@ -464,10 +466,10 @@ object Repo {
         ).await()
     }
 
-    suspend fun saveStory(text: String, color: Int, image: String, createdAt: Long) {
+    suspend fun saveStory(text: String, color: Int, image: String, createdAt: Long, bg: Int = 0) {
         val u = auth.currentUser ?: return
         db.collection("profiles").document(u.uid).set(
-            mapOf("story" to mapOf("text" to text, "color" to color, "image" to image, "createdAt" to createdAt)),
+            mapOf("story" to mapOf("text" to text, "color" to color, "image" to image, "createdAt" to createdAt, "bg" to bg)),
             SetOptions.mergeFields("story")
         ).await()
     }
