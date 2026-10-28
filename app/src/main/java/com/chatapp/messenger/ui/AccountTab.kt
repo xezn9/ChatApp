@@ -144,6 +144,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import com.chatapp.messenger.Profile
 import com.chatapp.messenger.Repo
 import com.chatapp.messenger.Story
+import com.chatapp.messenger.STORY_MS
 import com.chatapp.messenger.ui.glass.GlassButton
 import com.chatapp.messenger.ui.theme.appBackground
 import com.kyant.backdrop.Backdrop
