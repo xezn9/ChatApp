@@ -617,7 +617,7 @@ internal fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
                         Box(
                             Modifier.fillMaxHeight().aspectRatio(9f / 16f, matchHeightConstraintsFirst = true)
                                 .clip(cardShape)
-                                .background(if (image != null) Color.Black else storyBgBrush(0))
+                                .background(if (image != null) Brush.verticalGradient(listOf(Color.Black, Color.Black)) else storyBgBrush(0))
                                 .border(
                                     0.9.dp,
                                     Brush.verticalGradient(listOf(Color.White.copy(0.55f), Color.White.copy(0.08f))),
