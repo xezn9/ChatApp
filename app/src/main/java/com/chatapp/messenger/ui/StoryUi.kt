@@ -94,6 +94,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.PointMode
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
@@ -117,6 +118,9 @@ import com.chatapp.messenger.Profile
 import com.chatapp.messenger.Repo
 import com.chatapp.messenger.STORY_MS
 import com.chatapp.messenger.Story
+import com.chatapp.messenger.Status
+import com.kyant.backdrop.Backdrop
+import androidx.compose.ui.unit.Dp
 import com.chatapp.messenger.ui.glass.GlassButton
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
@@ -194,7 +198,9 @@ private fun cm(
     return ColorMatrix(v)
 }
 
-internal val FilterCats = listOf("الرائج", "صورة شخصية", "منظر طبيعي", "طعام", "ليل", "أبيض وأسود")
+internal val FilterCats = listOf(
+    "الرائج", "صورة شخصية", "منظر طبيعي", "طعام", "Life", "كلاسيكي", "Limit", "أبيض وأسود"
+)
 
 internal val StoryFilters: List<StoryFilter> = listOf(
     // الرائج
@@ -203,8 +209,6 @@ internal val StoryFilters: List<StoryFilter> = listOf(
     StoryFilter("sunrise", "شروق الشمس", "الرائج", cm(sat = 1.15f, con = 1.02f, bri = 0.04f, r = 1.14f, g = 1.0f, b = 0.86f)),
     StoryFilter("bookstore", "Bookstore", "الرائج", cm(sat = 0.78f, con = 1.1f, bri = 0.0f, r = 1.08f, g = 1.0f, b = 0.88f)),
     StoryFilter("hawaii", "Hawaii", "الرائج", cm(sat = 1.4f, con = 1.05f, bri = 0.02f, r = 1.04f, g = 1.03f, b = 1.1f)),
-    StoryFilter("vintage", "Vintage", "الرائج", cm(sat = 0.7f, con = 0.92f, bri = 0.06f, r = 1.1f, g = 1.02f, b = 0.82f)),
-    StoryFilter("film", "Film", "الرائج", cm(sat = 0.9f, con = 1.22f, bri = -0.02f, r = 1.04f, g = 1.0f, b = 0.94f)),
     StoryFilter("dreamy", "حالم", "الرائج", cm(sat = 1.1f, con = 0.88f, bri = 0.09f, r = 1.06f, g = 0.98f, b = 1.08f)),
     StoryFilter("cool", "Cool", "الرائج", cm(sat = 1.05f, con = 1.08f, bri = 0.0f, r = 0.9f, g = 1.0f, b = 1.14f)),
     // صورة شخصية
@@ -232,17 +236,50 @@ internal val StoryFilters: List<StoryFilter> = listOf(
     StoryFilter("sweet", "Sweet", "طعام", cm(sat = 1.25f, con = 0.98f, bri = 0.07f, r = 1.08f, g = 0.98f, b = 1.04f)),
     StoryFilter("rich", "Rich", "طعام", cm(sat = 1.35f, con = 1.25f, bri = -0.03f, r = 1.05f, g = 1.0f, b = 0.92f)),
     StoryFilter("cafe", "Cafe", "طعام", cm(sat = 0.8f, con = 1.1f, bri = 0.0f, r = 1.1f, g = 1.0f, b = 0.8f)),
-    // ليل
-    StoryFilter("neon", "Neon", "ليل", cm(sat = 1.6f, con = 1.22f, bri = -0.03f, r = 1.0f, g = 0.95f, b = 1.15f)),
-    StoryFilter("midnight", "Midnight", "ليل", cm(sat = 1.1f, con = 1.18f, bri = -0.06f, r = 0.86f, g = 0.94f, b = 1.2f)),
-    StoryFilter("moody", "Moody", "ليل", cm(sat = 0.85f, con = 1.25f, bri = -0.07f, r = 0.96f, g = 1.0f, b = 1.06f)),
-    StoryFilter("city", "City", "ليل", cm(sat = 1.2f, con = 1.2f, bri = -0.02f, r = 1.04f, g = 0.96f, b = 1.1f)),
+    // Life
+    StoryFilter("daylight", "Daylight", "Life", cm(sat = 1.15f, con = 1.05f, bri = 0.04f)),
+    StoryFilter("pastel", "Pastel", "Life", cm(sat = 0.8f, con = 0.9f, bri = 0.1f, r = 1.04f, g = 1.0f, b = 1.04f)),
+    StoryFilter("chill", "Chill", "Life", cm(sat = 0.9f, con = 1.0f, bri = 0.02f, r = 0.95f, g = 1.0f, b = 1.08f)),
+    StoryFilter("sunday", "Sunday", "Life", cm(sat = 1.05f, con = 0.95f, bri = 0.06f, r = 1.08f, g = 1.02f, b = 0.9f)),
+    StoryFilter("neon", "Neon", "Life", cm(sat = 1.6f, con = 1.22f, bri = -0.03f, r = 1.0f, g = 0.95f, b = 1.15f)),
+    StoryFilter("midnight", "Midnight", "Life", cm(sat = 1.1f, con = 1.18f, bri = -0.06f, r = 0.86f, g = 0.94f, b = 1.2f)),
+    StoryFilter("moody", "Moody", "Life", cm(sat = 0.85f, con = 1.25f, bri = -0.07f, r = 0.96f, g = 1.0f, b = 1.06f)),
+    StoryFilter("city", "City", "Life", cm(sat = 1.2f, con = 1.2f, bri = -0.02f, r = 1.04f, g = 0.96f, b = 1.1f)),
+    // كلاسيكي
+    StoryFilter("vintage", "Vintage", "كلاسيكي", cm(sat = 0.7f, con = 0.92f, bri = 0.06f, r = 1.1f, g = 1.02f, b = 0.82f)),
+    StoryFilter("film", "Film", "كلاسيكي", cm(sat = 0.9f, con = 1.22f, bri = -0.02f, r = 1.04f, g = 1.0f, b = 0.94f)),
+    StoryFilter("polaroid", "Polaroid", "كلاسيكي", cm(sat = 0.85f, con = 0.9f, bri = 0.08f, r = 1.08f, g = 1.0f, b = 0.9f)),
+    StoryFilter("retro", "Retro", "كلاسيكي", cm(sat = 1.1f, con = 1.1f, bri = 0.0f, r = 1.1f, g = 0.96f, b = 0.85f)),
+    StoryFilter("sepia", "Sepia", "كلاسيكي", cm(sat = 0.3f, con = 1.05f, bri = 0.02f, r = 1.22f, g = 1.0f, b = 0.7f)),
+    StoryFilter("kodak", "Kodak", "كلاسيكي", cm(sat = 1.2f, con = 1.12f, bri = 0.0f, r = 1.08f, g = 1.0f, b = 0.88f)),
+    // Limit (حسب الترتيب بتيك توك)
+    StoryFilter("gothic", "Gothic", "Limit", cm(sat = 0.75f, con = 0.95f, bri = 0.07f, r = 0.94f, g = 1.0f, b = 1.08f)),
+    StoryFilter("nokia", "Nokia", "Limit", cm(sat = 0.9f, con = 1.05f, bri = 0.0f, r = 0.9f, g = 0.97f, b = 1.18f)),
+    StoryFilter("steel", "Steel", "Limit", cm(sat = 0.6f, con = 1.1f, bri = -0.02f, r = 0.88f, g = 0.98f, b = 1.12f)),
+    StoryFilter("gotham", "Gotham", "Limit", cm(sat = 0.55f, con = 1.3f, bri = -0.08f, r = 0.9f, g = 0.98f, b = 1.1f)),
+    StoryFilter("exposure", "Exposure", "Limit", cm(sat = 1.3f, con = 1.2f, bri = 0.08f, r = 1.05f, g = 1.0f, b = 0.95f)),
+    StoryFilter("hawkeye", "Hawkeye", "Limit", cm(sat = 1.15f, con = 1.2f, bri = 0.0f, r = 0.95f, g = 1.02f, b = 1.08f)),
+    StoryFilter("ice", "Ice", "Limit", cm(sat = 0.8f, con = 1.05f, bri = 0.08f, r = 0.88f, g = 1.02f, b = 1.15f)),
+    StoryFilter("dusk", "Dusk", "Limit", cm(sat = 1.2f, con = 1.15f, bri = -0.04f, r = 1.1f, g = 0.92f, b = 1.1f)),
     // أبيض وأسود
     StoryFilter("bw", "B&W", "أبيض وأسود", cm(sat = 0f, con = 1.05f)),
     StoryFilter("noir", "Noir", "أبيض وأسود", cm(sat = 0f, con = 1.45f, bri = -0.03f)),
     StoryFilter("silver", "Silver", "أبيض وأسود", cm(sat = 0f, con = 0.92f, bri = 0.06f)),
     StoryFilter("fadedbw", "Faded", "أبيض وأسود", cm(sat = 0f, con = 0.8f, bri = 0.1f))
 )
+
+/** حبيبات (Grain) فوق الصورة لفلتر Nokia */
+internal fun Modifier.storyGrain(filterId: String): Modifier =
+    if (filterId != "nokia") this else this.drawWithContent {
+        drawContent()
+        val rnd = kotlin.random.Random(7)
+        val w = size.width
+        val h = size.height
+        val light = List(1200) { Offset(rnd.nextFloat() * w, rnd.nextFloat() * h) }
+        val darkPts = List(1200) { Offset(rnd.nextFloat() * w, rnd.nextFloat() * h) }
+        drawPoints(light, PointMode.Points, Color.White.copy(0.22f), 2.5f)
+        drawPoints(darkPts, PointMode.Points, Color.Black.copy(0.22f), 2.5f)
+    }
 
 internal fun storyFilterById(id: String): StoryFilter? = StoryFilters.firstOrNull { it.id == id }
 
@@ -409,21 +446,6 @@ internal fun MusicPill(title: String, artist: String, cover: String, modifier: M
 
 // ======================= محرر القصة =======================
 
-/** دائرة اختيار (لون نص أو خلفية) */
-@Composable
-private fun StorySwatch(selected: Boolean, brush: Brush, onClick: () -> Unit) {
-    val sc by animateFloatAsState(if (selected) 1.14f else 1f, spring(0.6f, 400f), label = "swatch")
-    Box(
-        Modifier.size(38.dp).graphicsLayer { scaleX = sc; scaleY = sc }
-            .clip(CircleShape).background(brush)
-            .border(
-                if (selected) BorderStroke(3.dp, AccentBlue) else BorderStroke(1.dp, Color.White.copy(0.35f)),
-                CircleShape
-            )
-            .clickable(onClick = onClick)
-    )
-}
-
 @Composable
 private fun StoryTabPill(label: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val fg = MaterialTheme.colorScheme.onBackground
@@ -448,34 +470,37 @@ private val FilterSampleBrush = Brush.linearGradient(
 /** دائرة فلتر مع اسمه (الصورة مطبّق عليها الفلتر، أو عينة ألوان إذا ما فيه صورة) */
 @Composable
 private fun FilterThumb(name: String, filter: StoryFilter?, image: ImageBitmap?, selected: Boolean, onClick: () -> Unit) {
-    val fg = MaterialTheme.colorScheme.onBackground
     val cf = filter?.let { ColorFilter.colorMatrix(it.matrix) }
     Column(
-        Modifier.width(72.dp).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick),
+        Modifier.width(76.dp).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick),
         horizontalAlignment = CenterHorizontally
     ) {
         Box(
-            Modifier.size(62.dp).clip(CircleShape)
-                .border(if (selected) BorderStroke(3.dp, AccentBlue) else BorderStroke(1.dp, Color.White.copy(0.3f)), CircleShape)
+            Modifier.size(64.dp).clip(CircleShape)
+                .border(if (selected) BorderStroke(3.dp, Color.White) else BorderStroke(1.dp, Color.White.copy(0.25f)), CircleShape)
         ) {
             if (image != null) {
-                Image(image, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, colorFilter = cf)
+                Image(
+                    image, null, Modifier.fillMaxSize().storyGrain(filter?.id ?: ""),
+                    contentScale = ContentScale.Crop, colorFilter = cf
+                )
             } else {
                 Box(Modifier.fillMaxSize().drawBehind { drawRect(FilterSampleBrush, colorFilter = cf) })
             }
         }
         Spacer(Modifier.height(5.dp))
         Text(
-            name, fontSize = 11.sp, color = if (selected) AccentBlue else fg.copy(0.85f),
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            name, fontSize = 12.sp, color = MaterialTheme.colorScheme.onBackground.copy(if (selected) 1f else 0.8f),
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
             maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center
         )
     }
 }
 
 /**
- * شاشة نشر القصة (مثل تيك توك):
- * نص فقط، أو صورة بدون نص، أو الاثنين، + فلاتر للصورة + أغنية (حد أقصى 15 ثانية) + خلفيات وألوان نص.
+ * شاشة نشر القصة (مثل تيك توك): القصة = صورة فقط (بدون نص) + فلاتر + صوت أغنية (15 ثانية كحد أقصى).
+ * النص صار "حالة" لحاله فوق صورة الملف الشخصي (StatusBubble).
+ * الأغنية صوت فقط: ما يطلع غلافها ولا اسمها على الصورة.
  */
 @Composable
 internal fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
@@ -485,17 +510,13 @@ internal fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
     val fg = MaterialTheme.colorScheme.onBackground
     val player = rememberStoryPlayer()
 
-    var text by remember { mutableStateOf(existing?.text ?: "") }
-    var color by remember { mutableStateOf(existing?.let { Color(it.color) } ?: Color.White) }
-    var bg by remember { mutableStateOf(existing?.bg ?: 0) }
     var imageB64 by remember { mutableStateOf(existing?.image ?: "") }
     var filterId by remember { mutableStateOf(existing?.filter ?: "") }
     var musicUrl by remember { mutableStateOf(existing?.musicUrl ?: "") }
     var musicTitle by remember { mutableStateOf(existing?.musicTitle ?: "") }
     var musicArtist by remember { mutableStateOf(existing?.musicArtist ?: "") }
-    var musicCover by remember { mutableStateOf(existing?.musicCover ?: "") }
     var startF by remember { mutableStateOf((existing?.musicStart ?: 0).toFloat()) }
-    var tab by remember { mutableStateOf(0) }
+    var tab by remember { mutableStateOf(if (existing == null) 0 else 1) }
     var filterCat by remember { mutableStateOf(storyFilterById(existing?.filter ?: "")?.cat ?: FilterCats[0]) }
     var busy by remember { mutableStateOf(false) }
 
@@ -518,23 +539,22 @@ internal fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
         }
     }
     LaunchedEffect(tab) {
-        if (tab == 3 && results.isEmpty() && !loading) loadMusic(null)
+        if (tab == 2 && results.isEmpty() && !loading) loadMusic(null)
     }
 
-    val pickImage = rememberImagePicker(maxSide = 1000, quality = 70) { imageB64 = it }
+    val pickImage = rememberImagePicker(maxSide = 1200, quality = 70) { imageB64 = it }
     val image = rememberB64Image(imageB64)
-    val focus = remember { FocusRequester() }
-    val canPublish = !busy && (text.isNotBlank() || imageB64.isNotEmpty())
+    val canPublish = !busy && imageB64.isNotEmpty()
 
-    // القصة الجديدة: الكيبورد يطلع تلقائياً بعد ما تخلص حركة الفتح
+    // القصة الجديدة: معرض الصور يفتح تلقائياً بعد ما تخلص حركة الفتح
     LaunchedEffect(Unit) {
         if (existing == null) {
             delay(450)
-            runCatching { focus.requestFocus() }
+            pickImage()
         }
     }
 
-    BackHandler(onBack = onDismiss)
+    BackHandler(onBack = { player.stop(); onDismiss() })
     Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { } }) {
         LiquidScene(banner = null) { bd ->
             Column(
@@ -563,11 +583,11 @@ internal fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
                                         // كل نشر (جديد أو تعديل) يبدأ مدة 24 ساعة من الآن
                                         Repo.saveStory(
                                             Story(
-                                                text = text.trim(), color = color.toArgb(), image = imageB64,
-                                                createdAt = System.currentTimeMillis(), bg = bg,
-                                                filter = if (imageB64.isNotEmpty()) filterId else "",
+                                                text = "", color = -1, image = imageB64,
+                                                createdAt = System.currentTimeMillis(), bg = 0,
+                                                filter = filterId,
                                                 musicUrl = musicUrl, musicTitle = musicTitle, musicArtist = musicArtist,
-                                                musicCover = musicCover, musicStart = startF.toInt()
+                                                musicCover = "", musicStart = startF.toInt()
                                             )
                                         )
                                         player.stop()
@@ -588,69 +608,42 @@ internal fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
                     }
                 }
 
-                // بطاقة القصة (9:16): الكتابة تصير مباشرة عليها
+                // بطاقة القصة (9:16): الصورة بفلترها
                 StaggerIn(1, Modifier.weight(1f).fillMaxWidth().padding(vertical = 12.dp)) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         val cardShape = RoundedCornerShape(34.dp)
                         Box(
                             Modifier.fillMaxHeight().aspectRatio(9f / 16f, matchHeightConstraintsFirst = true)
                                 .clip(cardShape)
-                                .background(storyBgBrush(bg))
+                                .background(storyBgBrush(0))
                                 .border(
                                     0.9.dp,
                                     Brush.verticalGradient(listOf(Color.White.copy(0.55f), Color.White.copy(0.08f))),
                                     cardShape
                                 )
                                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                                    runCatching { focus.requestFocus() }
+                                    if (image == null) pickImage()
                                 },
                             contentAlignment = Alignment.Center
                         ) {
                             if (image != null) {
                                 Image(
-                                    image, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit,
+                                    image, null, Modifier.fillMaxSize().storyGrain(filterId),
+                                    contentScale = ContentScale.Crop,
                                     colorFilter = storyColorFilter(filterId)
                                 )
-                            }
-                            BasicTextField(
-                                value = text,
-                                onValueChange = { text = it.take(200) },
-                                textStyle = TextStyle(
-                                    color = color, fontSize = storyFontSize(text.length),
-                                    fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
-                                    shadow = StoryTextShadow
-                                ),
-                                cursorBrush = SolidColor(color),
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).focusRequester(focus),
-                                decorationBox = { inner ->
-                                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                        if (text.isEmpty()) {
-                                            Text(
-                                                if (image == null) "اكتب قصتك..." else "أضف نصاً (اختياري)",
-                                                color = Color.White.copy(0.45f),
-                                                fontSize = if (image == null) 30.sp else 20.sp,
-                                                fontWeight = FontWeight.Bold, textAlign = TextAlign.Center
-                                            )
-                                        }
-                                        inner()
-                                    }
+                            } else {
+                                Column(horizontalAlignment = CenterHorizontally) {
+                                    Icon(Icons.Filled.Add, null, tint = Color.White.copy(0.7f), modifier = Modifier.size(44.dp))
+                                    Spacer(Modifier.height(8.dp))
+                                    Text("اضغط لاختيار صورة القصة", color = Color.White.copy(0.7f), fontSize = 16.sp, fontWeight = FontWeight.Medium)
                                 }
-                            )
-                            if (musicUrl.isNotEmpty()) {
-                                MusicPill(
-                                    musicTitle, musicArtist, musicCover,
-                                    Modifier.align(Alignment.TopCenter).padding(top = 16.dp)
-                                )
                             }
-                            Text(
-                                "${text.length}/200", fontSize = 12.sp, color = Color.White.copy(0.7f),
-                                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp)
-                            )
                         }
                     }
                 }
 
-                // لوحة الأدوات (زجاج سائل) بأربع تبويبات
+                // لوحة الأدوات (زجاج سائل) بثلاث تبويبات
                 StaggerIn(2, Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
                     Column(
                         Modifier.fillMaxWidth().animateContentSize()
@@ -658,82 +651,55 @@ internal fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            listOf("نص", "صورة", "فلاتر", "موسيقى").forEachIndexed { i, label ->
+                            listOf("صورة", "فلاتر", "موسيقى").forEachIndexed { i, label ->
                                 StoryTabPill(label, tab == i, Modifier.weight(1f)) { tab = i }
                             }
                         }
-                        Box(Modifier.fillMaxWidth().height(if (tab == 3) 250.dp else 150.dp)) {
+                        Box(Modifier.fillMaxWidth().height(if (tab == 2) 250.dp else 150.dp)) {
                             when (tab) {
-                                0 -> Column(
-                                    Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Text("لون النص", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = fg.copy(0.65f))
-                                    Row(
-                                        Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 3.dp, vertical = 3.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                    ) {
-                                        StoryColors.forEach { c ->
-                                            StorySwatch(selected = c == color, brush = SolidColor(c)) { color = c }
-                                        }
-                                    }
-                                    Text("الخلفية", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = fg.copy(0.65f))
-                                    Row(
-                                        Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 3.dp, vertical = 3.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                    ) {
-                                        StoryBgs.indices.forEach { i ->
-                                            StorySwatch(selected = i == bg, brush = storyBgBrush(i)) { bg = i }
-                                        }
-                                    }
-                                }
-
-                                1 -> Column(
-                                    Modifier.fillMaxSize(),
-                                    verticalArrangement = Arrangement.Center
-                                ) {
+                                0 -> Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
                                     Text(
-                                        "تگدر تنشر نص فقط، أو صورة بدون نص، أو الاثنين.",
+                                        "القصة صورة فقط. النص تنشره كـ\"حالة\" فوق صورتك الشخصية.",
                                         fontSize = 13.sp, color = fg.copy(0.7f)
                                     )
                                     Spacer(Modifier.height(12.dp))
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        GlassButton(onClick = pickImage, backdrop = bd, modifier = Modifier.height(46.dp)) {
-                                            Icon(Icons.Filled.Add, null, modifier = Modifier.size(20.dp))
-                                            Text(
-                                                if (imageB64.isEmpty()) "إضافة صورة" else "تغيير الصورة",
-                                                modifier = Modifier.padding(start = 6.dp, end = 16.dp)
-                                            )
-                                        }
-                                        if (imageB64.isNotEmpty()) {
-                                            GlassButton(
-                                                onClick = { imageB64 = ""; filterId = "" },
-                                                backdrop = bd, modifier = Modifier.height(46.dp)
-                                            ) { Text("إزالة الصورة", modifier = Modifier.padding(horizontal = 16.dp)) }
-                                        }
+                                    GlassButton(onClick = pickImage, backdrop = bd, modifier = Modifier.height(46.dp)) {
+                                        Icon(Icons.Filled.Add, null, modifier = Modifier.size(20.dp))
+                                        Text(
+                                            if (imageB64.isEmpty()) "اختيار صورة" else "تغيير الصورة",
+                                            modifier = Modifier.padding(start = 6.dp, end = 16.dp)
+                                        )
                                     }
                                 }
 
-                                2 -> Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                1 -> Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    // تصنيفات الفلاتر: نصوص مع خط تحت المختار (مثل تيك توك)
                                     Row(
                                         Modifier.horizontalScroll(rememberScrollState()),
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(20.dp)
                                     ) {
                                         FilterCats.forEach { c ->
                                             val sel = c == filterCat
-                                            Text(
-                                                c, fontSize = 13.sp,
-                                                fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium,
-                                                color = if (sel) Color.White else fg.copy(0.7f),
-                                                modifier = Modifier.clip(CircleShape)
-                                                    .background(if (sel) AccentBlue.copy(0.5f) else fg.copy(0.08f))
-                                                    .clickable { filterCat = c }
-                                                    .padding(horizontal = 14.dp, vertical = 6.dp)
-                                            )
+                                            Column(
+                                                horizontalAlignment = CenterHorizontally,
+                                                modifier = Modifier.clickable(
+                                                    interactionSource = remember { MutableInteractionSource() }, indication = null
+                                                ) { filterCat = c }
+                                            ) {
+                                                Text(
+                                                    c, fontSize = 15.sp,
+                                                    fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium,
+                                                    color = if (sel) fg else fg.copy(0.55f)
+                                                )
+                                                Box(
+                                                    Modifier.padding(top = 4.dp).height(2.dp).width(if (sel) 28.dp else 0.dp)
+                                                        .background(fg)
+                                                )
+                                            }
                                         }
                                     }
                                     if (image == null) {
-                                        Text("الفلاتر تنطبق على الصورة، أضف صورة من تبويب \"صورة\".", fontSize = 12.sp, color = fg.copy(0.6f))
+                                        Text("الفلاتر تنطبق على الصورة، اختار صورة أول.", fontSize = 12.sp, color = fg.copy(0.6f))
                                     }
                                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         item {
@@ -747,8 +713,14 @@ internal fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
 
                                 else -> Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     if (musicUrl.isNotEmpty()) {
-                                        // أغنية مختارة: نختار منين تبدأ (القصة 15 ثانية فقط)
-                                        MusicPill(musicTitle, musicArtist, musicCover)
+                                        // أغنية مختارة (صوت فقط): نختار منين تبدأ (القصة 15 ثانية فقط)
+                                        Text(
+                                            "♫  $musicTitle" + if (musicArtist.isNotBlank()) " - $musicArtist" else "",
+                                            color = fg, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.fillMaxWidth().clip(CircleShape)
+                                                .background(fg.copy(0.08f)).padding(horizontal = 14.dp, vertical = 10.dp)
+                                        )
                                         Text(
                                             "تبدأ من الثانية ${startF.toInt()} من المقطع (تشتغل ${STORY_SECONDS} ثانية)",
                                             fontSize = 13.sp, color = fg.copy(0.75f)
@@ -763,7 +735,7 @@ internal fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
                                         GlassButton(
                                             onClick = {
                                                 player.stop()
-                                                musicUrl = ""; musicTitle = ""; musicArtist = ""; musicCover = ""; startF = 0f
+                                                musicUrl = ""; musicTitle = ""; musicArtist = ""; startF = 0f
                                             },
                                             backdrop = bd, modifier = Modifier.height(42.dp)
                                         ) { Text("إزالة الأغنية", modifier = Modifier.padding(horizontal = 18.dp)) }
@@ -820,6 +792,7 @@ internal fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
                                                                 .padding(vertical = 5.dp, horizontal = 4.dp),
                                                             verticalAlignment = Alignment.CenterVertically
                                                         ) {
+                                                            // الغلاف يبين بقائمة الاختيار فقط (مو على القصة)
                                                             Box(Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFF2B2F36)), contentAlignment = Alignment.Center) {
                                                                 if (cover != null) Image(cover, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                                                                 else Text("♫", color = Color.White, fontSize = 16.sp)
@@ -835,7 +808,7 @@ internal fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
                                                                 modifier = Modifier.clip(CircleShape).background(AccentBlue.copy(0.9f))
                                                                     .clickable {
                                                                         musicUrl = t.previewUrl; musicTitle = t.title
-                                                                        musicArtist = t.artist; musicCover = t.cover; startF = 0f
+                                                                        musicArtist = t.artist; startF = 0f
                                                                         player.play(t.previewUrl, 0)
                                                                     }
                                                                     .padding(horizontal = 14.dp, vertical = 7.dp)
@@ -959,7 +932,8 @@ fun StoryViewerScreen(
         ) {
             if (image != null) {
                 Image(
-                    image, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit,
+                    image, null, Modifier.fillMaxSize().storyGrain(story.filter),
+                    contentScale = ContentScale.Crop,
                     colorFilter = storyColorFilter(story.filter)
                 )
             }
@@ -1013,13 +987,7 @@ fun StoryViewerScreen(
             }
         }
 
-        // الأغنية أسفل القصة
-        if (story.musicUrl.isNotBlank()) {
-            MusicPill(
-                story.musicTitle, story.musicArtist, story.musicCover,
-                Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 28.dp)
-            )
-        }
+        // الأغنية صوت فقط: ما يطلع غلافها ولا اسمها على القصة
 
         // قائمة الثلاث نقاط: تنفتح من الزر بحركة نابضية
         val menuOrigin = TransformOrigin(if (rtl) 0f else 1f, 0f)
@@ -1111,6 +1079,132 @@ fun StoriesRow(stories: List<ActiveStory>, myUid: String, onOpen: (Int) -> Unit)
                     fontSize = 12.sp, color = fg.copy(0.85f), maxLines = 1,
                     overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center
                 )
+            }
+        }
+    }
+}
+
+// ======================= الحالة النصية (فقاعة فوق صورة الملف الشخصي) =======================
+
+/** فقاعة الحالة فوق الصورة (مثل تيك توك). [text] = null تعني "أضف حالة" لصاحب الملف */
+@Composable
+fun StatusBubble(text: String?, backdrop: Backdrop, u: Dp, onClick: (() -> Unit)?) {
+    val shape = RoundedCornerShape(u * 46f)
+    Column(horizontalAlignment = Alignment.Start) {
+        Box(
+            Modifier.widthIn(max = u * 620f)
+                .liquidCard(backdrop, shape, dark = true)
+                .background(Color.Black.copy(0.25f), shape)
+                .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+                .padding(horizontal = u * 44f, vertical = u * 28f)
+        ) {
+            if (text != null) {
+                Text(
+                    text, color = Color.White, fontSize = (u.value * 50f).sp,
+                    fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis
+                )
+            } else {
+                Text(
+                    "+ أضف حالة", color = Color.White.copy(0.75f), fontSize = (u.value * 46f).sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+        // ذيل الفقاعة (دائرتين صغار)
+        Box(Modifier.padding(start = u * 80f, top = u * 8f).size(u * 30f).clip(CircleShape).background(Color.Black.copy(0.40f)))
+        Box(Modifier.padding(start = u * 120f, top = u * 6f).size(u * 18f).clip(CircleShape).background(Color.Black.copy(0.40f)))
+    }
+}
+
+/** نافذة كتابة الحالة: نص قصير (50 حرف) يظهر 24 ساعة، مع نشر وحذف */
+@Composable
+fun StatusEditorSheet(existing: Status?, onDismiss: () -> Unit) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var text by remember { mutableStateOf(existing?.text ?: "") }
+    var busy by remember { mutableStateOf(false) }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        delay(250)
+        runCatching { focus.requestFocus() }
+    }
+    val noRipple = remember { MutableInteractionSource() }
+    val shape = RoundedCornerShape(32.dp)
+
+    BackHandler(onBack = onDismiss)
+    Box(
+        Modifier.fillMaxSize().background(Color.Black.copy(0.55f))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }
+            .imePadding().navigationBarsPadding(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            Modifier.padding(24.dp).fillMaxWidth().widthIn(max = 420.dp)
+                .clip(shape)
+                .background(Brush.verticalGradient(listOf(Color(0xFF1E2B3D), Color(0xFF111A28))))
+                .border(0.9.dp, Brush.verticalGradient(listOf(Color.White.copy(0.45f), Color.White.copy(0.06f))), shape)
+                .clickable(interactionSource = noRipple, indication = null) { }
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text("حالتك", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text("تظهر كفقاعة فوق صورتك الشخصية عند كل الناس لمدة 24 ساعة.", color = Color.White.copy(0.65f), fontSize = 13.sp)
+            Box(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Color.White.copy(0.08f))
+                    .padding(horizontal = 16.dp, vertical = 14.dp)
+            ) {
+                if (text.isEmpty()) Text("شنو تفكر؟", color = Color.White.copy(0.45f), fontSize = 17.sp)
+                BasicTextField(
+                    value = text, onValueChange = { text = it.take(50).replace("\n", " ") },
+                    maxLines = 2,
+                    textStyle = TextStyle(color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Medium),
+                    cursorBrush = SolidColor(Color(0xFF1AA7FF)),
+                    modifier = Modifier.fillMaxWidth().focusRequester(focus)
+                )
+            }
+            Text("${text.length}/50", color = Color.White.copy(0.5f), fontSize = 12.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                val canPost = !busy && text.isNotBlank()
+                Text(
+                    if (busy) "..." else "نشر", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.weight(1f).clip(CircleShape)
+                        .background(Color(0xFF1AA7FF).copy(if (canPost) 1f else 0.4f))
+                        .clickable(enabled = canPost) {
+                            busy = true
+                            scope.launch {
+                                try {
+                                    Repo.saveStatus(text.trim())
+                                    onDismiss()
+                                } catch (e: Exception) {
+                                    busy = false
+                                    Toast.makeText(ctx, "فشل النشر: ${e.message}", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                        .padding(vertical = 13.dp)
+                )
+                if (existing != null) {
+                    Text(
+                        "حذف", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.weight(1f).clip(CircleShape)
+                            .background(Color(0xFFD93025).copy(if (busy) 0.4f else 0.9f))
+                            .clickable(enabled = !busy) {
+                                busy = true
+                                scope.launch {
+                                    try {
+                                        Repo.deleteStatus()
+                                        onDismiss()
+                                    } catch (e: Exception) {
+                                        busy = false
+                                        Toast.makeText(ctx, "فشل الحذف: ${e.message}", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            }
+                            .padding(vertical = 13.dp)
+                    )
+                }
             }
         }
     }

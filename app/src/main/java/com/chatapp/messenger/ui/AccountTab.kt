@@ -188,6 +188,8 @@ fun AccountTab(onOverlayChange: (Boolean) -> Unit = {}) {
     var showEdit by remember { mutableStateOf(false) }
     var showStoryEditor by remember { mutableStateOf(false) }
     var showViewer by remember { mutableStateOf(false) }
+    var showStatusEditor by remember { mutableStateOf(false) }
+    var statusSeed by remember { mutableStateOf<com.chatapp.messenger.Status?>(null) }
     // نسخة ثابتة من القصة تبقى طول حركة الإغلاق (حتى لو انحذفت أو تغيّرت القصة الأصلية)
     var editorSeed by remember { mutableStateOf<Story?>(null) }
     var viewerSeed by remember { mutableStateOf<Story?>(null) }
@@ -205,7 +207,7 @@ fun AccountTab(onOverlayChange: (Boolean) -> Unit = {}) {
         )
 
     // نخبر الشاشة الرئيسية حتى تخفي الشريط السفلي أثناء التعديل
-    val overlay = showEdit || showStoryEditor || showViewer
+    val overlay = showEdit || showStoryEditor || showViewer || showStatusEditor
     LaunchedEffect(overlay) { onOverlayChange(overlay) }
     DisposableEffect(Unit) { onDispose { onOverlayChange(false) } }
 
@@ -295,6 +297,19 @@ fun AccountTab(onOverlayChange: (Boolean) -> Unit = {}) {
                             onAvatarPos = { avatarCenter = it }
                         )
                     }
+                    // الحالة النصية: فقاعة فوق الصورة (ضغطة = كتابة/تعديل/حذف)
+                    val activeStatus = profile.status?.takeIf { System.currentTimeMillis() < it.expiresAt }
+                    Box(
+                        Modifier.align(Alignment.TopStart)
+                            .padding(start = u * 60f, top = u * 190f)
+                            .height(u * 240f),
+                        contentAlignment = Alignment.BottomStart
+                    ) {
+                        StatusBubble(activeStatus?.text, glass, u) {
+                            statusSeed = activeStatus
+                            showStatusEditor = true
+                        }
+                    }
                     // الاسم واليوزر يمين
                     Column(
                         Modifier.align(Alignment.TopEnd).padding(end = u * 52f, top = u * 445f),
@@ -354,6 +369,14 @@ fun AccountTab(onOverlayChange: (Boolean) -> Unit = {}) {
                 onDismiss = { showEdit = false }
             )
         }
+    }
+    // نافذة الحالة النصية
+    AnimatedVisibility(
+        visible = showStatusEditor,
+        enter = fadeIn(tween(150)) + scaleIn(spring(0.85f, 420f), initialScale = 0.85f, transformOrigin = TransformOrigin(0.3f, 0.3f)),
+        exit = fadeOut(tween(130)) + scaleOut(tween(150), targetScale = 0.9f, transformOrigin = TransformOrigin(0.3f, 0.3f))
+    ) {
+        StatusEditorSheet(existing = statusSeed, onDismiss = { showStatusEditor = false })
     }
     // شاشة نشر القصة: تطلع من زر + وترجع إله
     OriginOverlay(

@@ -162,6 +162,18 @@ fun UserProfileScreen(user: UserItem, onBack: () -> Unit, onMessage: () -> Unit)
                             Icon(Icons.Filled.Person, null, tint = Color(0xFF8A8F98), modifier = Modifier.size(u * 160f))
                         }
                     }
+                    // حالة الشخص النصية (فقاعة فوق صورته)
+                    val activeStatus = profile.status?.takeIf { !profile.restricted && System.currentTimeMillis() < it.expiresAt }
+                    if (activeStatus != null) {
+                        Box(
+                            Modifier.align(Alignment.TopStart)
+                                .padding(start = u * 60f, top = u * 190f)
+                                .height(u * 240f),
+                            contentAlignment = Alignment.BottomStart
+                        ) {
+                            StatusBubble(activeStatus.text, glass, u, null)
+                        }
+                    }
                     // الاسم واليوزر
                     Column(
                         Modifier.align(Alignment.TopEnd).padding(end = u * 52f, top = u * 445f),

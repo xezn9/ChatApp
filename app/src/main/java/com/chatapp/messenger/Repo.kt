@@ -79,6 +79,11 @@ data class Story(
     val expiresAt: Long get() = createdAt + STORY_MS
 }
 
+/** حالة نصية قصيرة تظهر كفقاعة فوق صورة الملف الشخصي (24 ساعة) */
+data class Status(val text: String, val createdAt: Long) {
+    val expiresAt: Long get() = createdAt + STORY_MS
+}
+
 /** قصة فعّالة لمستخدم (تظهر بقائمة القصص عند الكل) */
 data class ActiveStory(val uid: String, val profile: Profile)
 
@@ -89,6 +94,7 @@ data class Profile(
     val avatar: String = "",
     val banner: String = "",
     val story: Story? = null,
+    val status: Status? = null,
     /** شكل فقاعات الرسائل المختار (يطبق على كل محادثات المستخدم ويظهر للطرفين) */
     val bubbleStyle: String = "glass",
     /** true إذا هذا المستخدم حاظرني (ما أقدر أشوف ملفه) */
@@ -414,6 +420,13 @@ object Repo {
                         musicStart = (it["musicStart"] as? Number)?.toInt() ?: 0
                     )
                 }
+                val stt = d.get("status") as? Map<*, *>
+                val status = stt?.let {
+                    Status(
+                        text = it["text"] as? String ?: "",
+                        createdAt = (it["createdAt"] as? Number)?.toLong() ?: 0L
+                    )
+                }
                 trySend(
                     Profile(
                         name = d.getString("name") ?: "",
@@ -422,6 +435,7 @@ object Repo {
                         avatar = d.getString("avatar") ?: "",
                         banner = d.getString("banner") ?: "",
                         story = story,
+                        status = status,
                         bubbleStyle = d.getString("bubbleStyle") ?: "glass"
                     )
                 )
@@ -509,6 +523,20 @@ object Repo {
             .set(db.collection("profiles").document(u.uid), mapOf("story" to map), SetOptions.mergeFields("story"))
             .set(db.collection("stories").document(u.uid), mapOf("uid" to u.uid, "createdAt" to st.createdAt))
             .commit().await()
+    }
+
+    /** الحالة النصية (فقاعة فوق الصورة) */
+    suspend fun saveStatus(text: String) {
+        val u = auth.currentUser ?: return
+        db.collection("profiles").document(u.uid).set(
+            mapOf("status" to mapOf("text" to text, "createdAt" to System.currentTimeMillis())),
+            SetOptions.mergeFields("status")
+        ).await()
+    }
+
+    suspend fun deleteStatus() {
+        val u = auth.currentUser ?: return
+        db.collection("profiles").document(u.uid).update("status", FieldValue.delete()).await()
     }
 
     /** يضمن وجود القصة الحالية بالفهرس العام (للقصص المنشورة بنسخ قديمة) */
