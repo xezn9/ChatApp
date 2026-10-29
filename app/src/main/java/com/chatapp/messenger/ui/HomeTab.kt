@@ -1,6 +1,11 @@
 package com.chatapp.messenger.ui
 
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
+import com.chatapp.messenger.ActiveStory
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
@@ -75,7 +80,8 @@ import com.chatapp.messenger.UserItem
 @Composable
 fun HomeTab(
     onOpenChat: (UserItem) -> Unit, onOpenProfile: (UserItem) -> Unit, onRequestLogout: () -> Unit,
-    onRequestDeleteChat: (uid: String, name: String, lastAt: Long) -> Unit = { _, _, _ -> }
+    onRequestDeleteChat: (uid: String, name: String, lastAt: Long) -> Unit = { _, _, _ -> },
+    onOverlayChange: (Boolean) -> Unit = {}
 ) {
     val myUid = Repo.auth.currentUser?.uid ?: ""
     val users by remember { Repo.usersFlow() }.collectAsState(initial = emptyList())
@@ -85,6 +91,13 @@ fun HomeTab(
     // معاينة بديلة إذا حذفت (من عندي) آخر رسالة بمحادثة
     val previewOverrides by remember(myUid) { Repo.previewOverridesFlow(myUid) }.collectAsState(initial = emptyMap())
     var query by remember { mutableStateOf("") }
+    // قصص كل المستخدمين (مع قصتي أولاً)
+    val stories by remember { Repo.activeStoriesFlow() }.collectAsState(initial = emptyList())
+    var viewIndex by remember { mutableStateOf<Int?>(null) }
+    var storySnapshot by remember { mutableStateOf<List<ActiveStory>>(emptyList()) }
+    var lastIdx by remember { mutableStateOf(0) }
+    LaunchedEffect(viewIndex != null) { onOverlayChange(viewIndex != null) }
+    DisposableEffect(Unit) { onDispose { onOverlayChange(false) } }
 
     // المثبتين (الأشخاص المميزين) أولاً، حتى لو ما عندهم رسائل بعد
     val shownChats = remember(chats, pinned, cleared) {
@@ -100,6 +113,7 @@ fun HomeTab(
         it.uid != myUid && (it.name.lowercase().contains(q) || it.username.lowercase().contains(q))
     }
 
+    Box(Modifier.fillMaxSize()) {
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
@@ -112,6 +126,12 @@ fun HomeTab(
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
             SearchField(query) { query = it }
+            if (q.isEmpty()) {
+                StoriesRow(stories, myUid) { i ->
+                    storySnapshot = stories
+                    viewIndex = i
+                }
+            }
 
             when {
                 q.isNotEmpty() -> {
@@ -173,6 +193,35 @@ fun HomeTab(
                 }
             }
         }
+    }
+
+    // عارض القصص بملء الشاشة (يتنقل للقصة التالية تلقائياً)
+    val vi = viewIndex
+    if (vi != null) lastIdx = vi
+    AnimatedVisibility(
+        visible = vi != null,
+        enter = fadeIn(tween(180)) + scaleIn(spring(0.85f, 400f), initialScale = 0.88f),
+        exit = fadeOut(tween(160)) + scaleOut(tween(180), targetScale = 0.92f)
+    ) {
+        storySnapshot.getOrNull(lastIdx)?.let { a ->
+            val st = a.profile.story
+            if (st != null) {
+                key(a.uid) {
+                    StoryViewerScreen(
+                        story = st,
+                        owner = a.profile,
+                        mine = a.uid == myUid,
+                        showMenu = false,
+                        onDismiss = { viewIndex = null },
+                        onFinished = {
+                            val n = lastIdx + 1
+                            viewIndex = if (n < storySnapshot.size) n else null
+                        }
+                    )
+                }
+            }
+        }
+    }
     }
 }
 

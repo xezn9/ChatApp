@@ -14,6 +14,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.tasks.await
 
 data class UserItem(val uid: String, val name: String, val email: String, val username: String = "")
@@ -53,10 +58,29 @@ data class Ban(val until: Long = 0L, val days: Int = 0, val reason: String = "")
 /** مدة القصة: 24 ساعة بالضبط من لحظة النشر */
 const val STORY_MS = 24L * 60 * 60 * 1000
 
-/** bg = رقم خلفية القصة (تدرج) من قائمة StoryBgs بالواجهة. القصص القديمة بدون الحقل تطلع 0 */
-data class Story(val text: String, val color: Int, val image: String, val createdAt: Long, val bg: Int = 0) {
+/**
+ * قصة المستخدم (24 ساعة).
+ * bg = رقم الخلفية (تدرج)، filter = معرّف فلتر الصورة ("" = بدون)،
+ * موسيقى اختيارية: رابط مقطع 30 ثانية + عنوان + فنان + غلاف + ثانية البداية (القصة 15 ثانية كحد أقصى).
+ */
+data class Story(
+    val text: String,
+    val color: Int,
+    val image: String,
+    val createdAt: Long,
+    val bg: Int = 0,
+    val filter: String = "",
+    val musicUrl: String = "",
+    val musicTitle: String = "",
+    val musicArtist: String = "",
+    val musicCover: String = "",
+    val musicStart: Int = 0
+) {
     val expiresAt: Long get() = createdAt + STORY_MS
 }
+
+/** قصة فعّالة لمستخدم (تظهر بقائمة القصص عند الكل) */
+data class ActiveStory(val uid: String, val profile: Profile)
 
 data class Profile(
     val name: String = "",
@@ -381,7 +405,13 @@ object Repo {
                         color = (it["color"] as? Number)?.toInt() ?: -1,
                         image = it["image"] as? String ?: "",
                         createdAt = (it["createdAt"] as? Number)?.toLong() ?: 0L,
-                        bg = (it["bg"] as? Number)?.toInt() ?: 0
+                        bg = (it["bg"] as? Number)?.toInt() ?: 0,
+                        filter = it["filter"] as? String ?: "",
+                        musicUrl = it["musicUrl"] as? String ?: "",
+                        musicTitle = it["musicTitle"] as? String ?: "",
+                        musicArtist = it["musicArtist"] as? String ?: "",
+                        musicCover = it["musicCover"] as? String ?: "",
+                        musicStart = (it["musicStart"] as? Number)?.toInt() ?: 0
                     )
                 }
                 trySend(
@@ -466,18 +496,67 @@ object Repo {
         ).await()
     }
 
-    suspend fun saveStory(text: String, color: Int, image: String, createdAt: Long, bg: Int = 0) {
+    /** نشر القصة: تنكتب بملفي الشخصي + فهرس عام `stories/<uid>` حتى تظهر عند كل المستخدمين */
+    suspend fun saveStory(st: Story) {
         val u = auth.currentUser ?: return
-        db.collection("profiles").document(u.uid).set(
-            mapOf("story" to mapOf("text" to text, "color" to color, "image" to image, "createdAt" to createdAt, "bg" to bg)),
-            SetOptions.mergeFields("story")
-        ).await()
+        val map = mapOf(
+            "text" to st.text, "color" to st.color, "image" to st.image, "createdAt" to st.createdAt,
+            "bg" to st.bg, "filter" to st.filter,
+            "musicUrl" to st.musicUrl, "musicTitle" to st.musicTitle, "musicArtist" to st.musicArtist,
+            "musicCover" to st.musicCover, "musicStart" to st.musicStart
+        )
+        db.batch()
+            .set(db.collection("profiles").document(u.uid), mapOf("story" to map), SetOptions.mergeFields("story"))
+            .set(db.collection("stories").document(u.uid), mapOf("uid" to u.uid, "createdAt" to st.createdAt))
+            .commit().await()
+    }
+
+    /** يضمن وجود القصة الحالية بالفهرس العام (للقصص المنشورة بنسخ قديمة) */
+    suspend fun syncStoryIndex(createdAt: Long) {
+        val u = auth.currentUser ?: return
+        db.collection("stories").document(u.uid)
+            .set(mapOf("uid" to u.uid, "createdAt" to createdAt), SetOptions.merge()).await()
     }
 
     suspend fun deleteStory() {
         val u = auth.currentUser ?: return
-        db.collection("profiles").document(u.uid).update("story", FieldValue.delete()).await()
+        db.batch()
+            .update(db.collection("profiles").document(u.uid), "story", FieldValue.delete())
+            .delete(db.collection("stories").document(u.uid))
+            .commit().await()
     }
+
+    /** معرّفات أصحاب القصص الفعّالة (آخر 24 ساعة) */
+    private fun storyIndexFlow(): Flow<List<String>> = callbackFlow {
+        val since = System.currentTimeMillis() - STORY_MS
+        val reg = db.collection("stories").whereGreaterThan("createdAt", since)
+            .addSnapshotListener { snap, err ->
+                if (err != null) trySend(emptyList())
+                else if (snap != null) trySend(snap.documents.map { it.id })
+            }
+        awaitClose { reg.remove() }
+    }
+
+    /**
+     * قصص كل المستخدمين الفعّالة: قصتي أولاً ثم الأحدث.
+     * من حاظرني تنرفض قراءة ملفه بالقواعد فتختفي قصته تلقائياً (restricted).
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun activeStoriesFlow(): Flow<List<ActiveStory>> =
+        storyIndexFlow().flatMapLatest { uids ->
+            if (uids.isEmpty()) flowOf(emptyList())
+            else combine(uids.map { uid -> profileFlow(uid).map { ActiveStory(uid, it) } }) { arr ->
+                val me = auth.currentUser?.uid
+                val now = System.currentTimeMillis()
+                arr.filter { a ->
+                    val st = a.profile.story
+                    !a.profile.restricted && st != null && now < st.expiresAt
+                }.sortedWith(
+                    compareByDescending<ActiveStory> { it.uid == me }
+                        .thenByDescending { it.profile.story?.createdAt ?: 0L }
+                )
+            }
+        }
 
     // ---------- شكل الفقاعات (يتخزن بملفي الشخصي حتى يشوفه الطرف الثاني) ----------
 

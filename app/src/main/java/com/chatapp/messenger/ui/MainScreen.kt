@@ -202,7 +202,8 @@ private fun MainContent() {
                         onOpenChat = { chatWith = it },
                         onOpenProfile = { viewProfile = it },
                         onRequestLogout = { confirmLogout = true },
-                        onRequestDeleteChat = { uid, name, lastAt -> deleteChat = Triple(uid, name, lastAt) }
+                        onRequestDeleteChat = { uid, name, lastAt -> deleteChat = Triple(uid, name, lastAt) },
+                        onOverlayChange = { overlayOpen = it }
                     )
                     1 -> BdfTab()
                     else -> AccountTab(onOverlayChange = { overlayOpen = it })

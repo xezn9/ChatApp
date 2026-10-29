@@ -144,7 +144,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import com.chatapp.messenger.Profile
 import com.chatapp.messenger.Repo
 import com.chatapp.messenger.Story
-import com.chatapp.messenger.STORY_MS
 import com.chatapp.messenger.ui.glass.GlassButton
 import com.chatapp.messenger.ui.theme.appBackground
 import com.kyant.backdrop.Backdrop
@@ -153,10 +152,10 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private val StoryBlue = Brush.sweepGradient(
+internal val StoryBlue = Brush.sweepGradient(
     listOf(Color(0xFF0A84FF), Color(0xFF00E5FF), Color(0xFF0A84FF))
 )
-private val StoryColors = listOf(
+internal val StoryColors = listOf(
     Color.White, Color.Black, Color(0xFFFFD60A), Color(0xFFFF453A),
     Color(0xFFFF2D92), Color(0xFF30D158), Color(0xFF00E5FF), Color(0xFFFF9F0A)
 )
@@ -177,6 +176,8 @@ fun AccountTab(onOverlayChange: (Boolean) -> Unit = {}) {
     }
     LaunchedEffect(story?.createdAt) {
         if (story != null) {
+            // القصص المنشورة بنسخ قديمة تنضاف للفهرس العام حتى تظهر عند الكل
+            if (System.currentTimeMillis() < story.expiresAt) runCatching { Repo.syncStoryIndex(story.createdAt) }
             val wait = story.expiresAt - System.currentTimeMillis()
             if (wait > 0) delay(wait)
             storyActive = false
@@ -370,6 +371,9 @@ fun AccountTab(onOverlayChange: (Boolean) -> Unit = {}) {
         viewerSeed?.let { st ->
             StoryViewerScreen(
                 story = st,
+                owner = profile,
+                mine = true,
+                showMenu = true,
                 onDismiss = { showViewer = false },
                 onEdit = {
                     // نسكّر العارض أول، وبعدها يطلع المحرر من زر +
@@ -387,7 +391,7 @@ fun AccountTab(onOverlayChange: (Boolean) -> Unit = {}) {
 
 /** غلاف حركة: الشاشة تكبر من نقطة (زر) وترجع تصغر إلها، وحوافها تتحول من دائرية لشاشة كاملة */
 @Composable
-private fun OriginOverlay(
+internal fun OriginOverlay(
     visible: Boolean,
     origin: TransformOrigin,
     startRadius: Float = 120f,
@@ -468,7 +472,7 @@ private fun AvatarWithStory(
 
 /** يفتح معرض الصور، يضغط الصورة ويرجعها كنص base64 */
 @Composable
-private fun rememberImagePicker(maxSide: Int, quality: Int, onPicked: (String) -> Unit): () -> Unit {
+internal fun rememberImagePicker(maxSide: Int, quality: Int, onPicked: (String) -> Unit): () -> Unit {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val cb by rememberUpdatedState(onPicked)
@@ -547,12 +551,12 @@ private fun GlassField(
 
 // ======================= تعديل الحساب (زر القلم) =======================
 
-private val AccentBlue = Color(0xFF1AA7FF)
+internal val AccentBlue = Color(0xFF1AA7FF)
 private val AccentViolet = Color(0xFF8A5CFF)
 private val AccentMint = Color(0xFF00D4AA)
 
 /** بطاقة زجاج سائل: تمويه + عدسة (انكسار الحواف) + حد لامع */
-private fun Modifier.liquidCard(
+internal fun Modifier.liquidCard(
     backdrop: Backdrop,
     shape: Shape,
     dark: Boolean,
@@ -577,7 +581,7 @@ private fun Modifier.liquidCard(
 
 /** خلفية الشاشة: تدرج التطبيق + صورة البانر الذايبة + فقاعات ألوان تتحرك ببطء، حتى يبين تأثير الزجاج */
 @Composable
-private fun LiquidScene(banner: ImageBitmap?, content: @Composable (Backdrop) -> Unit) {
+internal fun LiquidScene(banner: ImageBitmap?, content: @Composable (Backdrop) -> Unit) {
     val bd = rememberLayerBackdrop()
     val t = rememberInfiniteTransition(label = "blobs")
     val p by t.animateFloat(
@@ -983,361 +987,6 @@ private fun AvatarCropOverlay(srcB64: String, onCancel: () -> Unit, onDone: (Str
                     modifier = Modifier.padding(bottom = 12.dp)
                 )
             }
-        }
-    }
-}
-
-// ======================= إضافة / تعديل / حذف القصة =======================
-
-/** خلفيات القصة النصية (تدرجات). رقم الخلفية يتخزن بالقصة بحقل bg */
-private val StoryBgs = listOf(
-    listOf(Color(0xFF3B4A57), Color(0xFF14181D)),
-    listOf(Color(0xFF8A5CFF), Color(0xFFFF2D92)),
-    listOf(Color(0xFF0A84FF), Color(0xFF00E5FF)),
-    listOf(Color(0xFFFF9F0A), Color(0xFFFF453A)),
-    listOf(Color(0xFF30D158), Color(0xFF0B6E4F)),
-    listOf(Color(0xFF1B1464), Color(0xFF6A11CB)),
-    listOf(Color(0xFFFF512F), Color(0xFFDD2476)),
-    listOf(Color(0xFF0F2027), Color(0xFF2C5364))
-)
-
-private fun storyBgBrush(i: Int): Brush =
-    Brush.linearGradient(StoryBgs[i.coerceIn(0, StoryBgs.lastIndex)])
-
-/** حجم الخط يصغر تدريجياً كل ما طال النص (مثل تيك توك) */
-private fun storyFontSize(len: Int) = when {
-    len <= 30 -> 36.sp
-    len <= 80 -> 30.sp
-    len <= 140 -> 24.sp
-    else -> 20.sp
-}
-
-private val StoryTextShadow = androidx.compose.ui.graphics.Shadow(Color.Black.copy(0.45f), blurRadius = 10f)
-
-/** دائرة اختيار (لون نص أو خلفية) */
-@Composable
-private fun StorySwatch(selected: Boolean, brush: Brush, onClick: () -> Unit) {
-    val sc by animateFloatAsState(if (selected) 1.14f else 1f, spring(0.6f, 400f), label = "swatch")
-    Box(
-        Modifier.size(38.dp).graphicsLayer { scaleX = sc; scaleY = sc }
-            .clip(CircleShape).background(brush)
-            .border(
-                if (selected) BorderStroke(3.dp, AccentBlue) else BorderStroke(1.dp, Color.White.copy(0.35f)),
-                CircleShape
-            )
-            .clickable(onClick = onClick)
-    )
-}
-
-/** شاشة نشر القصة: نص مباشرة على البطاقة مثل تيك توك + صورة اختيارية، بزجاج سائل */
-@Composable
-private fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
-    val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val dark = isSystemInDarkTheme()
-    var text by remember { mutableStateOf(existing?.text ?: "") }
-    var color by remember { mutableStateOf(existing?.let { Color(it.color) } ?: Color.White) }
-    var bg by remember { mutableStateOf(existing?.bg ?: 0) }
-    var imageB64 by remember { mutableStateOf(existing?.image ?: "") }
-    var busy by remember { mutableStateOf(false) }
-
-    val pickImage = rememberImagePicker(maxSide = 1000, quality = 70) { imageB64 = it }
-    val image = rememberB64Image(imageB64)
-    val focus = remember { FocusRequester() }
-    val canPublish = !busy && (text.isNotBlank() || imageB64.isNotEmpty())
-
-    // القصة الجديدة: الكيبورد يطلع تلقائياً بعد ما تخلص حركة الفتح
-    LaunchedEffect(Unit) {
-        if (existing == null) {
-            delay(450)
-            runCatching { focus.requestFocus() }
-        }
-    }
-
-    BackHandler(onBack = onDismiss)
-    Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { } }) {
-        LiquidScene(banner = null) { bd ->
-            Column(
-                Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()
-                    .padding(horizontal = 16.dp)
-            ) {
-                // الشريط العلوي: إغلاق + عنوان + نشر
-                StaggerIn(0, Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        GlassButton(onClick = onDismiss, backdrop = bd, modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.Filled.Close, null, modifier = Modifier.size(24.dp))
-                        }
-                        Text(
-                            if (existing == null) "إضافة قصة" else "تعديل القصة",
-                            fontSize = 20.sp, fontWeight = FontWeight.Bold,
-                            modifier = Modifier.weight(1f).padding(horizontal = 14.dp)
-                        )
-                        GlassButton(
-                            backdrop = bd, tint = Color(0xFF1AA7FF),
-                            modifier = Modifier.height(48.dp),
-                            enabled = canPublish,
-                            onClick = {
-                                busy = true
-                                scope.launch {
-                                    try {
-                                        // كل نشر (جديد أو تعديل) يبدأ مدة 24 ساعة من الآن
-                                        Repo.saveStory(
-                                            text.trim(), color.toArgb(), imageB64,
-                                            System.currentTimeMillis(), bg
-                                        )
-                                        onDismiss()
-                                    } catch (e: Exception) {
-                                        busy = false
-                                        Toast.makeText(ctx, "فشل النشر: ${e.message}", Toast.LENGTH_LONG).show()
-                                    }
-                                }
-                            }
-                        ) {
-                            Text(
-                                if (busy) "..." else if (existing == null) "نشر" else "نشر من جديد",
-                                color = Color.White, fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(horizontal = 26.dp)
-                            )
-                        }
-                    }
-                }
-
-                // بطاقة القصة (9:16): الكتابة تصير مباشرة عليها
-                StaggerIn(1, Modifier.weight(1f).fillMaxWidth().padding(vertical = 12.dp)) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        val cardShape = RoundedCornerShape(34.dp)
-                        Box(
-                            Modifier.fillMaxHeight().aspectRatio(9f / 16f, matchHeightConstraintsFirst = true)
-                                .clip(cardShape)
-                                .background(storyBgBrush(bg))
-                                .border(
-                                    0.9.dp,
-                                    Brush.verticalGradient(listOf(Color.White.copy(0.55f), Color.White.copy(0.08f))),
-                                    cardShape
-                                )
-                                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                                    runCatching { focus.requestFocus() }
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (image != null) Image(image, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
-                            BasicTextField(
-                                value = text,
-                                onValueChange = { text = it.take(200) },
-                                textStyle = TextStyle(
-                                    color = color, fontSize = storyFontSize(text.length),
-                                    fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
-                                    shadow = StoryTextShadow
-                                ),
-                                cursorBrush = SolidColor(color),
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).focusRequester(focus),
-                                decorationBox = { inner ->
-                                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                        if (text.isEmpty()) {
-                                            Text(
-                                                "اكتب قصتك...", color = Color.White.copy(0.45f),
-                                                fontSize = 30.sp, fontWeight = FontWeight.Bold,
-                                                textAlign = TextAlign.Center
-                                            )
-                                        }
-                                        inner()
-                                    }
-                                }
-                            )
-                            Text(
-                                "${text.length}/200", fontSize = 12.sp, color = Color.White.copy(0.7f),
-                                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp)
-                            )
-                        }
-                    }
-                }
-
-                // لوحة الأدوات (زجاج سائل)
-                StaggerIn(2, Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
-                    val fg = MaterialTheme.colorScheme.onBackground
-                    Column(
-                        Modifier.fillMaxWidth().liquidCard(bd, RoundedCornerShape(28.dp), dark).padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Text("لون النص", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = fg.copy(0.65f))
-                        Row(
-                            Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 3.dp, vertical = 3.dp),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            StoryColors.forEach { c ->
-                                StorySwatch(selected = c == color, brush = SolidColor(c)) { color = c }
-                            }
-                        }
-                        Text("الخلفية", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = fg.copy(0.65f))
-                        Row(
-                            Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 3.dp, vertical = 3.dp),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            StoryBgs.indices.forEach { i ->
-                                StorySwatch(selected = i == bg, brush = storyBgBrush(i)) { bg = i }
-                            }
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            GlassButton(onClick = pickImage, backdrop = bd, modifier = Modifier.height(44.dp)) {
-                                Icon(Icons.Filled.Add, null, modifier = Modifier.size(20.dp))
-                                Text(
-                                    if (imageB64.isEmpty()) "إضافة صورة" else "تغيير الصورة",
-                                    modifier = Modifier.padding(start = 6.dp, end = 16.dp)
-                                )
-                            }
-                            if (imageB64.isNotEmpty()) {
-                                GlassButton(onClick = { imageB64 = "" }, backdrop = bd, modifier = Modifier.height(44.dp)) {
-                                    Text("إزالة الصورة", modifier = Modifier.padding(horizontal = 16.dp))
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** عنصر بقائمة الثلاث نقاط */
-@Composable
-private fun StoryMenuItem(icon: ImageVector, label: String, color: Color, onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(icon, null, tint = color, modifier = Modifier.size(22.dp))
-        Spacer(Modifier.width(12.dp))
-        Text(label, color = color, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-    }
-}
-
-/** عرض القصة بملء الشاشة: شريط الوقت المتبقي + زر ثلاث نقاط (تعديل ونشر من جديد / حذف) */
-@Composable
-private fun StoryViewerScreen(story: Story, onDismiss: () -> Unit, onEdit: () -> Unit) {
-    val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val image = rememberB64Image(story.image)
-    val bd = rememberLayerBackdrop()
-    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
-    var menuOpen by remember { mutableStateOf(false) }
-    var confirmDelete by remember { mutableStateOf(false) }
-    var deleting by remember { mutableStateOf(false) }
-    var now by remember { mutableStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(15_000)
-            now = System.currentTimeMillis()
-        }
-    }
-    val remainMs = (story.expiresAt - now).coerceAtLeast(0L)
-    val remainMin = remainMs / 60_000
-    val frac = (remainMs.toFloat() / STORY_MS).coerceIn(0f, 1f)
-
-    BackHandler {
-        when {
-            confirmDelete -> if (!deleting) confirmDelete = false
-            menuOpen -> menuOpen = false
-            else -> onDismiss()
-        }
-    }
-
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
-        // محتوى القصة (هذا اللي تتموّه خلفه الأزرار الزجاجية)
-        Box(
-            Modifier.fillMaxSize().layerBackdrop(bd).background(storyBgBrush(story.bg))
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                    if (menuOpen) menuOpen = false else onDismiss()
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            if (image != null) Image(image, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
-            if (story.text.isNotBlank()) {
-                Text(
-                    story.text, color = Color(story.color), fontSize = storyFontSize(story.text.length),
-                    fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(28.dp),
-                    style = TextStyle(shadow = StoryTextShadow)
-                )
-            }
-        }
-        // ظل خفيف أعلى الشاشة حتى تبين الأزرار
-        Box(
-            Modifier.fillMaxWidth().height(170.dp)
-                .background(Brush.verticalGradient(listOf(Color.Black.copy(0.45f), Color.Transparent)))
-        )
-        Column(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) {
-            Box(Modifier.fillMaxWidth().height(4.dp).clip(CircleShape).background(Color.White.copy(0.28f))) {
-                Box(Modifier.fillMaxHeight().fillMaxWidth(frac).clip(CircleShape).background(Color.White))
-            }
-            Spacer(Modifier.height(10.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                GlassButton(onClick = onDismiss, backdrop = bd, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Filled.Close, null, tint = Color.White, modifier = Modifier.size(24.dp))
-                }
-                Text(
-                    "تنتهي بعد ${remainMin / 60} س و ${remainMin % 60} د",
-                    color = Color.White.copy(0.9f), fontSize = 13.sp, textAlign = TextAlign.Center,
-                    modifier = Modifier.weight(1f)
-                )
-                GlassButton(onClick = { menuOpen = !menuOpen }, backdrop = bd, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Filled.MoreVert, null, tint = Color.White, modifier = Modifier.size(24.dp))
-                }
-            }
-        }
-
-        // قائمة الثلاث نقاط: تنفتح من الزر بحركة نابضية
-        val menuOrigin = TransformOrigin(if (rtl) 0f else 1f, 0f)
-        val menuShape = RoundedCornerShape(26.dp)
-        AnimatedVisibility(
-            visible = menuOpen,
-            modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = 78.dp, start = 16.dp, end = 16.dp),
-            enter = scaleIn(spring(0.78f, 420f), initialScale = 0.3f, transformOrigin = menuOrigin) + fadeIn(tween(150)),
-            exit = scaleOut(tween(160), targetScale = 0.3f, transformOrigin = menuOrigin) + fadeOut(tween(120))
-        ) {
-            Column(
-                Modifier.width(270.dp)
-                    .liquidCard(bd, menuShape, dark = true)
-                    .background(Color.Black.copy(0.22f), menuShape)
-                    .padding(8.dp)
-            ) {
-                StoryMenuItem(Icons.Filled.Edit, "تعديل القصة ونشرها من جديد", Color.White) {
-                    menuOpen = false
-                    onEdit()
-                }
-                Box(Modifier.fillMaxWidth().padding(horizontal = 14.dp).height(0.6.dp).background(Color.White.copy(0.18f)))
-                StoryMenuItem(Icons.Filled.Delete, "حذف القصة", Color(0xFFFF6B61)) {
-                    menuOpen = false
-                    confirmDelete = true
-                }
-            }
-        }
-
-        if (confirmDelete) {
-            GlassConfirmDialog(
-                backdrop = bd,
-                dark = true,
-                title = "حذف القصة؟",
-                message = "راح تنحذف قصتك نهائياً وما تگدر ترجعها.",
-                confirmText = if (deleting) "..." else "حذف",
-                icon = Icons.Filled.Delete,
-                onConfirm = {
-                    if (!deleting) {
-                        deleting = true
-                        scope.launch {
-                            try {
-                                Repo.deleteStory()
-                                onDismiss()
-                            } catch (e: Exception) {
-                                deleting = false
-                                confirmDelete = false
-                                Toast.makeText(ctx, "فشل الحذف: ${e.message}", Toast.LENGTH_LONG).show()
-                            }
-                        }
-                    }
-                },
-                onDismiss = { if (!deleting) confirmDelete = false }
-            )
         }
     }
 }

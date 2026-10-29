@@ -34,6 +34,12 @@ service cloud.firestore {
       allow write: if verified() && request.auth.uid == uid;
     }
 
+    // فهرس القصص: يخلّي كل المستخدمين يعرفون منو عنده قصة (محتوى القصة نفسه بـ profiles ومحمي بالحظر)
+    match /stories/{uid} {
+      allow read: if verified();
+      allow write: if verified() && request.auth.uid == uid;
+    }
+
     // متصل / آخر ظهور: كل مفعّل يقرأ (إلا إذا صاحب الحالة حاظرني)، وكل واحد يكتب حالته هو بس
     match /presence/{uid} {
       allow read: if verified() && (request.auth.uid == uid || !blockedBy(uid));

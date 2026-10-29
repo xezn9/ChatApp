@@ -4,6 +4,10 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -70,8 +74,14 @@ fun UserProfileScreen(user: UserItem, onBack: () -> Unit, onMessage: () -> Unit)
     val avatarImg = rememberB64Image(profile.avatar)
     val gray = Color(0xFFB0B3B8)
 
-    BackHandler(onBack = onBack)
+    // قصة هذا الشخص (إذا فعّالة): حلقة زرقاء حول صورته وضغطة تفتحها
+    val story = profile.story
+    val hasStory = story != null && !profile.restricted && System.currentTimeMillis() < story.expiresAt
+    var showStory by remember { mutableStateOf(false) }
 
+    BackHandler(enabled = !showStory, onBack = onBack)
+
+    Box(Modifier.fillMaxSize()) {
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
         BoxWithConstraints(
             Modifier.fillMaxSize().background(appBackground())
@@ -140,9 +150,10 @@ fun UserProfileScreen(user: UserItem, onBack: () -> Unit, onMessage: () -> Unit)
                         Modifier.align(Alignment.TopStart)
                             .padding(start = u * 47f, top = u * 352f)
                             .size(u * 375f)
-                            .border(u * 14f, Color(0xFF4F4F4F), CircleShape)
+                            .border(u * 14f, if (hasStory) StoryBlue else SolidColor(Color(0xFF4F4F4F)), CircleShape)
                             .padding(u * 14f).background(Color.Black, CircleShape)
-                            .padding(u * 6f).clip(CircleShape).background(Color(0xFF2B2F36)),
+                            .padding(u * 6f).clip(CircleShape).background(Color(0xFF2B2F36))
+                            .clickable(enabled = hasStory) { showStory = true },
                         contentAlignment = Alignment.Center
                     ) {
                         if (avatarImg != null) {
@@ -200,5 +211,12 @@ fun UserProfileScreen(user: UserItem, onBack: () -> Unit, onMessage: () -> Unit)
                 }
             }
         }
+    }
+    if (showStory && hasStory && story != null) {
+        StoryViewerScreen(
+            story = story, owner = profile, mine = false, showMenu = false,
+            onDismiss = { showStory = false }
+        )
+    }
     }
 }
