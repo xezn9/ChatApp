@@ -187,8 +187,8 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
         if (otherReadAt <= 0L) null
         else msgs.firstOrNull { it.from == me && !it.deleted && it.createdAt <= otherReadAt }?.id
     }
-    val profile by remember(other.uid) { Repo.profileFlow(other.uid) }.collectAsState(initial = Profile())
-    val myProfile by remember(me) { Repo.profileFlow(me) }.collectAsState(initial = Profile())
+    val profile by remember(other.uid) { Repo.basicProfileFlow(other.uid) }.collectAsState(initial = Profile())
+    val myProfile by remember(me) { Repo.basicProfileFlow(me) }.collectAsState(initial = Profile())
     val pinnedSet by remember(me) { Repo.pinnedFlow(me) }.collectAsState(initial = emptySet())
     val blockedByMe by remember(other.uid) { Repo.blockedFlow(me, other.uid) }.collectAsState(initial = false)
     val blockedMe by remember(other.uid) { Repo.blockedFlow(other.uid, me) }.collectAsState(initial = false)

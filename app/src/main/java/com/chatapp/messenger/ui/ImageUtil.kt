@@ -1,6 +1,11 @@
 package com.chatapp.messenger.ui
 
+import android.content.ContentValues
 import android.content.Context
+import android.media.MediaScannerConnection
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
@@ -21,6 +26,42 @@ import kotlin.math.max
 object ImageUtil {
     suspend fun uriToB64(ctx: Context, uri: Uri, maxSide: Int, quality: Int): String? =
         uriToJpeg(ctx, uri, maxSide, quality)?.let { Base64.encodeToString(it, Base64.NO_WRAP) }
+
+    /** يحفظ صورة (بايتات JPEG) بمعرض الجهاز داخل Pictures/ChatApp. يرجع true إذا نجح */
+    suspend fun saveToGallery(ctx: Context, bytes: ByteArray, name: String): Boolean =
+        withContext(Dispatchers.IO) {
+            try {
+                if (Build.VERSION.SDK_INT >= 29) {
+                    val values = ContentValues().apply {
+                        put(MediaStore.Images.Media.DISPLAY_NAME, "$name.jpg")
+                        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                        put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/ChatApp")
+                        put(MediaStore.Images.Media.IS_PENDING, 1)
+                    }
+                    val resolver = ctx.contentResolver
+                    val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                        ?: return@withContext false
+                    val out = resolver.openOutputStream(uri) ?: return@withContext false
+                    out.use { it.write(bytes) }
+                    values.clear()
+                    values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                    resolver.update(uri, values, null, null)
+                    true
+                } else {
+                    @Suppress("DEPRECATION")
+                    val dir = java.io.File(
+                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "ChatApp"
+                    )
+                    dir.mkdirs()
+                    val f = java.io.File(dir, "$name.jpg")
+                    f.writeBytes(bytes)
+                    MediaScannerConnection.scanFile(ctx, arrayOf(f.absolutePath), arrayOf("image/jpeg"), null)
+                    true
+                }
+            } catch (e: Exception) {
+                false
+            }
+        }
 
     /** نفس الدالة أعلاه لكن ترجع بايتات JPEG مباشرة (للحفظ بملف محلي مثل خلفية المحادثة) */
     suspend fun uriToJpeg(ctx: Context, uri: Uri, maxSide: Int, quality: Int): ByteArray? =

@@ -16,6 +16,13 @@ service cloud.firestore {
       return exists(/databases/$(database)/documents/blocks/$(owner)/users/$(request.auth.uid));
     }
 
+    // هل أنا والمستخدم [other] أصدقاء؟ (معرّف الصداقة = المعرّفين مرتبين uidA_uidB)
+    function isFriendWith(other) {
+      return exists(/databases/$(database)/documents/friendships/$(request.auth.uid < other
+        ? request.auth.uid + '_' + other
+        : other + '_' + request.auth.uid));
+    }
+
     // الحساب غير محظور من الإدارة (الحظر يكتبه السيرفر فقط بعد التحقق من البلاغ)
     function notBanned() {
       return !exists(/databases/$(database)/documents/bans/$(request.auth.uid))
@@ -38,6 +45,39 @@ service cloud.firestore {
     match /stories/{uid} {
       allow read: if verified();
       allow write: if verified() && request.auth.uid == uid;
+    }
+
+    // محتوى القصة: صاحبها وأصدقاؤه فقط (غير الأصدقاء ما يگدرون يقرؤونها نهائياً)
+    match /storyData/{uid} {
+      allow read: if verified() && (request.auth.uid == uid || (isFriendWith(uid) && !blockedBy(uid)));
+      allow write: if verified() && request.auth.uid == uid;
+    }
+
+    // طلبات الصداقة: المعرّف from_to. المرسل ينشئ، والطرفين يقرؤون ويحذفون (إلغاء / رفض / قبول)
+    match /friendRequests/{rid} {
+      allow get: if verified() && request.auth.uid in rid.split('_');
+      allow list: if verified()
+        && (resource.data.to == request.auth.uid || resource.data.from == request.auth.uid);
+      allow create: if verified()
+        && request.resource.data.from == request.auth.uid
+        && request.resource.data.to != request.auth.uid
+        && rid == request.auth.uid + '_' + request.resource.data.to
+        && notBanned()
+        && !blockedBy(request.resource.data.to);
+      allow delete: if verified() && request.auth.uid in rid.split('_');
+    }
+
+    // الصداقة: تنخلق فقط من الطرف الي وصله طلب (يتحقق من وجود الطلب)، وأي طرف يگدر يلغيها
+    match /friendships/{fid} {
+      allow get: if verified() && request.auth.uid in fid.split('_');
+      allow list: if verified() && request.auth.uid in resource.data.users;
+      allow create: if verified()
+        && fid.split('_').size() == 2
+        && request.auth.uid in fid.split('_')
+        && request.resource.data.users.size() == 2
+        && request.resource.data.users.hasAll(fid.split('_'))
+        && exists(/databases/$(database)/documents/friendRequests/$(otherOf(fid) + '_' + request.auth.uid));
+      allow delete: if verified() && request.auth.uid in fid.split('_');
     }
 
     // متصل / آخر ظهور: كل مفعّل يقرأ (إلا إذا صاحب الحالة حاظرني)، وكل واحد يكتب حالته هو بس

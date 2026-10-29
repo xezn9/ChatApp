@@ -213,6 +213,12 @@ fun HomeTab(
                         mine = a.uid == myUid,
                         showMenu = false,
                         onDismiss = { viewIndex = null },
+                        ownerUid = a.uid,
+                        // ضغطة على صورة/اسم صاحب القصة تفتح ملفه الشخصي
+                        onOpenProfile = {
+                            viewIndex = null
+                            onOpenProfile(UserItem(a.uid, a.profile.name, "", a.profile.username))
+                        },
                         onFinished = {
                             val n = lastIdx + 1
                             viewIndex = if (n < storySnapshot.size) n else null
@@ -282,7 +288,7 @@ private fun UserRow(
     onLongClick: ((Profile) -> Unit)? = null
 ) {
     val haptic = LocalHapticFeedback.current
-    val prof by remember(uid) { Repo.profileFlow(uid) }.collectAsState(initial = Profile())
+    val prof by remember(uid) { Repo.basicProfileFlow(uid) }.collectAsState(initial = Profile())
     val avatar = rememberB64Image(prof.avatar)
     val shown = prof.name.ifBlank { fallbackName }.ifBlank { "مستخدم" }
     // نقطة "متصل" الخضراء (فقط لصفوف المحادثات، حتى ما نفتح مستمع لكل نتيجة بحث)

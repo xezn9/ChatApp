@@ -6,6 +6,8 @@ import android.media.MediaPlayer
 import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
@@ -615,7 +617,7 @@ internal fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
                         Box(
                             Modifier.fillMaxHeight().aspectRatio(9f / 16f, matchHeightConstraintsFirst = true)
                                 .clip(cardShape)
-                                .background(storyBgBrush(0))
+                                .background(if (image != null) Color.Black else storyBgBrush(0))
                                 .border(
                                     0.9.dp,
                                     Brush.verticalGradient(listOf(Color.White.copy(0.55f), Color.White.copy(0.08f))),
@@ -629,7 +631,7 @@ internal fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
                             if (image != null) {
                                 Image(
                                     image, null, Modifier.fillMaxSize().storyGrain(filterId),
-                                    contentScale = ContentScale.Crop,
+                                    contentScale = ContentScale.Fit,
                                     colorFilter = storyColorFilter(filterId)
                                 )
                             } else {
@@ -866,7 +868,11 @@ fun StoryViewerScreen(
     showMenu: Boolean,
     onDismiss: () -> Unit,
     onFinished: () -> Unit = onDismiss,
-    onEdit: () -> Unit = {}
+    onEdit: () -> Unit = {},
+    /** معرّف صاحب القصة: إذا موجود (وما هي قصتي) يطلع شريط "الرد على القصة" */
+    ownerUid: String = "",
+    /** ضغطة على صورة/اسم صاحب القصة تفتح ملفه الشخصي */
+    onOpenProfile: (() -> Unit)? = null
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -881,7 +887,11 @@ fun StoryViewerScreen(
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
     val prog = remember { Animatable(0f) }
     val finishedCb by rememberUpdatedState(onFinished)
-    val paused = menuOpen || confirmDelete
+    val focusManager = LocalFocusManager.current
+    var replyText by remember { mutableStateOf("") }
+    var replyFocused by remember { mutableStateOf(false) }
+    val canReply = !mine && ownerUid.isNotBlank()
+    val paused = menuOpen || confirmDelete || replyFocused
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -917,6 +927,7 @@ fun StoryViewerScreen(
         when {
             confirmDelete -> if (!deleting) confirmDelete = false
             menuOpen -> menuOpen = false
+            replyFocused -> focusManager.clearFocus()
             else -> onDismiss()
         }
     }
@@ -924,16 +935,20 @@ fun StoryViewerScreen(
     Box(Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) { detectTapGestures { } }) {
         // محتوى القصة (هذا اللي تتموّه خلفه الأزرار الزجاجية)
         Box(
-            Modifier.fillMaxSize().layerBackdrop(bd).background(storyBgBrush(story.bg))
+            Modifier.fillMaxSize().layerBackdrop(bd)
+                .background(if (image != null) Brush.verticalGradient(listOf(Color.Black, Color.Black)) else storyBgBrush(story.bg))
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                    if (menuOpen) menuOpen = false else finishedCb()
+                    if (menuOpen) menuOpen = false
+                    else if (replyFocused) focusManager.clearFocus()
+                    else finishedCb()
                 },
             contentAlignment = Alignment.Center
         ) {
             if (image != null) {
+                // الصورة بحجمها الأصلي (بدون تكبير/قص): تظهر كاملة بنسبتها الحقيقية
                 Image(
                     image, null, Modifier.fillMaxSize().storyGrain(story.filter),
-                    contentScale = ContentScale.Crop,
+                    contentScale = ContentScale.Fit,
                     colorFilter = storyColorFilter(story.filter)
                 )
             }
@@ -959,7 +974,15 @@ fun StoryViewerScreen(
                     Icon(Icons.Filled.Close, null, tint = Color.White, modifier = Modifier.size(24.dp))
                 }
                 Spacer(Modifier.width(10.dp))
-                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    Modifier.weight(1f).then(
+                        if (onOpenProfile != null && !mine) Modifier.clip(RoundedCornerShape(24.dp)).clickable {
+                            player.stop()
+                            onOpenProfile()
+                        } else Modifier
+                    ),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Box(
                         Modifier.size(38.dp).clip(CircleShape).background(Color(0xFF2B2F36)),
                         contentAlignment = Alignment.Center
@@ -983,6 +1006,52 @@ fun StoryViewerScreen(
                     }
                 } else {
                     Spacer(Modifier.size(48.dp))
+                }
+            }
+        }
+
+        // الرد على القصة: يوصل كرسالة بالمحادثة مع صاحب القصة
+        if (canReply) {
+            val barShape = RoundedCornerShape(30.dp)
+            Row(
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                    .imePadding().navigationBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    Modifier.weight(1f).heightIn(min = 52.dp)
+                        .liquidCard(bd, barShape, dark = true)
+                        .background(Color.Black.copy(0.22f), barShape)
+                        .padding(horizontal = 20.dp, vertical = 14.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    if (replyText.isEmpty()) {
+                        Text("رد على القصة...", color = Color.White.copy(0.65f), fontSize = 16.sp)
+                    }
+                    BasicTextField(
+                        value = replyText,
+                        onValueChange = { replyText = it.take(500) },
+                        maxLines = 4,
+                        textStyle = TextStyle(color = Color.White, fontSize = 16.sp),
+                        cursorBrush = SolidColor(Color(0xFF1AA7FF)),
+                        modifier = Modifier.fillMaxWidth().onFocusChanged { replyFocused = it.isFocused }
+                    )
+                }
+                if (replyText.isNotBlank()) {
+                    Spacer(Modifier.width(10.dp))
+                    GlassButton(
+                        onClick = {
+                            Repo.sendStoryReply(ownerUid, replyText.trim())
+                            replyText = ""
+                            focusManager.clearFocus()
+                            Toast.makeText(ctx, "انرسل ردك", Toast.LENGTH_SHORT).show()
+                        },
+                        backdrop = bd, tint = Color(0xFF1AA7FF),
+                        modifier = Modifier.size(52.dp)
+                    ) {
+                        Icon(AppIcons.Reply, null, tint = Color.White, modifier = Modifier.size(24.dp))
+                    }
                 }
             }
         }
@@ -1089,6 +1158,21 @@ fun StoriesRow(stories: List<ActiveStory>, myUid: String, onOpen: (Int) -> Unit)
 /** فقاعة الحالة فوق الصورة (مثل تيك توك). [text] = null تعني "أضف حالة" لصاحب الملف */
 @Composable
 fun StatusBubble(text: String?, backdrop: Backdrop, u: Dp, onClick: (() -> Unit)?) {
+    // زر "أضف حالة": كبسولة دائرية الحواف بزجاج سائل (نفس أزرار التطبيق)
+    if (text == null && onClick != null) {
+        GlassButton(
+            onClick = onClick,
+            backdrop = backdrop,
+            modifier = Modifier.height(u * 120f)
+        ) {
+            Text(
+                "+ أضف حالة", color = Color.White, fontSize = (u.value * 46f).sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(horizontal = u * 52f)
+            )
+        }
+        return
+    }
     val shape = RoundedCornerShape(u * 46f)
     Column(horizontalAlignment = Alignment.Start) {
         Box(

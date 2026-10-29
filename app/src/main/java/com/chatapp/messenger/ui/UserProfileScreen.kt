@@ -5,7 +5,13 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import android.widget.Toast
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material.icons.filled.Check
+import com.chatapp.messenger.Relation
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -26,6 +32,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -78,8 +85,30 @@ fun UserProfileScreen(user: UserItem, onBack: () -> Unit, onMessage: () -> Unit)
     val story = profile.story
     val hasStory = story != null && !profile.restricted && System.currentTimeMillis() < story.expiresAt
     var showStory by remember { mutableStateOf(false) }
+    // الصورة المعروضة بملء الشاشة (بانر أو صورة شخصية): null = مغلق
+    var viewImage by remember { mutableStateOf<String?>(null) }
 
-    BackHandler(enabled = !showStory, onBack = onBack)
+    // الصداقة: أضيفه / ألغي الطلب / أقبل أو أرفض / ألغي الصداقة
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val myUid = Repo.auth.currentUser?.uid ?: ""
+    val isMe = user.uid == myUid
+    val relation by remember(user.uid) { Repo.relationFlow(user.uid) }.collectAsState(initial = Relation.NONE)
+    var relBusy by remember { mutableStateOf(false) }
+    var confirmUnfriend by remember { mutableStateOf(false) }
+    fun relAction(block: suspend () -> Unit) {
+        if (relBusy) return
+        relBusy = true
+        scope.launch {
+            try { block() } catch (e: Exception) {
+                Toast.makeText(ctx, "فشلت العملية: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+            relBusy = false
+        }
+    }
+
+    BackHandler(enabled = !showStory && !confirmUnfriend, onBack = onBack)
+    BackHandler(enabled = confirmUnfriend) { confirmUnfriend = false }
 
     Box(Modifier.fillMaxSize()) {
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
@@ -137,6 +166,16 @@ fun UserProfileScreen(user: UserItem, onBack: () -> Unit, onMessage: () -> Unit)
                         .padding(bottom = 40.dp)
                         .navigationBarsPadding()
                 ) {
+                    // ضغطة عادية أو مطولة على البانر = يفتح الصورة بملء الشاشة
+                    Box(
+                        Modifier.fillMaxWidth().height(u * 620f).align(Alignment.TopStart)
+                            .pointerInput(profile.banner, profile.restricted) {
+                                detectTapGestures(
+                                    onTap = { if (profile.banner.isNotBlank() && !profile.restricted) viewImage = profile.banner },
+                                    onLongPress = { if (profile.banner.isNotBlank() && !profile.restricted) viewImage = profile.banner }
+                                )
+                            }
+                    )
                     Row(
                         Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -153,7 +192,17 @@ fun UserProfileScreen(user: UserItem, onBack: () -> Unit, onMessage: () -> Unit)
                             .border(u * 14f, if (hasStory) StoryBlue else SolidColor(Color(0xFF4F4F4F)), CircleShape)
                             .padding(u * 14f).background(Color.Black, CircleShape)
                             .padding(u * 6f).clip(CircleShape).background(Color(0xFF2B2F36))
-                            .clickable(enabled = hasStory) { showStory = true },
+                            .pointerInput(hasStory, profile.avatar, profile.restricted) {
+                                detectTapGestures(
+                                    onTap = {
+                                        if (hasStory) showStory = true
+                                        else if (profile.avatar.isNotBlank() && !profile.restricted) viewImage = profile.avatar
+                                    },
+                                    onLongPress = {
+                                        if (profile.avatar.isNotBlank() && !profile.restricted) viewImage = profile.avatar
+                                    }
+                                )
+                            },
                         contentAlignment = Alignment.Center
                     ) {
                         if (avatarImg != null) {
@@ -218,17 +267,79 @@ fun UserProfileScreen(user: UserItem, onBack: () -> Unit, onMessage: () -> Unit)
                             ) {
                                 Text("مراسلة", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                             }
+                            if (!isMe) {
+                                Spacer(Modifier.height(10.dp))
+                                when (relation) {
+                                    Relation.NONE -> GlassButton(
+                                        onClick = { relAction { Repo.sendFriendRequest(user.uid) } },
+                                        backdrop = glass, tint = Color(0xFF2EBD85), enabled = !relBusy,
+                                        modifier = Modifier.fillMaxWidth().height(50.dp)
+                                    ) {
+                                        Text("إضافة صديق", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                    Relation.SENT -> GlassButton(
+                                        onClick = { relAction { Repo.cancelFriendRequest(user.uid) } },
+                                        backdrop = glass, enabled = !relBusy,
+                                        modifier = Modifier.fillMaxWidth().height(50.dp)
+                                    ) {
+                                        Text("تم إرسال الطلب · إلغاء", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                    Relation.RECEIVED -> Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        GlassButton(
+                                            onClick = { relAction { Repo.acceptFriendRequest(user.uid) } },
+                                            backdrop = glass, tint = Color(0xFF2EBD85), enabled = !relBusy,
+                                            modifier = Modifier.weight(1f).height(50.dp)
+                                        ) { Text("قبول الصداقة", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold) }
+                                        GlassButton(
+                                            onClick = { relAction { Repo.declineFriendRequest(user.uid) } },
+                                            backdrop = glass, enabled = !relBusy,
+                                            modifier = Modifier.weight(1f).height(50.dp)
+                                        ) { Text("رفض", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold) }
+                                    }
+                                    Relation.FRIENDS -> GlassButton(
+                                        onClick = { confirmUnfriend = true },
+                                        backdrop = glass, enabled = !relBusy,
+                                        modifier = Modifier.fillMaxWidth().height(50.dp)
+                                    ) {
+                                        Icon(Icons.Filled.Check, null, tint = Color(0xFF5CE0A6), modifier = Modifier.size(20.dp))
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("صديق", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
+            }
+
+            if (confirmUnfriend) {
+                GlassConfirmDialog(
+                    backdrop = glass,
+                    dark = true,
+                    title = "إلغاء الصداقة",
+                    message = "راح تلغي صداقتك مع $name، وما يگدر يشوف قصتك ولا تشوف قصته لين ترجعوا أصدقاء.",
+                    confirmText = "إلغاء الصداقة",
+                    icon = Icons.Filled.Person,
+                    onConfirm = { confirmUnfriend = false; relAction { Repo.removeFriend(user.uid) } },
+                    onDismiss = { confirmUnfriend = false },
+                    cancelText = "رجوع"
+                )
             }
         }
     }
     if (showStory && hasStory && story != null) {
         StoryViewerScreen(
             story = story, owner = profile, mine = false, showMenu = false,
-            onDismiss = { showStory = false }
+            onDismiss = { showStory = false },
+            ownerUid = user.uid,
+            // أنا أصلاً على ملفه الشخصي: ضغطة على صورته بالقصة تسكّر القصة وتبين الملف
+            onOpenProfile = { showStory = false }
         )
     }
+    // عرض البانر / الصورة الشخصية بملء الشاشة مع حفظ بالمعرض
+    ImageViewerHost(viewImage) { viewImage = null }
     }
 }

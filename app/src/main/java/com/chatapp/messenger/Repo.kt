@@ -14,6 +14,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -86,6 +87,9 @@ data class Status(val text: String, val createdAt: Long) {
 
 /** قصة فعّالة لمستخدم (تظهر بقائمة القصص عند الكل) */
 data class ActiveStory(val uid: String, val profile: Profile)
+
+/** علاقتي بشخص: لا شي / أرسلت له طلب / أرسل لي طلب / أصدقاء */
+enum class Relation { NONE, SENT, RECEIVED, FRIENDS }
 
 data class Profile(
     val name: String = "",
@@ -398,28 +402,28 @@ object Repo {
 
     // ---------- الملف الشخصي والقصة (مجموعة profiles منفصلة حتى ما تثقل قائمة المستخدمين) ----------
 
-    fun profileFlow(uid: String): Flow<Profile> = callbackFlow {
+    /** تحويل خريطة القصة المخزنة إلى كائن Story */
+    private fun parseStory(it: Map<*, *>) = Story(
+        text = it["text"] as? String ?: "",
+        color = (it["color"] as? Number)?.toInt() ?: -1,
+        image = it["image"] as? String ?: "",
+        createdAt = (it["createdAt"] as? Number)?.toLong() ?: 0L,
+        bg = (it["bg"] as? Number)?.toInt() ?: 0,
+        filter = it["filter"] as? String ?: "",
+        musicUrl = it["musicUrl"] as? String ?: "",
+        musicTitle = it["musicTitle"] as? String ?: "",
+        musicArtist = it["musicArtist"] as? String ?: "",
+        musicCover = it["musicCover"] as? String ?: "",
+        musicStart = (it["musicStart"] as? Number)?.toInt() ?: 0
+    )
+
+    /** بيانات الملف الشخصي الأساسية فقط (بدون القصة): خفيفة، تنفع لصفوف القوائم */
+    fun basicProfileFlow(uid: String): Flow<Profile> = callbackFlow {
         val reg = db.collection("profiles").document(uid).addSnapshotListener { d, err ->
             if (err != null) {
                 // الصلاحيات ترفض القراءة إذا هذا المستخدم حاظرني
                 trySend(Profile(restricted = true))
             } else if (d != null) {
-                val s = d.get("story") as? Map<*, *>
-                val story = s?.let {
-                    Story(
-                        text = it["text"] as? String ?: "",
-                        color = (it["color"] as? Number)?.toInt() ?: -1,
-                        image = it["image"] as? String ?: "",
-                        createdAt = (it["createdAt"] as? Number)?.toLong() ?: 0L,
-                        bg = (it["bg"] as? Number)?.toInt() ?: 0,
-                        filter = it["filter"] as? String ?: "",
-                        musicUrl = it["musicUrl"] as? String ?: "",
-                        musicTitle = it["musicTitle"] as? String ?: "",
-                        musicArtist = it["musicArtist"] as? String ?: "",
-                        musicCover = it["musicCover"] as? String ?: "",
-                        musicStart = (it["musicStart"] as? Number)?.toInt() ?: 0
-                    )
-                }
                 val stt = d.get("status") as? Map<*, *>
                 val status = stt?.let {
                     Status(
@@ -434,7 +438,7 @@ object Repo {
                         bio = d.getString("bio") ?: "",
                         avatar = d.getString("avatar") ?: "",
                         banner = d.getString("banner") ?: "",
-                        story = story,
+                        story = null,
                         status = status,
                         bubbleStyle = d.getString("bubbleStyle") ?: "glass"
                     )
@@ -442,6 +446,34 @@ object Repo {
             }
         }
         awaitClose { reg.remove() }
+    }
+
+    /** القصة محفوظة بوثيقة منفصلة storyData/<uid> (القواعد تسمح بقراءتها لصاحبها وأصدقائه فقط) */
+    private fun storyDocFlow(uid: String): Flow<Story?> = callbackFlow {
+        val reg = db.collection("storyData").document(uid).addSnapshotListener { d, err ->
+            if (err != null) trySend(null)
+            else if (d != null) trySend(if (d.exists()) (d.data as? Map<*, *>)?.let { parseStory(it) } else null)
+        }
+        awaitClose { reg.remove() }
+    }
+
+    /** الملف الشخصي + القصة. قصة غير الأصدقاء ما تنقرأ أبداً (فتطلع null) */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun profileFlow(uid: String): Flow<Profile> {
+        val story: Flow<Story?> =
+            if (uid == auth.currentUser?.uid) storyDocFlow(uid)
+            else isFriendFlow(uid).flatMapLatest { friend -> if (friend) storyDocFlow(uid) else flowOf(null) }
+        return combine(basicProfileFlow(uid), story) { p, s -> p.copy(story = s) }
+    }
+
+    /** ينقل قصة قديمة (كانت داخل profiles) للمكان الجديد المحمي، مرة وحدة */
+    suspend fun migrateLegacyStory() {
+        val u = auth.currentUser ?: return
+        val d = db.collection("profiles").document(u.uid).get().await()
+        val legacy = (d.get("story") as? Map<*, *>)?.let { parseStory(it) } ?: return
+        if (System.currentTimeMillis() < legacy.expiresAt) saveStory(legacy)
+        else db.collection("profiles").document(u.uid)
+            .set(mapOf("story" to FieldValue.delete()), SetOptions.merge()).await()
     }
 
     // ---------- اليوزر: فريد لكل مستخدم (مجموعة usernames تحجز الاسم) ----------
@@ -510,7 +542,7 @@ object Repo {
         ).await()
     }
 
-    /** نشر القصة: تنكتب بملفي الشخصي + فهرس عام `stories/<uid>` حتى تظهر عند كل المستخدمين */
+    /** نشر القصة: تنكتب بوثيقة محمية storyData/<uid> (للأصدقاء فقط) + فهرس عام `stories/<uid>` يحتوي الوقت فقط */
     suspend fun saveStory(st: Story) {
         val u = auth.currentUser ?: return
         val map = mapOf(
@@ -520,8 +552,10 @@ object Repo {
             "musicCover" to st.musicCover, "musicStart" to st.musicStart
         )
         db.batch()
-            .set(db.collection("profiles").document(u.uid), mapOf("story" to map), SetOptions.mergeFields("story"))
+            .set(db.collection("storyData").document(u.uid), map)
             .set(db.collection("stories").document(u.uid), mapOf("uid" to u.uid, "createdAt" to st.createdAt))
+            // نشيل أي نسخة قديمة من القصة كانت مكشوفة داخل الملف الشخصي
+            .set(db.collection("profiles").document(u.uid), mapOf("story" to FieldValue.delete()), SetOptions.merge())
             .commit().await()
     }
 
@@ -549,8 +583,9 @@ object Repo {
     suspend fun deleteStory() {
         val u = auth.currentUser ?: return
         db.batch()
-            .update(db.collection("profiles").document(u.uid), "story", FieldValue.delete())
+            .delete(db.collection("storyData").document(u.uid))
             .delete(db.collection("stories").document(u.uid))
+            .set(db.collection("profiles").document(u.uid), mapOf("story" to FieldValue.delete()), SetOptions.merge())
             .commit().await()
     }
 
@@ -566,12 +601,15 @@ object Repo {
     }
 
     /**
-     * قصص كل المستخدمين الفعّالة: قصتي أولاً ثم الأحدث.
+     * قصص الفعّالة: قصتي + قصص أصدقائي فقط (الأحدث أولاً، وقصتي أولاً).
      * من حاظرني تنرفض قراءة ملفه بالقواعد فتختفي قصته تلقائياً (restricted).
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     fun activeStoriesFlow(): Flow<List<ActiveStory>> =
-        storyIndexFlow().flatMapLatest { uids ->
+        combine(storyIndexFlow(), friendIdsFlow()) { uids, friends ->
+            val me = auth.currentUser?.uid
+            uids.filter { it == me || it in friends }.sorted()
+        }.distinctUntilChanged().flatMapLatest { uids ->
             if (uids.isEmpty()) flowOf(emptyList())
             else combine(uids.map { uid -> profileFlow(uid).map { ActiveStory(uid, it) } }) { arr ->
                 val me = auth.currentUser?.uid
@@ -585,6 +623,116 @@ object Repo {
                 )
             }
         }
+
+    /** رد على قصة: يوصل كرسالة بالمحادثة مع صاحب القصة (مع اقتباس "القصة") */
+    fun sendStoryReply(owner: String, text: String) {
+        val me = auth.currentUser?.uid ?: return
+        send(me, owner, text, replyId = "story", replyText = "القصة", replyFrom = owner)
+    }
+
+    // ---------- الأصدقاء ----------
+    // friendRequests/<from>_<to> = طلب صداقة، friendships/<uidA>_<uidB> (مرتبين) = صداقة قائمة
+
+    private fun docExistsFlow(col: String, id: String): Flow<Boolean> = callbackFlow {
+        val reg = db.collection(col).document(id).addSnapshotListener { d, err ->
+            if (err != null) trySend(false) else if (d != null) trySend(d.exists())
+        }
+        awaitClose { reg.remove() }
+    }
+
+    /** هل [other] صديقي؟ */
+    fun isFriendFlow(other: String): Flow<Boolean> {
+        val me = auth.currentUser?.uid ?: return flowOf(false)
+        return docExistsFlow("friendships", chatId(me, other))
+    }
+
+    /** أصدقائي (الأحدث صداقة أولاً) */
+    fun friendsFlow(me: String): Flow<List<String>> = callbackFlow {
+        val reg = db.collection("friendships").whereArrayContains("users", me)
+            .addSnapshotListener { snap, _ ->
+                if (snap != null) {
+                    trySend(
+                        snap.documents.mapNotNull { d ->
+                            val other = (d.get("users") as? List<*>)?.firstOrNull { it != me } as? String
+                                ?: return@mapNotNull null
+                            other to (d.getTimestamp("at", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                                ?.toDate()?.time ?: 0L)
+                        }.sortedByDescending { it.second }.map { it.first }
+                    )
+                }
+            }
+        awaitClose { reg.remove() }
+    }
+
+    fun friendIdsFlow(): Flow<Set<String>> {
+        val me = auth.currentUser?.uid ?: return flowOf(emptySet())
+        return friendsFlow(me).map { it.toSet() }
+    }
+
+    /** طلبات الصداقة الواردة لي (معرّفات المرسلين) */
+    fun incomingRequestsFlow(me: String): Flow<List<String>> = callbackFlow {
+        val reg = db.collection("friendRequests").whereEqualTo("to", me)
+            .addSnapshotListener { snap, _ ->
+                if (snap != null) trySend(snap.documents.mapNotNull { it.getString("from") })
+            }
+        awaitClose { reg.remove() }
+    }
+
+    /** علاقتي بهذا الشخص (تتحدث مباشرة) */
+    fun relationFlow(other: String): Flow<Relation> {
+        val me = auth.currentUser?.uid ?: return flowOf(Relation.NONE)
+        return combine(
+            docExistsFlow("friendships", chatId(me, other)),
+            docExistsFlow("friendRequests", "${me}_$other"),
+            docExistsFlow("friendRequests", "${other}_$me")
+        ) { friend, sent, received ->
+            when {
+                friend -> Relation.FRIENDS
+                received -> Relation.RECEIVED
+                sent -> Relation.SENT
+                else -> Relation.NONE
+            }
+        }
+    }
+
+    suspend fun sendFriendRequest(other: String) {
+        val me = auth.currentUser?.uid ?: return
+        db.collection("friendRequests").document("${me}_$other").set(
+            mapOf("from" to me, "to" to other, "createdAt" to FieldValue.serverTimestamp())
+        ).await()
+    }
+
+    /** إلغاء طلب أرسلته أنا */
+    suspend fun cancelFriendRequest(other: String) {
+        val me = auth.currentUser?.uid ?: return
+        db.collection("friendRequests").document("${me}_$other").delete().await()
+    }
+
+    /** رفض طلب وارد لي */
+    suspend fun declineFriendRequest(from: String) {
+        val me = auth.currentUser?.uid ?: return
+        db.collection("friendRequests").document("${from}_$me").delete().await()
+    }
+
+    /** قبول طلب وارد: تنخلق الصداقة (للطرفين) والطلب ينحذف */
+    suspend fun acceptFriendRequest(from: String) {
+        val me = auth.currentUser?.uid ?: return
+        db.batch()
+            .set(
+                db.collection("friendships").document(chatId(me, from)),
+                mapOf("users" to listOf(me, from), "at" to FieldValue.serverTimestamp())
+            )
+            .delete(db.collection("friendRequests").document("${from}_$me"))
+            .commit().await()
+        // لو كنت أنا مرسل له طلب بنفس الوقت ننظفه
+        runCatching { db.collection("friendRequests").document("${me}_$from").delete().await() }
+    }
+
+    /** إلغاء الصداقة (من الطرفين) */
+    suspend fun removeFriend(other: String) {
+        val me = auth.currentUser?.uid ?: return
+        db.collection("friendships").document(chatId(me, other)).delete().await()
+    }
 
     // ---------- شكل الفقاعات (يتخزن بملفي الشخصي حتى يشوفه الطرف الثاني) ----------
 

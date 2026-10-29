@@ -122,6 +122,11 @@ private fun MainContent() {
             Repo.ensureUsername()
         } catch (_: Exception) {
         }
+        // قصة قديمة (من نسخة سابقة) تنتقل للمكان المحمي الخاص بالأصدقاء
+        try {
+            Repo.migrateLegacyStory()
+        } catch (_: Exception) {
+        }
     }
     // إشعارات الرسائل: صلاحية أندرويد 13+ وتسجيل توكن الجهاز لهذا الحساب
     LaunchedEffect(myUid) {
@@ -206,7 +211,10 @@ private fun MainContent() {
                         onOverlayChange = { overlayOpen = it }
                     )
                     1 -> BdfTab()
-                    else -> AccountTab(onOverlayChange = { overlayOpen = it })
+                    else -> AccountTab(
+                        onOverlayChange = { overlayOpen = it },
+                        onOpenProfile = { viewProfile = it }
+                    )
                 }
             }
             }

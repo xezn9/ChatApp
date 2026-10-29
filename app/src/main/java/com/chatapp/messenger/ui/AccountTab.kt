@@ -42,6 +42,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import kotlin.math.roundToInt
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.layout.onSizeChanged
@@ -162,7 +163,11 @@ internal val StoryColors = listOf(
 
 /** تبويب Account: ملف المستخدم (بانر، صورة، اسم، يوزر، نبذة) + القصة */
 @Composable
-fun AccountTab(onOverlayChange: (Boolean) -> Unit = {}) {
+fun AccountTab(
+    onOverlayChange: (Boolean) -> Unit = {},
+    /** فتح ملف شخصي لشخص (من قائمة الأصدقاء) */
+    onOpenProfile: (com.chatapp.messenger.UserItem) -> Unit = {}
+) {
     val me = Repo.auth.currentUser
     val myUid = me?.uid ?: ""
     val profile by remember(myUid) { Repo.profileFlow(myUid) }.collectAsState(initial = Profile())
@@ -189,11 +194,41 @@ fun AccountTab(onOverlayChange: (Boolean) -> Unit = {}) {
     var showStoryEditor by remember { mutableStateOf(false) }
     var showViewer by remember { mutableStateOf(false) }
     var showStatusEditor by remember { mutableStateOf(false) }
+    var showFriends by remember { mutableStateOf(false) }
+    var showBgSheet by remember { mutableStateOf(false) }
+    // الصورة المعروضة بملء الشاشة (بانر أو صورة شخصية): null = مغلق
+    var viewImage by remember { mutableStateOf<String?>(null) }
+    var friendsCenter by remember { mutableStateOf<Offset?>(null) }
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val friends by remember(myUid) { Repo.friendsFlow(myUid) }.collectAsState(initial = emptyList())
+    val requests by remember(myUid) { Repo.incomingRequestsFlow(myUid) }.collectAsState(initial = emptyList())
+    // خلفية Account (محفوظة بالجهاز)
+    var bgChoice by remember { mutableStateOf(AccountBgStore.choice(ctx)) }
+    var bgVersion by remember { mutableStateOf(0) }
+    val customBg by androidx.compose.runtime.produceState<ImageBitmap?>(null, bgVersion) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                val f = AccountBgStore.customFile(ctx)
+                if (f.exists()) android.graphics.BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() else null
+            }.getOrNull()
+        }
+    }
+    val pickBg = rememberImagePicker(maxSide = 1600, quality = 80) { b64 ->
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { AccountBgStore.customFile(ctx).writeBytes(android.util.Base64.decode(b64, android.util.Base64.NO_WRAP)) }
+            AccountBgStore.setChoice(ctx, ACCOUNT_BG_CUSTOM)
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                bgChoice = ACCOUNT_BG_CUSTOM
+                bgVersion++
+                showBgSheet = false
+            }
+        }
+    }
     var statusSeed by remember { mutableStateOf<com.chatapp.messenger.Status?>(null) }
     // نسخة ثابتة من القصة تبقى طول حركة الإغلاق (حتى لو انحذفت أو تغيّرت القصة الأصلية)
     var editorSeed by remember { mutableStateOf<Story?>(null) }
     var viewerSeed by remember { mutableStateOf<Story?>(null) }
-    val scope = rememberCoroutineScope()
 
     // مواقع زر + والصورة الشخصية: منها تطلع الواجهات وإلها ترجع
     val rootView = LocalView.current
@@ -207,7 +242,7 @@ fun AccountTab(onOverlayChange: (Boolean) -> Unit = {}) {
         )
 
     // نخبر الشاشة الرئيسية حتى تخفي الشريط السفلي أثناء التعديل
-    val overlay = showEdit || showStoryEditor || showViewer || showStatusEditor
+    val overlay = showEdit || showStoryEditor || showViewer || showStatusEditor || showFriends || showBgSheet || viewImage != null
     LaunchedEffect(overlay) { onOverlayChange(overlay) }
     DisposableEffect(Unit) { onDispose { onOverlayChange(false) } }
 
@@ -224,7 +259,8 @@ fun AccountTab(onOverlayChange: (Boolean) -> Unit = {}) {
             val bannerH = u * 620f + statusTop
             val glass = rememberLayerBackdrop()
 
-            Box(Modifier.fillMaxSize().layerBackdrop(glass).background(appBackground())) {
+            Box(Modifier.fillMaxSize().layerBackdrop(glass)) {
+                AccountBackground(bgChoice, customBg, Modifier.matchParentSize())
                 Box(
                     Modifier.fillMaxWidth().height(bannerH)
                         .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
@@ -268,12 +304,22 @@ fun AccountTab(onOverlayChange: (Boolean) -> Unit = {}) {
                         .padding(bottom = 140.dp)
                         .navigationBarsPadding()
                 ) {
+                    // ضغطة عادية أو مطولة على البانر = يفتح الصورة بملء الشاشة (إذا فيه بانر)
+                    Box(
+                        Modifier.fillMaxWidth().height(u * 620f).align(Alignment.TopStart)
+                            .pointerInput(profile.banner) {
+                                detectTapGestures(
+                                    onTap = { if (profile.banner.isNotBlank()) viewImage = profile.banner },
+                                    onLongPress = { if (profile.banner.isNotBlank()) viewImage = profile.banner }
+                                )
+                            }
+                    )
                     // الأزرار العلوية: قائمة يسار، قلم يمين
                     Row(
                         Modifier.fillMaxWidth().padding(start = u * 22f, end = u * 20f, top = u * 20f),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        RoundIconButton(Icons.Filled.Menu, glass, u * 150f) { /* قائمة: لسا بدون وظيفة */ }
+                        RoundIconButton(Icons.Filled.Menu, glass, u * 150f) { showBgSheet = true }
                         RoundIconButton(Icons.Filled.Edit, glass, u * 150f) { showEdit = true }
                     }
                     // الصورة الشخصية يسار
@@ -287,8 +333,11 @@ fun AccountTab(onOverlayChange: (Boolean) -> Unit = {}) {
                                 if (storyActive && story != null) {
                                     viewerSeed = story
                                     showViewer = true
+                                } else if (profile.avatar.isNotBlank()) {
+                                    viewImage = profile.avatar
                                 }
                             },
+                            onAvatarLongClick = { if (profile.avatar.isNotBlank()) viewImage = profile.avatar },
                             onPlus = {
                                 editorSeed = if (storyActive) story else null
                                 showStoryEditor = true
@@ -326,14 +375,46 @@ fun AccountTab(onOverlayChange: (Boolean) -> Unit = {}) {
                             )
                         }
                     }
-                    // النبذة (بدون عنوان)
-                    if (profile.bio.isNotBlank()) {
-                        Text(
-                            profile.bio, color = Color.White, fontSize = (u.value * 52f).sp,
-                            textAlign = TextAlign.End,
-                            modifier = Modifier.align(Alignment.TopEnd)
-                                .padding(top = u * 705f, end = u * 35f, start = u * 35f)
-                        )
+                    // النبذة + زر الأصدقاء (يتحرك تحت النبذة)
+                    Column(
+                        Modifier.align(Alignment.TopEnd).fillMaxWidth()
+                            .padding(top = u * 705f, end = u * 35f, start = u * 35f),
+                        horizontalAlignment = Alignment.End
+                    ) {
+                        if (profile.bio.isNotBlank()) {
+                            Text(
+                                profile.bio, color = Color.White, fontSize = (u.value * 52f).sp,
+                                textAlign = TextAlign.End
+                            )
+                            Spacer(Modifier.height(18.dp))
+                        }
+                        Box(Modifier.onGloballyPositioned { friendsCenter = it.boundsInRoot().center }) {
+                            GlassButton(
+                                onClick = { showFriends = true },
+                                backdrop = glass,
+                                modifier = Modifier.height(48.dp)
+                            ) {
+                                Icon(Icons.Filled.Person, null, tint = Color.White, modifier = Modifier.padding(start = 18.dp).size(22.dp))
+                                Text(
+                                    "الأصدقاء", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.padding(start = 8.dp)
+                                )
+                                Text(
+                                    "${friends.size}", color = Color(0xFF7FD4FF), fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(start = 8.dp, end = 20.dp)
+                                )
+                            }
+                            // نقطة حمراء بعدد طلبات الصداقة الجديدة
+                            if (requests.isNotEmpty()) {
+                                Box(
+                                    Modifier.align(Alignment.TopEnd).offset(x = 6.dp, y = (-6).dp)
+                                        .size(22.dp).clip(CircleShape).background(Color(0xFFFF453A)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("${requests.size}", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -410,7 +491,51 @@ fun AccountTab(onOverlayChange: (Boolean) -> Unit = {}) {
             )
         }
     }
+    // شاشة الأصدقاء: تنبعث من زر الأصدقاء وترجع إله
+    OriginOverlay(
+        visible = showFriends,
+        origin = originOf(friendsCenter, TransformOrigin(0.85f, 0.55f))
+    ) {
+        FriendsScreen(
+            onDismiss = { showFriends = false },
+            onOpenProfile = onOpenProfile
+        )
+    }
+    // لوحة اختيار خلفية Account
+    AnimatedVisibility(
+        visible = showBgSheet,
+        enter = androidx.compose.animation.slideInVertically(spring(0.85f, 400f)) { it } + fadeIn(tween(180)),
+        exit = androidx.compose.animation.slideOutVertically(tween(220)) { it } + fadeOut(tween(160))
+    ) {
+        BackHandler { showBgSheet = false }
+        val sheetBackdrop = rememberLayerBackdrop()
+        Box(Modifier.fillMaxSize()) {
+            Box(Modifier.matchParentSize().layerBackdrop(sheetBackdrop)) {
+                AccountBackground(bgChoice, customBg, Modifier.matchParentSize())
+            }
+            AccountBgSheet(
+                choice = bgChoice,
+                custom = customBg,
+                backdrop = sheetBackdrop,
+                onPick = { i ->
+                    bgChoice = i
+                    AccountBgStore.setChoice(ctx, i)
+                },
+                onPickCustom = {
+                    // إذا عندك صورة محفوظة من قبل تنطبق مباشرة، وإلا يفتح المعرض
+                    if (customBg != null && bgChoice != ACCOUNT_BG_CUSTOM) {
+                        bgChoice = ACCOUNT_BG_CUSTOM
+                        AccountBgStore.setChoice(ctx, ACCOUNT_BG_CUSTOM)
+                    } else pickBg()
+                },
+                onDismiss = { showBgSheet = false }
+            )
+        }
+    }
+    // عرض البانر / الصورة الشخصية بملء الشاشة مع حفظ بالمعرض
+    ImageViewerHost(viewImage) { viewImage = null }
 }
+
 
 /** غلاف حركة: الشاشة تكبر من نقطة (زر) وترجع تصغر إلها، وحوافها تتحول من دائرية لشاشة كاملة */
 @Composable
@@ -460,10 +585,13 @@ private fun AvatarWithStory(
     backdrop: Backdrop,
     u: Dp,
     onAvatarClick: () -> Unit,
+    onAvatarLongClick: () -> Unit = {},
     onPlus: () -> Unit,
     onPlusPos: (Offset) -> Unit = {},
     onAvatarPos: (Offset) -> Unit = {}
 ) {
+    val clickNow by rememberUpdatedState(onAvatarClick)
+    val longClickNow by rememberUpdatedState(onAvatarLongClick)
     Box(Modifier.size(u * 375f).onGloballyPositioned { onAvatarPos(it.boundsInRoot().center) }) {
         val ringW = u * 14f
         val ring = if (hasStory) Modifier.border(ringW, StoryBlue, CircleShape)
@@ -471,7 +599,8 @@ private fun AvatarWithStory(
         Box(
             Modifier.fillMaxSize().then(ring).padding(ringW).background(Color.Black, CircleShape)
                 .padding(u * 6f).clip(CircleShape)
-                .background(Color(0xFF2B2F36)).clickable(onClick = onAvatarClick),
+                .background(Color(0xFF2B2F36))
+                .pointerInput(Unit) { detectTapGestures(onTap = { clickNow() }, onLongPress = { longClickNow() }) },
             contentAlignment = Alignment.Center
         ) {
             if (avatar != null) {
