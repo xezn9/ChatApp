@@ -14,6 +14,9 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -96,7 +99,10 @@ private fun MainContent() {
     var tab by remember { mutableIntStateOf(0) }
     var chatWith by remember { mutableStateOf<UserItem?>(null) }
     var viewProfile by remember { mutableStateOf<UserItem?>(null) }
-    var overlayOpen by remember { mutableStateOf(false) }
+    // كل تبويب يبلغ عن نفسه منفصل (التبويبات كلها مبنية دائماً)
+    var homeOverlay by remember { mutableStateOf(false) }
+    var accountOverlay by remember { mutableStateOf(false) }
+    val overlayOpen = homeOverlay || accountOverlay
     var confirmLogout by remember { mutableStateOf(false) }
     // حذف محادثة من عندي فقط: (uid, الاسم, وقت آخر رسالة)
     var deleteChat by remember { mutableStateOf<Triple<String, String, Long>?>(null) }
@@ -190,31 +196,49 @@ private fun MainContent() {
             ) {
             // خلفية متحركة بألوان مختلفة لكل تبويب
             AnimatedAppBackground(tab, Modifier.fillMaxSize())
-            // انيميشن التنقل بين التبويبات: انزلاق أفقي + تلاشي حسب اتجاه التبويب
-            AnimatedContent(
-                targetState = tab,
-                transitionSpec = {
-                    val dir = if (targetState > initialState) 1 else -1
-                    (slideInHorizontally(spring(dampingRatio = 0.85f, stiffness = 380f)) { it / 4 * dir } +
-                        fadeIn(tween(220))) togetherWith
-                        (slideOutHorizontally(spring(dampingRatio = 0.85f, stiffness = 380f)) { -it / 4 * dir } +
-                            fadeOut(tween(160)))
-                },
-                label = "tabs"
-            ) { t ->
-                when (t) {
-                    0 -> HomeTab(
-                        onOpenChat = { chatWith = it },
-                        onOpenProfile = { viewProfile = it },
-                        onRequestLogout = { confirmLogout = true },
-                        onRequestDeleteChat = { uid, name, lastAt -> deleteChat = Triple(uid, name, lastAt) },
-                        onOverlayChange = { overlayOpen = it }
-                    )
-                    1 -> BdfTab()
-                    else -> AccountTab(
-                        onOverlayChange = { overlayOpen = it },
-                        onOpenProfile = { viewProfile = it }
-                    )
+            // التبويبات الثلاثة تنبني مرة وحدة عند فتح التطبيق وتبقى حيّة بالخلفية:
+            // التنقل بينها بس انزلاق/تلاشي (بدون إعادة بناء)، وأي تحديث ببياناتها يصير بالخفاء.
+            val tabPos by animateFloatAsState(tab.toFloat(), spring(dampingRatio = 0.85f, stiffness = 380f), label = "tabPos")
+            Box(Modifier.fillMaxSize()) {
+                for (i in 0..2) {
+                    val selected = tab == i
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            // التبويب الحالي دائماً فوق الباقين
+                            .zIndex(if (selected) 1f else 0f)
+                            .graphicsLayer {
+                                val d = i - tabPos
+                                alpha = (1f - kotlin.math.abs(d)).coerceIn(0f, 1f)
+                                translationX = d * size.width * 0.25f
+                            }
+                            // التبويبات المخفية ما تستقبل لمس (حتى ما تنضغط أزرارها بالغلط)
+                            .then(
+                                if (selected) Modifier else Modifier.pointerInput(Unit) {
+                                    awaitPointerEventScope {
+                                        while (true) {
+                                            awaitPointerEvent(PointerEventPass.Initial).changes.forEach { it.consume() }
+                                        }
+                                    }
+                                }
+                            )
+                    ) {
+                        when (i) {
+                            0 -> HomeTab(
+                                onOpenChat = { chatWith = it },
+                                onOpenProfile = { viewProfile = it },
+                                onRequestLogout = { confirmLogout = true },
+                                onRequestDeleteChat = { uid, name, lastAt -> deleteChat = Triple(uid, name, lastAt) },
+                                onOverlayChange = { homeOverlay = it }
+                            )
+                            1 -> BdfTab()
+                            else -> AccountTab(
+                                onOverlayChange = { accountOverlay = it },
+                                onOpenProfile = { viewProfile = it },
+                                active = selected
+                            )
+                        }
+                    }
                 }
             }
             }

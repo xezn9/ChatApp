@@ -166,7 +166,9 @@ internal val StoryColors = listOf(
 fun AccountTab(
     onOverlayChange: (Boolean) -> Unit = {},
     /** فتح ملف شخصي لشخص (من قائمة الأصدقاء) */
-    onOpenProfile: (com.chatapp.messenger.UserItem) -> Unit = {}
+    onOpenProfile: (com.chatapp.messenger.UserItem) -> Unit = {},
+    /** true لما يكون هذا التبويب هو الظاهر (كل التبويبات مبنية من البداية) */
+    active: Boolean = true
 ) {
     val me = Repo.auth.currentUser
     val myUid = me?.uid ?: ""
@@ -195,7 +197,6 @@ fun AccountTab(
     var showViewer by remember { mutableStateOf(false) }
     var showStatusEditor by remember { mutableStateOf(false) }
     var showFriends by remember { mutableStateOf(false) }
-    var showBgSheet by remember { mutableStateOf(false) }
     // الصورة المعروضة بملء الشاشة (بانر أو صورة شخصية): null = مغلق
     var viewImage by remember { mutableStateOf<String?>(null) }
     var friendsCenter by remember { mutableStateOf<Offset?>(null) }
@@ -203,28 +204,19 @@ fun AccountTab(
     val scope = rememberCoroutineScope()
     val friends by remember(myUid) { Repo.friendsFlow(myUid) }.collectAsState(initial = emptyList())
     val requests by remember(myUid) { Repo.incomingRequestsFlow(myUid) }.collectAsState(initial = emptyList())
-    // خلفية Account (محفوظة بالجهاز)
-    var bgChoice by remember { mutableStateOf(AccountBgStore.choice(ctx)) }
-    var bgVersion by remember { mutableStateOf(0) }
-    val customBg by androidx.compose.runtime.produceState<ImageBitmap?>(null, bgVersion) {
-        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching {
-                val f = AccountBgStore.customFile(ctx)
-                if (f.exists()) android.graphics.BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() else null
-            }.getOrNull()
+    // ألوان الخلفية: من ألوان البانر تلقائياً، وإذا ما فيه بانر تتغير عشوائياً كل ما تدخل التبويب
+    val bannerImg = rememberB64Image(profile.banner)
+    val bannerPalette by androidx.compose.runtime.produceState<AccountPalette?>(null, bannerImg) {
+        val b = bannerImg
+        value = if (b == null) null else kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            runCatching { extractBannerPalette(b) }.getOrNull()
         }
     }
-    val pickBg = rememberImagePicker(maxSide = 1600, quality = 80) { b64 ->
-        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching { AccountBgStore.customFile(ctx).writeBytes(android.util.Base64.decode(b64, android.util.Base64.NO_WRAP)) }
-            AccountBgStore.setChoice(ctx, ACCOUNT_BG_CUSTOM)
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                bgChoice = ACCOUNT_BG_CUSTOM
-                bgVersion++
-                showBgSheet = false
-            }
-        }
+    var randomPalette by remember { mutableStateOf(randomAccountPalette()) }
+    LaunchedEffect(active) {
+        if (active) randomPalette = randomAccountPalette(avoidHue = randomPalette.hue)
     }
+    val palette = if (profile.banner.isNotBlank()) (bannerPalette ?: NeutralAccountPalette) else randomPalette
     var statusSeed by remember { mutableStateOf<com.chatapp.messenger.Status?>(null) }
     // نسخة ثابتة من القصة تبقى طول حركة الإغلاق (حتى لو انحذفت أو تغيّرت القصة الأصلية)
     var editorSeed by remember { mutableStateOf<Story?>(null) }
@@ -242,11 +234,10 @@ fun AccountTab(
         )
 
     // نخبر الشاشة الرئيسية حتى تخفي الشريط السفلي أثناء التعديل
-    val overlay = showEdit || showStoryEditor || showViewer || showStatusEditor || showFriends || showBgSheet || viewImage != null
+    val overlay = showEdit || showStoryEditor || showViewer || showStatusEditor || showFriends || viewImage != null
     LaunchedEffect(overlay) { onOverlayChange(overlay) }
     DisposableEffect(Unit) { onDispose { onOverlayChange(false) } }
 
-    val bannerImg = rememberB64Image(profile.banner)
     val avatarImg = rememberB64Image(profile.avatar)
     val gray = Color(0xFFB0B3B8)
 
@@ -260,7 +251,7 @@ fun AccountTab(
             val glass = rememberLayerBackdrop()
 
             Box(Modifier.fillMaxSize().layerBackdrop(glass)) {
-                AccountBackground(bgChoice, customBg, Modifier.matchParentSize())
+                AccountBackground(palette, Modifier.matchParentSize(), running = active)
                 Box(
                     Modifier.fillMaxWidth().height(bannerH)
                         .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
@@ -319,7 +310,8 @@ fun AccountTab(
                         Modifier.fillMaxWidth().padding(start = u * 22f, end = u * 20f, top = u * 20f),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        RoundIconButton(Icons.Filled.Menu, glass, u * 150f) { showBgSheet = true }
+                        // زر القائمة الجانبية: فارغ مؤقتاً (ما يسوي شي)
+                        RoundIconButton(Icons.Filled.Menu, glass, u * 150f) { }
                         RoundIconButton(Icons.Filled.Edit, glass, u * 150f) { showEdit = true }
                     }
                     // الصورة الشخصية يسار
@@ -477,6 +469,7 @@ fun AccountTab(
                 story = st,
                 owner = profile,
                 mine = true,
+                ownerUid = myUid,
                 showMenu = true,
                 onDismiss = { showViewer = false },
                 onEdit = {
@@ -500,37 +493,6 @@ fun AccountTab(
             onDismiss = { showFriends = false },
             onOpenProfile = onOpenProfile
         )
-    }
-    // لوحة اختيار خلفية Account
-    AnimatedVisibility(
-        visible = showBgSheet,
-        enter = androidx.compose.animation.slideInVertically(spring(0.85f, 400f)) { it } + fadeIn(tween(180)),
-        exit = androidx.compose.animation.slideOutVertically(tween(220)) { it } + fadeOut(tween(160))
-    ) {
-        BackHandler { showBgSheet = false }
-        val sheetBackdrop = rememberLayerBackdrop()
-        Box(Modifier.fillMaxSize()) {
-            Box(Modifier.matchParentSize().layerBackdrop(sheetBackdrop)) {
-                AccountBackground(bgChoice, customBg, Modifier.matchParentSize())
-            }
-            AccountBgSheet(
-                choice = bgChoice,
-                custom = customBg,
-                backdrop = sheetBackdrop,
-                onPick = { i ->
-                    bgChoice = i
-                    AccountBgStore.setChoice(ctx, i)
-                },
-                onPickCustom = {
-                    // إذا عندك صورة محفوظة من قبل تنطبق مباشرة، وإلا يفتح المعرض
-                    if (customBg != null && bgChoice != ACCOUNT_BG_CUSTOM) {
-                        bgChoice = ACCOUNT_BG_CUSTOM
-                        AccountBgStore.setChoice(ctx, ACCOUNT_BG_CUSTOM)
-                    } else pickBg()
-                },
-                onDismiss = { showBgSheet = false }
-            )
-        }
     }
     // عرض البانر / الصورة الشخصية بملء الشاشة مع حفظ بالمعرض
     ImageViewerHost(viewImage) { viewImage = null }

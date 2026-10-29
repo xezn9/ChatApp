@@ -68,6 +68,12 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
@@ -891,7 +897,26 @@ fun StoryViewerScreen(
     var replyText by remember { mutableStateOf("") }
     var replyFocused by remember { mutableStateOf(false) }
     val canReply = !mine && ownerUid.isNotBlank()
-    val paused = menuOpen || confirmDelete || replyFocused
+    val myUid = Repo.auth.currentUser?.uid ?: ""
+    val realOwner = if (mine) myUid else ownerUid
+    // ضغطة مطولة على القصة = تتوقف لين ترفع إصبعك
+    var holding by remember { mutableStateOf(false) }
+    var viewersOpen by remember { mutableStateOf(false) }
+    var shareOpen by remember { mutableStateOf(false) }
+    val paused = menuOpen || confirmDelete || replyFocused || holding || viewersOpen || shareOpen
+    // الإعجاب: أي صديق يگدر يعجب بقصة صاحبه. العدد والمشاهدين يظهرون لصاحب القصة فقط
+    val liked by remember(realOwner, story.createdAt, mine) {
+        if (!mine && realOwner.isNotBlank()) Repo.myStoryLikeFlow(realOwner, story.createdAt)
+        else kotlinx.coroutines.flow.flowOf(false)
+    }.collectAsState(initial = false)
+    val views by remember(story.createdAt, mine) {
+        if (mine) Repo.myStoryViewsFlow(story.createdAt) else kotlinx.coroutines.flow.flowOf(emptyList<com.chatapp.messenger.StoryView>())
+    }.collectAsState(initial = emptyList<com.chatapp.messenger.StoryView>())
+    val likesCount = views.count { it.liked }
+    // تسجيل المشاهدة (مرة وحدة لكل قصة)
+    LaunchedEffect(realOwner, story.createdAt) {
+        if (!mine && realOwner.isNotBlank()) runCatching { Repo.markStoryViewed(realOwner, story.createdAt) }
+    }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -926,6 +951,8 @@ fun StoryViewerScreen(
     BackHandler {
         when {
             confirmDelete -> if (!deleting) confirmDelete = false
+            viewersOpen -> viewersOpen = false
+            shareOpen -> shareOpen = false
             menuOpen -> menuOpen = false
             replyFocused -> focusManager.clearFocus()
             else -> onDismiss()
@@ -937,10 +964,29 @@ fun StoryViewerScreen(
         Box(
             Modifier.fillMaxSize().layerBackdrop(bd)
                 .background(if (image != null) Brush.verticalGradient(listOf(Color.Black, Color.Black)) else storyBgBrush(story.bg))
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                    if (menuOpen) menuOpen = false
-                    else if (replyFocused) focusManager.clearFocus()
-                    else finishedCb()
+                .pointerInput(Unit) {
+                    var heldLong = false
+                    detectTapGestures(
+                        onPress = {
+                            heldLong = false
+                            // بعد ~0.18 ثانية من الضغط تتوقف القصة (والموسيقى) لين ترفع إصبعك
+                            val job = scope.launch {
+                                delay(180)
+                                heldLong = true
+                                holding = true
+                            }
+                            tryAwaitRelease()
+                            job.cancel()
+                            holding = false
+                        },
+                        onTap = {
+                            if (!heldLong) {
+                                if (menuOpen) menuOpen = false
+                                else if (replyFocused) focusManager.clearFocus()
+                                else finishedCb()
+                            }
+                        }
+                    )
                 },
             contentAlignment = Alignment.Center
         ) {
@@ -1052,6 +1098,161 @@ fun StoryViewerScreen(
                     ) {
                         Icon(AppIcons.Reply, null, tint = Color.White, modifier = Modifier.size(24.dp))
                     }
+                } else if (!replyFocused) {
+                    // إعجاب + مشاركة
+                    val heartScale by animateFloatAsState(if (liked) 1.18f else 1f, spring(0.35f, 500f), label = "heart")
+                    Spacer(Modifier.width(10.dp))
+                    GlassButton(
+                        onClick = {
+                            val now = !liked
+                            scope.launch { runCatching { Repo.setStoryLike(ownerUid, story.createdAt, now) } }
+                        },
+                        backdrop = bd, modifier = Modifier.size(52.dp)
+                    ) {
+                        Icon(
+                            if (liked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, null,
+                            tint = if (liked) Color(0xFFFF3B5C) else Color.White,
+                            modifier = Modifier.size(26.dp).graphicsLayer { scaleX = heartScale; scaleY = heartScale }
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    GlassButton(onClick = { shareOpen = true }, backdrop = bd, modifier = Modifier.size(52.dp)) {
+                        Icon(Icons.Filled.Share, null, tint = Color.White, modifier = Modifier.size(23.dp))
+                    }
+                }
+            }
+        }
+
+        // قصتي: عدد الإعجابات + المشاهدين (لصاحب القصة فقط) + مشاركة
+        if (mine) {
+            Row(
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // ضغطة قصيرة على زر الإعجاب = قائمة من شاف القصة ومن أعجبه
+                GlassButton(onClick = { viewersOpen = true }, backdrop = bd, modifier = Modifier.height(52.dp)) {
+                    Icon(
+                        Icons.Filled.Favorite, null, tint = Color(0xFFFF3B5C),
+                        modifier = Modifier.padding(start = 18.dp).size(24.dp)
+                    )
+                    Text(
+                        "$likesCount", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 8.dp)
+                    )
+                    Text(
+                        "· ${views.size} مشاهدة", color = Color.White.copy(0.8f), fontSize = 13.sp,
+                        modifier = Modifier.padding(start = 8.dp, end = 20.dp)
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                GlassButton(onClick = { shareOpen = true }, backdrop = bd, modifier = Modifier.size(52.dp)) {
+                    Icon(Icons.Filled.Share, null, tint = Color.White, modifier = Modifier.size(23.dp))
+                }
+            }
+        }
+
+        // قائمة المشاهدين (صاحب القصة فقط)
+        StorySheet(visible = viewersOpen && mine, backdrop = bd, title = "المشاهدون (${views.size})", onDismiss = { viewersOpen = false }) {
+            if (views.isEmpty()) {
+                Text(
+                    "ما أحد شاف قصتك لحد الآن", color = Color.White.copy(0.7f), fontSize = 14.sp,
+                    modifier = Modifier.fillMaxWidth().padding(24.dp), textAlign = TextAlign.Center
+                )
+            } else {
+                LazyColumn(Modifier.heightIn(max = 380.dp)) {
+                    items(views, key = { it.uid }) { v ->
+                        val prof by remember(v.uid) { Repo.basicProfileFlow(v.uid) }.collectAsState(initial = Profile())
+                        val av = rememberB64Image(prof.avatar)
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                Modifier.size(42.dp).clip(CircleShape).background(Color(0xFF2B2F36)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (av != null) Image(av, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                                else Icon(Icons.Filled.Person, null, tint = Color(0xFF8A8F98), modifier = Modifier.size(24.dp))
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                prof.name.ifBlank { "مستخدم" }, color = Color.White, fontSize = 16.sp,
+                                fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (v.liked) {
+                                Icon(Icons.Filled.Favorite, null, tint = Color(0xFFFF3B5C), modifier = Modifier.size(22.dp))
+                            } else {
+                                Text("شاهدها", color = Color.White.copy(0.55f), fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // مشاركة القصة لأصدقائي
+        StorySheet(visible = shareOpen, backdrop = bd, title = "شارك القصة مع أصدقائك", onDismiss = { shareOpen = false }) {
+            val friendIds by remember(myUid) { Repo.friendsFlow(myUid) }.collectAsState(initial = emptyList())
+            val picked = remember { mutableStateListOf<String>() }
+            if (friendIds.isEmpty()) {
+                Text(
+                    "ما عندك أصدقاء بعد. ضيف أصدقاء من ملفاتهم الشخصية حتى تگدر تشارك القصة.",
+                    color = Color.White.copy(0.7f), fontSize = 14.sp,
+                    modifier = Modifier.fillMaxWidth().padding(24.dp), textAlign = TextAlign.Center
+                )
+            } else {
+                LazyColumn(Modifier.heightIn(max = 340.dp)) {
+                    items(friendIds, key = { it }) { fid ->
+                        val prof by remember(fid) { Repo.basicProfileFlow(fid) }.collectAsState(initial = Profile())
+                        val av = rememberB64Image(prof.avatar)
+                        val on = fid in picked
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .clickable { if (on) picked.remove(fid) else picked.add(fid) }
+                                .padding(horizontal = 18.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                Modifier.size(42.dp).clip(CircleShape).background(Color(0xFF2B2F36)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (av != null) Image(av, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                                else Icon(Icons.Filled.Person, null, tint = Color(0xFF8A8F98), modifier = Modifier.size(24.dp))
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                prof.name.ifBlank { "مستخدم" }, color = Color.White, fontSize = 16.sp,
+                                fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Box(
+                                Modifier.size(26.dp).clip(CircleShape)
+                                    .background(if (on) Color(0xFF1AA7FF) else Color.White.copy(0.14f))
+                                    .border(1.dp, Color.White.copy(if (on) 0f else 0.4f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (on) Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(17.dp))
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                GlassButton(
+                    onClick = {
+                        Repo.shareStory(picked.toList(), realOwner, if (mine) "" else (owner?.name ?: ""))
+                        Toast.makeText(ctx, "انرسلت القصة", Toast.LENGTH_SHORT).show()
+                        picked.clear()
+                        shareOpen = false
+                    },
+                    backdrop = bd, tint = Color(0xFF1AA7FF), enabled = picked.isNotEmpty(),
+                    modifier = Modifier.padding(horizontal = 18.dp).fillMaxWidth().height(50.dp)
+                ) {
+                    Text(
+                        if (picked.isEmpty()) "اختر أصدقاء" else "إرسال (${picked.size})",
+                        color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold
+                    )
                 }
             }
         }
@@ -1112,6 +1313,45 @@ fun StoryViewerScreen(
                 },
                 onDismiss = { if (!deleting) confirmDelete = false }
             )
+        }
+    }
+}
+
+
+/** لوحة زجاجية تطلع من تحت (للمشاهدين / المشاركة). الضغط خارجها يسكّرها */
+@Composable
+private fun StorySheet(
+    visible: Boolean,
+    backdrop: Backdrop,
+    title: String,
+    onDismiss: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = androidx.compose.animation.slideInVertically(spring(0.85f, 400f)) { it } + fadeIn(tween(160)),
+        exit = androidx.compose.animation.slideOutVertically(tween(200)) { it } + fadeOut(tween(140))
+    ) {
+        val shape = RoundedCornerShape(30.dp)
+        Box(
+            Modifier.fillMaxSize().background(Color.Black.copy(0.40f))
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            Column(
+                Modifier.fillMaxWidth().navigationBarsPadding().padding(10.dp)
+                    .liquidCard(backdrop, shape, dark = true)
+                    .background(Color.Black.copy(0.34f), shape)
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { }
+                    .padding(vertical = 18.dp)
+            ) {
+                Text(
+                    title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 22.dp, vertical = 4.dp)
+                )
+                Spacer(Modifier.height(8.dp))
+                content()
+            }
         }
     }
 }

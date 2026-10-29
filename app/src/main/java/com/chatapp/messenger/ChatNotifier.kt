@@ -90,6 +90,7 @@ object ChatNotifier {
         )
         val n = NotificationCompat.Builder(ctx, ChatApp.CHANNEL_MESSAGES)
             .setSmallIcon(R.drawable.ic_notification)
+            .setColor(androidx.core.content.ContextCompat.getColor(ctx, R.color.notification_accent))
             .setContentTitle(info.name)
             .setContentText(text)
             .setLargeIcon(info.avatar)

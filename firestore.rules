@@ -53,6 +53,22 @@ service cloud.firestore {
       allow write: if verified() && request.auth.uid == uid;
     }
 
+    // مشاهدات وإعجابات القصة: storyData/<صاحب القصة>/views/<المشاهد>
+    // - المشاهد (صديق صاحب القصة) يكتب وثيقته هو فقط ويگدر يقرأها (يعرف هل معجب)
+    // - صاحب القصة فقط يقرأ كل المشاهدات (القائمة + عدد الإعجابات) ويگدر يمسحها
+    match /storyData/{uid}/views/{viewer} {
+      allow get: if verified() && (request.auth.uid == uid || request.auth.uid == viewer);
+      allow list: if verified() && request.auth.uid == uid;
+      allow create, update: if verified()
+        && request.auth.uid == viewer
+        && viewer != uid
+        && isFriendWith(uid) && !blockedBy(uid)
+        && request.resource.data.keys().hasOnly(['uid', 'storyAt', 'liked', 'at', 'likedAt'])
+        && request.resource.data.uid == viewer
+        && request.resource.data.liked is bool;
+      allow delete: if verified() && (request.auth.uid == uid || request.auth.uid == viewer);
+    }
+
     // طلبات الصداقة: المعرّف from_to. المرسل ينشئ، والطرفين يقرؤون ويحذفون (إلغاء / رفض / قبول)
     match /friendRequests/{rid} {
       allow get: if verified() && request.auth.uid in rid.split('_');

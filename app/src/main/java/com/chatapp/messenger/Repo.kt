@@ -85,6 +85,9 @@ data class Status(val text: String, val createdAt: Long) {
     val expiresAt: Long get() = createdAt + STORY_MS
 }
 
+/** مشاهدة قصة: من شاف القصة وهل أعجبته (تظهر لصاحب القصة فقط) */
+data class StoryView(val uid: String, val liked: Boolean, val at: Long)
+
 /** قصة فعّالة لمستخدم (تظهر بقائمة القصص عند الكل) */
 data class ActiveStory(val uid: String, val profile: Profile)
 
@@ -557,6 +560,8 @@ object Repo {
             // نشيل أي نسخة قديمة من القصة كانت مكشوفة داخل الملف الشخصي
             .set(db.collection("profiles").document(u.uid), mapOf("story" to FieldValue.delete()), SetOptions.merge())
             .commit().await()
+        // مشاهدات/إعجابات القصة القديمة تنمسح (القصة الجديدة تبدأ من الصفر)
+        runCatching { clearStoryViews(keepStoryAt = st.createdAt) }
     }
 
     /** الحالة النصية (فقاعة فوق الصورة) */
@@ -582,6 +587,7 @@ object Repo {
 
     suspend fun deleteStory() {
         val u = auth.currentUser ?: return
+        runCatching { clearStoryViews(keepStoryAt = -1L) }
         db.batch()
             .delete(db.collection("storyData").document(u.uid))
             .delete(db.collection("stories").document(u.uid))
@@ -623,6 +629,85 @@ object Repo {
                 )
             }
         }
+
+    // ---------- مشاهدات وإعجابات القصة ----------
+    // storyData/<owner>/views/<viewer> = { uid, storyAt, liked, at, likedAt }
+    // الكتابة: المشاهد (صديق صاحب القصة) لوثيقته هو فقط. القراءة: صاحب القصة لكل المشاهدات، والمشاهد لوثيقته.
+
+    private fun viewsCol(owner: String) =
+        db.collection("storyData").document(owner).collection("views")
+
+    /** يمسح مشاهدات القصص الأقدم (أو كلها إذا keepStoryAt = -1) */
+    private suspend fun clearStoryViews(keepStoryAt: Long) {
+        val u = auth.currentUser ?: return
+        val snap = viewsCol(u.uid).get().await()
+        val old = snap.documents.filter { ((it.get("storyAt") as? Number)?.toLong() ?: 0L) != keepStoryAt }
+        old.chunked(400).forEach { part ->
+            val b = db.batch()
+            part.forEach { b.delete(it.reference) }
+            b.commit().await()
+        }
+    }
+
+    /** أنا شفت قصة [owner]: تتسجل مرة وحدة لكل قصة (وما تمسح إعجابي إذا رجعت شفتها) */
+    suspend fun markStoryViewed(owner: String, storyAt: Long) {
+        val me = auth.currentUser?.uid ?: return
+        if (me == owner) return
+        val ref = viewsCol(owner).document(me)
+        val old = runCatching { ref.get().await() }.getOrNull()
+        if (old != null && old.exists() && ((old.get("storyAt") as? Number)?.toLong() ?: 0L) == storyAt) return
+        ref.set(
+            mapOf("uid" to me, "storyAt" to storyAt, "liked" to false, "at" to System.currentTimeMillis())
+        ).await()
+    }
+
+    /** هل أنا معجب بقصة [owner] الحالية؟ (تتحدث مباشرة) */
+    fun myStoryLikeFlow(owner: String, storyAt: Long): Flow<Boolean> = callbackFlow {
+        val me = auth.currentUser?.uid
+        if (me == null || me == owner) { trySend(false); close(); return@callbackFlow }
+        val reg = viewsCol(owner).document(me).addSnapshotListener { d, _ ->
+            val same = ((d?.get("storyAt") as? Number)?.toLong() ?: 0L) == storyAt
+            trySend(d != null && d.exists() && same && d.getBoolean("liked") == true)
+        }
+        awaitClose { reg.remove() }
+    }
+
+    /** إعجاب / إلغاء إعجاب بقصة [owner] */
+    suspend fun setStoryLike(owner: String, storyAt: Long, liked: Boolean) {
+        val me = auth.currentUser?.uid ?: return
+        if (me == owner) return
+        val now = System.currentTimeMillis()
+        viewsCol(owner).document(me).set(
+            mapOf("uid" to me, "storyAt" to storyAt, "liked" to liked, "at" to now, "likedAt" to if (liked) now else 0L)
+        ).await()
+    }
+
+    /** مشاهدات قصتي الحالية (لصاحب القصة فقط): الأحدث أولاً */
+    fun myStoryViewsFlow(storyAt: Long): Flow<List<StoryView>> = callbackFlow {
+        val me = auth.currentUser?.uid
+        if (me == null) { trySend(emptyList()); close(); return@callbackFlow }
+        val reg = viewsCol(me).addSnapshotListener { snap, err ->
+            if (err != null) trySend(emptyList())
+            else if (snap != null) {
+                trySend(
+                    snap.documents.filter { ((it.get("storyAt") as? Number)?.toLong() ?: 0L) == storyAt }
+                        .map { StoryView(it.id, it.getBoolean("liked") == true, (it.get("at") as? Number)?.toLong() ?: 0L) }
+                        .sortedByDescending { it.at }
+                )
+            }
+        }
+        awaitClose { reg.remove() }
+    }
+
+    /** مشاركة قصة لأصدقائي: تنرسل لكل صديق كرسالة بالمحادثة (مع اقتباس "قصة فلان") */
+    fun shareStory(to: Collection<String>, owner: String, ownerName: String) {
+        val me = auth.currentUser?.uid ?: return
+        val who = ownerName.ifBlank { "مستخدم" }
+        val text = if (owner == me) "📸 شاركتلك قصتي" else "📸 شاركتلك قصة $who"
+        to.forEach { friend ->
+            send(me, friend, text, replyId = "story", replyText = if (owner == me) "قصتي" else "قصة $who", replyFrom = owner)
+        }
+    }
 
     /** رد على قصة: يوصل كرسالة بالمحادثة مع صاحب القصة (مع اقتباس "القصة") */
     fun sendStoryReply(owner: String, text: String) {

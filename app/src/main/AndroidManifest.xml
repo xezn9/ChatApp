@@ -68,6 +68,10 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_icon"
             android:resource="@drawable/ic_notification" />
+        <!-- لون أيقونة التطبيق بالإشعار (يبين بلوحة الإشعارات؛ شريط الحالة أندرويد يرسمه أبيض دائماً) -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/notification_accent" />
     </application>
 
 </manifest>

@@ -89,6 +89,7 @@ class ChatMessagingService : FirebaseMessagingService() {
         )
         val n = NotificationCompat.Builder(this, ChatApp.CHANNEL_MESSAGES)
             .setSmallIcon(R.drawable.ic_notification)
+            .setColor(androidx.core.content.ContextCompat.getColor(this, R.color.notification_accent))
             .setContentTitle(name)
             .setContentText(text)
             .setLargeIcon(avatar)

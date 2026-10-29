@@ -97,6 +97,7 @@ class MessageListenerService : Service() {
         )
         val n = NotificationCompat.Builder(this, ChatApp.CHANNEL_LISTENER)
             .setSmallIcon(R.drawable.ic_notification)
+            .setColor(androidx.core.content.ContextCompat.getColor(this, R.color.notification_accent))
             .setContentTitle("متصل لاستقبال الرسائل")
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_MIN)

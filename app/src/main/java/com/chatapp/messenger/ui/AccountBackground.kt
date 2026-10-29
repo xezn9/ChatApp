@@ -1,214 +1,159 @@
 package com.chatapp.messenger.ui
 
-import android.content.Context
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.chatapp.messenger.ui.theme.appBackground
-import com.kyant.backdrop.Backdrop
-import java.io.File
-import androidx.compose.foundation.layout.PaddingValues as LazyPadding
+import androidx.compose.ui.graphics.asAndroidBitmap
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.random.Random
 
-/** رقم الخلفية المخصصة (صورة من المعرض) */
-internal const val ACCOUNT_BG_CUSTOM = -1
-
-/** خلفية جاهزة: تدرج من فوق لتحت + 3 بقع ضوء تتحرك ببطء. classic = خلفية التطبيق القديمة بدون حركة */
-internal class AccountBgPreset(
-    val name: String,
+/**
+ * ألوان خلفية Account: تدرج من فوق لتحت + 3 بقع ضوء تتحرك ببطء.
+ * [hue] = اللون الأساسي (يستعمل حتى الرندم ما يعيد نفس اللون مرتين ورا بعض).
+ */
+internal class AccountPalette(
     val top: Color,
     val bottom: Color,
     val blobs: List<Color>,
-    val classic: Boolean = false
+    val hue: Float = 0f
 )
 
-internal val AccountBgPresets = listOf(
-    AccountBgPreset("أورورا", Color(0xFF071C1E), Color(0xFF0A1740), listOf(Color(0xFF1AA7FF), Color(0xFF7A5CFF), Color(0xFF2EE6A8))),
-    AccountBgPreset("منتصف الليل", Color(0xFF04060F), Color(0xFF121838), listOf(Color(0xFF4C5BFF), Color(0xFF8A5CFF), Color(0xFF1AA7FF))),
-    AccountBgPreset("غروب", Color(0xFF2A0F2E), Color(0xFF4A1A2A), listOf(Color(0xFFFF7A45), Color(0xFFFF4F81), Color(0xFFFFC145))),
-    AccountBgPreset("محيط", Color(0xFF02202A), Color(0xFF05394D), listOf(Color(0xFF00D4AA), Color(0xFF1AA7FF), Color(0xFF4CC9F0))),
-    AccountBgPreset("وردي", Color(0xFF2B0A1F), Color(0xFF38123A), listOf(Color(0xFFFF5C8A), Color(0xFFB25CFF), Color(0xFFFFB347))),
-    AccountBgPreset("الأصلية", Color.Transparent, Color.Transparent, emptyList(), classic = true)
+/** لون محايد قصير المدة أثناء تحليل البانر */
+internal val NeutralAccountPalette = AccountPalette(
+    Color(0xFF0B0E14), Color(0xFF151A24),
+    listOf(Color(0xFF3A4660), Color(0xFF2A3347), Color(0xFF46506B))
 )
 
-/** الخلفية المختارة تنحفظ على الجهاز (SharedPreferences) والصورة المخصصة كملف داخلي */
-internal object AccountBgStore {
-    private fun prefs(ctx: Context) = ctx.getSharedPreferences("account_bg", Context.MODE_PRIVATE)
-    fun choice(ctx: Context): Int = prefs(ctx).getInt("choice", 0)
-    fun setChoice(ctx: Context, c: Int) = prefs(ctx).edit().putInt("choice", c).apply()
-    fun customFile(ctx: Context) = File(ctx.filesDir, "account_bg.jpg")
+private fun hsv(h: Float, s: Float, v: Float): Color =
+    Color(android.graphics.Color.HSVToColor(floatArrayOf(((h % 360f) + 360f) % 360f, s.coerceIn(0f, 1f), v.coerceIn(0f, 1f))))
+
+private fun hueDist(a: Float, b: Float): Float {
+    val d = abs(a - b) % 360f
+    return min(d, 360f - d)
 }
 
-/** خلفية تبويب Account */
-@Composable
-internal fun AccountBackground(choice: Int, custom: ImageBitmap?, modifier: Modifier = Modifier) {
-    if (choice == ACCOUNT_BG_CUSTOM && custom != null) {
-        Box(modifier) {
-            Image(custom, null, Modifier.matchParentSize(), contentScale = ContentScale.Crop)
-            // تعتيم خفيف حتى تبقى الكتابة البيضاء مقروءة فوق أي صورة
-            Box(Modifier.matchParentSize().background(Color.Black.copy(0.32f)))
-        }
-        return
-    }
-    val preset = AccountBgPresets.getOrNull(choice) ?: AccountBgPresets[0]
-    if (preset.classic) {
-        Box(modifier.background(appBackground()))
-        return
-    }
-    val t = rememberInfiniteTransition(label = "accBg")
-    val phase by t.animateFloat(
-        0f, 1f,
-        infiniteRepeatable(tween(16000, easing = LinearEasing), RepeatMode.Reverse),
-        label = "accBgPhase"
+/** خلفية عشوائية جديدة (بدون بانر). [avoidHue] = لون الخلفية السابقة حتى تتغير فعلاً */
+internal fun randomAccountPalette(avoidHue: Float? = null): AccountPalette {
+    var h = Random.nextFloat() * 360f
+    var tries = 0
+    while (avoidHue != null && hueDist(h, avoidHue) < 50f && tries++ < 20) h = Random.nextFloat() * 360f
+    val spread = 35f + Random.nextFloat() * 30f
+    return AccountPalette(
+        top = hsv(h - 12f, 0.65f, 0.17f),
+        bottom = hsv(h + 14f, 0.70f, 0.28f),
+        blobs = listOf(hsv(h, 0.78f, 0.98f), hsv(h + spread, 0.72f, 0.96f), hsv(h - spread, 0.80f, 0.95f)),
+        hue = h
     )
+}
+
+/**
+ * يحلل صورة البانر ويطلع منها ألوان الخلفية تلقائياً (بدون مكتبات خارجية):
+ * نصغّر الصورة، نجمع البكسلات الملونة حسب درجة اللون، ونأخذ أقوى 3 ألوان مختلفة.
+ * الخلفية تبقى غامقة بما يكفي حتى تبقى الكتابة البيضاء مقروءة.
+ */
+internal fun extractBannerPalette(img: ImageBitmap): AccountPalette {
+    val src = img.asAndroidBitmap()
+    val small = android.graphics.Bitmap.createScaledBitmap(src, 48, 48, true)
+    val px = IntArray(48 * 48)
+    small.getPixels(px, 0, 48, 0, 0, 48, 48)
+    if (small !== src) small.recycle()
+
+    val bins = 24
+    val wSum = FloatArray(bins)
+    val hSum = FloatArray(bins)
+    val sSum = FloatArray(bins)
+    val vSum = FloatArray(bins)
+    var avgV = 0f
+    val hsvArr = FloatArray(3)
+    for (c in px) {
+        android.graphics.Color.colorToHSV(c, hsvArr)
+        val h = hsvArr[0]; val s = hsvArr[1]; val v = hsvArr[2]
+        avgV += v
+        // البكسلات الرمادية أو الغامقة جداً ما تحدد لون الخلفية
+        if (s < 0.18f || v < 0.15f) continue
+        val w = s * (0.35f + v)
+        val b = ((h / 360f) * bins).toInt().coerceIn(0, bins - 1)
+        wSum[b] += w; hSum[b] += h * w; sSum[b] += s * w; vSum[b] += v * w
+    }
+    avgV /= px.size
+
+    // أقوى الألوان (مع ابتعاد 40° على الأقل بين لون ولون)
+    val order = (0 until bins).filter { wSum[it] > 0f }.sortedByDescending { wSum[it] }
+    val picks = ArrayList<Triple<Float, Float, Float>>() // h, s, v
+    for (b in order) {
+        val h = hSum[b] / wSum[b]
+        if (picks.none { hueDist(it.first, h) < 40f }) picks.add(Triple(h, sSum[b] / wSum[b], vSum[b] / wSum[b]))
+        if (picks.size == 3) break
+    }
+    val total = wSum.sum()
+    if (picks.isEmpty() || total < 6f) {
+        // بانر رمادي/أسود/أبيض تقريباً: خلفية محايدة مائلة لدرجة سطوع الصورة
+        val g = (0.10f + avgV * 0.12f)
+        return AccountPalette(
+            Color(g, g, g * 1.1f), Color(g + 0.07f, g + 0.07f, (g + 0.07f) * 1.1f),
+            listOf(Color(0xFF5A6477), Color(0xFF3F4757), Color(0xFF6B7488)), hue = 0f
+        )
+    }
+    val main = picks[0]
+    val second = picks.getOrNull(1) ?: Triple((main.first + 32f) % 360f, main.second, main.third)
+    val third = picks.getOrNull(2) ?: Triple(((main.first - 32f) + 360f) % 360f, main.second, main.third)
+    fun blob(t: Triple<Float, Float, Float>) = hsv(t.first, max(t.second, 0.55f), max(t.third, 0.80f))
+    return AccountPalette(
+        top = hsv(main.first, (main.second * 0.9f).coerceIn(0.35f, 0.85f), 0.17f),
+        bottom = hsv(second.first, (second.second * 0.9f).coerceIn(0.35f, 0.85f), 0.27f),
+        blobs = listOf(blob(main), blob(second), blob(third)),
+        hue = main.first
+    )
+}
+
+/** خلفية تبويب Account: ألوانها تتبدل بنعومة عند تغيّر البانر أو عند الدخول للتبويب */
+@Composable
+internal fun AccountBackground(palette: AccountPalette, modifier: Modifier = Modifier, running: Boolean = true) {
+    val spec = tween<Color>(800)
+    val top by animateColorAsState(palette.top, spec, label = "accTop")
+    val bottom by animateColorAsState(palette.bottom, spec, label = "accBottom")
+    val b0 by animateColorAsState(palette.blobs[0], spec, label = "accB0")
+    val b1 by animateColorAsState(palette.blobs[1], spec, label = "accB1")
+    val b2 by animateColorAsState(palette.blobs[2], spec, label = "accB2")
+    // الحركة تشتغل فقط والتبويب ظاهر (توفير للبطارية). القراءة داخل الرسم فقط حتى ما ينعاد التركيب كل إطار
+    val phaseState: State<Float> = if (running) {
+        rememberInfiniteTransition(label = "accBg").animateFloat(
+            0f, 1f,
+            infiniteRepeatable(tween(16000, easing = LinearEasing), RepeatMode.Reverse),
+            label = "accBgPhase"
+        )
+    } else remember { mutableStateOf(0.5f) }
     Box(
-        modifier.background(Brush.verticalGradient(listOf(preset.top, preset.bottom))).drawBehind {
+        modifier.background(Brush.verticalGradient(listOf(top, bottom))).drawBehind {
+            val phase = phaseState.value
             val w = size.width
             val h = size.height
             fun blob(c: Color, cx: Float, cy: Float, r: Float) = drawCircle(
                 Brush.radialGradient(listOf(c.copy(alpha = 0.50f), Color.Transparent), center = Offset(cx, cy), radius = r),
                 r, Offset(cx, cy)
             )
-            blob(preset.blobs[0], w * (0.10f + 0.40f * phase), h * (0.18f + 0.08f * phase), w * 0.80f)
-            blob(preset.blobs[1], w * (0.95f - 0.40f * phase), h * (0.50f + 0.10f * phase), w * 0.75f)
-            blob(preset.blobs[2], w * (0.20f + 0.35f * phase), h * (0.95f - 0.12f * phase), w * 0.85f)
+            blob(b0, w * (0.10f + 0.40f * phase), h * (0.18f + 0.08f * phase), w * 0.80f)
+            blob(b1, w * (0.95f - 0.40f * phase), h * (0.50f + 0.10f * phase), w * 0.75f)
+            blob(b2, w * (0.20f + 0.35f * phase), h * (0.95f - 0.12f * phase), w * 0.85f)
         }
     )
-}
-
-/** لوحة اختيار خلفية Account (تطلع من تحت): خلفيات جاهزة + صورة من المعرض */
-@Composable
-internal fun AccountBgSheet(
-    choice: Int,
-    custom: ImageBitmap?,
-    backdrop: Backdrop,
-    onPick: (Int) -> Unit,
-    onPickCustom: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    val shape = RoundedCornerShape(34.dp)
-    Box(
-        Modifier.fillMaxSize().background(Color.Black.copy(0.40f))
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
-        contentAlignment = Alignment.BottomCenter
-    ) {
-        Column(
-            Modifier.fillMaxWidth().navigationBarsPadding().padding(12.dp)
-                .liquidCard(backdrop, shape, dark = true)
-                .background(Color.Black.copy(0.30f), shape)
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { }
-                .padding(vertical = 20.dp)
-        ) {
-            Text(
-                "خلفية الحساب", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 22.dp)
-            )
-            Text(
-                "تظهر عندك أنت بس على هذا الجهاز.", color = Color.White.copy(0.65f), fontSize = 13.sp,
-                modifier = Modifier.padding(horizontal = 22.dp, vertical = 4.dp)
-            )
-            Spacer(Modifier.height(14.dp))
-            LazyRow(
-                contentPadding = LazyPadding(horizontal = 18.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(AccountBgPresets.size) { i ->
-                    val p = AccountBgPresets[i]
-                    val selected = choice == i
-                    SwatchBox(selected, p.name, onClick = { onPick(i) }) {
-                        if (p.classic) {
-                            Box(Modifier.fillMaxSize().background(appBackground()))
-                        } else {
-                            Box(
-                                Modifier.fillMaxSize().background(
-                                    Brush.linearGradient(listOf(p.blobs[0], p.blobs[1], p.blobs[2].copy(0.8f), p.bottom))
-                                )
-                            )
-                        }
-                    }
-                }
-                item {
-                    SwatchBox(choice == ACCOUNT_BG_CUSTOM && custom != null, "من المعرض", onClick = onPickCustom) {
-                        if (custom != null) {
-                            Image(custom, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                        } else {
-                            Box(Modifier.fillMaxSize().background(Color.White.copy(0.10f)), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Filled.Add, null, tint = Color.White, modifier = Modifier.size(30.dp))
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SwatchBox(selected: Boolean, label: String, onClick: () -> Unit, content: @Composable () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(78.dp)) {
-        Box(
-            Modifier.size(78.dp, 108.dp)
-                .clip(RoundedCornerShape(22.dp))
-                .border(
-                    BorderStroke(if (selected) 3.dp else 1.dp, if (selected) Color.White else Color.White.copy(0.30f)),
-                    RoundedCornerShape(22.dp)
-                )
-                .clickable(onClick = onClick),
-            contentAlignment = Alignment.Center
-        ) {
-            content()
-            if (selected) {
-                Box(
-                    Modifier.align(Alignment.BottomEnd).padding(6.dp).size(24.dp)
-                        .clip(RoundedCornerShape(12.dp)).background(Color(0xFF1AA7FF)),
-                    contentAlignment = Alignment.Center
-                ) { Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(16.dp)) }
-            }
-        }
-        Spacer(Modifier.height(6.dp))
-        Text(label, color = Color.White.copy(0.85f), fontSize = 12.sp, textAlign = TextAlign.Center, maxLines = 1)
-    }
 }
