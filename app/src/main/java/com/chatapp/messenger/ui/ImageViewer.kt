@@ -94,13 +94,13 @@ private fun ImageViewerScreen(b64: String, onDismiss: () -> Unit) {
                 false
             }
             saving = false
-            Toast.makeText(ctx, if (ok) "انحفظت الصورة بالمعرض" else "تعذّر حفظ الصورة", Toast.LENGTH_SHORT).show()
+            AppToast.show(if (ok) "انحفظت الصورة بالمعرض" else "تعذّر حفظ الصورة")
         }
     }
 
     // أندرويد 9 وأقل يحتاج صلاحية كتابة للحفظ بالمعرض
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) doSave() else Toast.makeText(ctx, "لازم تسمح بصلاحية التخزين حتى تنحفظ الصورة", Toast.LENGTH_LONG).show()
+        if (granted) doSave() else AppToast.show("لازم تسمح بصلاحية التخزين حتى تنحفظ الصورة", long = true)
     }
     fun save() {
         if (Build.VERSION.SDK_INT < 29 &&

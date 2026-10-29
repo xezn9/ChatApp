@@ -19,6 +19,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.chatapp.messenger.Repo
 import com.google.firebase.auth.FirebaseAuth
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 
 /** يقرر أي شاشة تظهر: تسجيل / تفعيل / الرئيسية */
 @Composable
@@ -35,6 +37,7 @@ fun App() {
         onDispose { Repo.auth.removeAuthStateListener(l) }
     }
 
+    val appBackdrop = rememberLayerBackdrop()
     Box(Modifier.fillMaxSize()) {
         // انيميشن تسجيل الدخول/الخروج: الشاشة القديمة تتلاشى وتصغر، والجديدة تظهر وتكبر بنعومة
         val stage = when {
@@ -43,6 +46,7 @@ fun App() {
             else -> 2
         }
         AnimatedContent(
+            modifier = Modifier.fillMaxSize().layerBackdrop(appBackdrop),
             targetState = stage,
             transitionSpec = {
                 if (targetState > initialState) {
@@ -65,5 +69,7 @@ fun App() {
         }
         // شاشة التحديث: تظهر فوق كل شي إذا فيه نسخة أحدث
         UpdatePrompt()
+        // رسائل التطبيق القصيرة (زجاج سائل) فوق كل شي
+        AppToastHost(appBackdrop)
     }
 }

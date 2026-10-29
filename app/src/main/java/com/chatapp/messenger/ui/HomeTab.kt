@@ -83,7 +83,7 @@ fun HomeTab(
     onRequestDeleteChat: (uid: String, name: String, lastAt: Long) -> Unit = { _, _, _ -> },
     onOverlayChange: (Boolean) -> Unit = {}
 ) {
-    val myUid = Repo.auth.currentUser?.uid ?: ""
+    val myUid = remember { Repo.auth.currentUser?.uid ?: "" }
     val users by remember { Repo.usersFlow() }.collectAsState(initial = emptyList())
     val chats by remember(myUid) { Repo.chatsFlow(myUid) }.collectAsState(initial = emptyList())
     val pinned by remember(myUid) { Repo.pinnedFlow(myUid) }.collectAsState(initial = emptySet())
@@ -214,6 +214,7 @@ fun HomeTab(
                         showMenu = false,
                         onDismiss = { viewIndex = null },
                         ownerUid = a.uid,
+                        onOpenViewer = { u -> viewIndex = null; onOpenProfile(u) },
                         // ضغطة على صورة/اسم صاحب القصة تفتح ملفه الشخصي
                         onOpenProfile = {
                             viewIndex = null

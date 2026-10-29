@@ -602,7 +602,7 @@ internal fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
                                         onDismiss()
                                     } catch (e: Exception) {
                                         busy = false
-                                        Toast.makeText(ctx, "فشل النشر: ${e.message}", Toast.LENGTH_LONG).show()
+                                        AppToast.show("فشل النشر: ${e.message}", long = true)
                                     }
                                 }
                             }
@@ -878,7 +878,9 @@ fun StoryViewerScreen(
     /** معرّف صاحب القصة: إذا موجود (وما هي قصتي) يطلع شريط "الرد على القصة" */
     ownerUid: String = "",
     /** ضغطة على صورة/اسم صاحب القصة تفتح ملفه الشخصي */
-    onOpenProfile: (() -> Unit)? = null
+    onOpenProfile: (() -> Unit)? = null,
+    /** ضغطة على مشاهد بقائمة المشاهدين (لصاحب القصة) تفتح ملفه الشخصي */
+    onOpenViewer: ((com.chatapp.messenger.UserItem) -> Unit)? = null
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -897,7 +899,7 @@ fun StoryViewerScreen(
     var replyText by remember { mutableStateOf("") }
     var replyFocused by remember { mutableStateOf(false) }
     val canReply = !mine && ownerUid.isNotBlank()
-    val myUid = Repo.auth.currentUser?.uid ?: ""
+    val myUid = remember { Repo.auth.currentUser?.uid ?: "" }
     val realOwner = if (mine) myUid else ownerUid
     // ضغطة مطولة على القصة = تتوقف لين ترفع إصبعك
     var holding by remember { mutableStateOf(false) }
@@ -1091,7 +1093,7 @@ fun StoryViewerScreen(
                             Repo.sendStoryReply(ownerUid, replyText.trim())
                             replyText = ""
                             focusManager.clearFocus()
-                            Toast.makeText(ctx, "انرسل ردك", Toast.LENGTH_SHORT).show()
+                            AppToast.show("انرسل ردك")
                         },
                         backdrop = bd, tint = Color(0xFF1AA7FF),
                         modifier = Modifier.size(52.dp)
@@ -1165,7 +1167,14 @@ fun StoryViewerScreen(
                         val prof by remember(v.uid) { Repo.basicProfileFlow(v.uid) }.collectAsState(initial = Profile())
                         val av = rememberB64Image(prof.avatar)
                         Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp),
+                            Modifier.fillMaxWidth()
+                                .clickable(enabled = onOpenViewer != null) {
+                                    // ضغطة على المشاهد = يفتح ملفه الشخصي
+                                    player.stop()
+                                    viewersOpen = false
+                                    onOpenViewer?.invoke(com.chatapp.messenger.UserItem(v.uid, prof.name, "", prof.username))
+                                }
+                                .padding(horizontal = 18.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Box(
@@ -1242,7 +1251,7 @@ fun StoryViewerScreen(
                 GlassButton(
                     onClick = {
                         Repo.shareStory(picked.toList(), realOwner, if (mine) "" else (owner?.name ?: ""))
-                        Toast.makeText(ctx, "انرسلت القصة", Toast.LENGTH_SHORT).show()
+                        AppToast.show("انرسلت القصة")
                         picked.clear()
                         shareOpen = false
                     },
@@ -1306,7 +1315,7 @@ fun StoryViewerScreen(
                             } catch (e: Exception) {
                                 deleting = false
                                 confirmDelete = false
-                                Toast.makeText(ctx, "فشل الحذف: ${e.message}", Toast.LENGTH_LONG).show()
+                                AppToast.show("فشل الحذف: ${e.message}", long = true)
                             }
                         }
                     }
@@ -1502,7 +1511,7 @@ fun StatusEditorSheet(existing: Status?, onDismiss: () -> Unit) {
                                     onDismiss()
                                 } catch (e: Exception) {
                                     busy = false
-                                    Toast.makeText(ctx, "فشل النشر: ${e.message}", Toast.LENGTH_LONG).show()
+                                    AppToast.show("فشل النشر: ${e.message}", long = true)
                                 }
                             }
                         }
@@ -1522,13 +1531,111 @@ fun StatusEditorSheet(existing: Status?, onDismiss: () -> Unit) {
                                         onDismiss()
                                     } catch (e: Exception) {
                                         busy = false
-                                        Toast.makeText(ctx, "فشل الحذف: ${e.message}", Toast.LENGTH_LONG).show()
+                                        AppToast.show("فشل الحذف: ${e.message}", long = true)
                                     }
                                 }
                             }
                             .padding(vertical = 13.dp)
                     )
                 }
+            }
+        }
+    }
+}
+
+
+/**
+ * فتح قصة شخص من المحادثة (ضغطة على اقتباس "قصة فلان" بالرسالة).
+ * إذا القصة انتهت أو ما أگدر أشوفها (مو صديق صاحبها) تطلع رسالة وتنسكر.
+ */
+@Composable
+fun StoryFromChat(ownerUid: String, onDismiss: () -> Unit) {
+    val myUid = remember { Repo.auth.currentUser?.uid ?: "" }
+    val profile by androidx.compose.runtime.produceState<Profile?>(null, ownerUid) {
+        Repo.profileFlow(ownerUid).collect { value = it }
+    }
+    val p = profile ?: return
+    val st = p.story?.takeIf { System.currentTimeMillis() < it.expiresAt }
+    if (st == null) {
+        LaunchedEffect(Unit) {
+            AppToast.show("هذي القصة انتهت أو ما تگدر تشوفها")
+            onDismiss()
+        }
+        return
+    }
+    androidx.compose.runtime.key(ownerUid, st.createdAt) {
+        StoryViewerScreen(
+            story = st, owner = p, mine = ownerUid == myUid, showMenu = false,
+            onDismiss = onDismiss, ownerUid = ownerUid
+        )
+    }
+}
+
+/** نافذة الرد على حالة شخص (من ملفه الشخصي): يوصل رده كرسالة بالمحادثة معه */
+@Composable
+fun StatusReplySheet(
+    ownerUid: String,
+    ownerName: String,
+    statusText: String,
+    backdrop: Backdrop,
+    onDismiss: () -> Unit
+) {
+    var text by remember { mutableStateOf("") }
+    val fr = remember { FocusRequester() }
+    LaunchedEffect(Unit) { delay(250); runCatching { fr.requestFocus() } }
+    BackHandler(onBack = onDismiss)
+    val shape = RoundedCornerShape(30.dp)
+    Box(
+        Modifier.fillMaxSize().background(Color.Black.copy(0.45f))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
+        contentAlignment = Alignment.BottomCenter
+    ) {
+        Column(
+            Modifier.fillMaxWidth().imePadding().navigationBarsPadding().padding(12.dp)
+                .liquidCard(backdrop, shape, dark = true)
+                .background(Color.Black.copy(0.34f), shape)
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { }
+                .padding(18.dp)
+        ) {
+            Text("رد على حالة ${ownerName.ifBlank { "مستخدم" }}", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(10.dp))
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color.White.copy(0.10f))
+                    .height(androidx.compose.foundation.layout.IntrinsicSize.Min)
+            ) {
+                Box(Modifier.width(3.dp).fillMaxHeight().background(Color(0xFF1AA7FF)))
+                Text(
+                    statusText, color = Color.White.copy(0.9f), fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.weight(1f).heightIn(min = 52.dp)
+                        .liquidCard(backdrop, RoundedCornerShape(28.dp), dark = true)
+                        .background(Color.Black.copy(0.22f), RoundedCornerShape(28.dp))
+                        .padding(horizontal = 18.dp, vertical = 14.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    if (text.isEmpty()) Text("اكتب ردك...", color = Color.White.copy(0.6f), fontSize = 16.sp)
+                    BasicTextField(
+                        value = text, onValueChange = { text = it.take(500) }, maxLines = 4,
+                        textStyle = TextStyle(color = Color.White, fontSize = 16.sp),
+                        cursorBrush = SolidColor(Color(0xFF1AA7FF)),
+                        modifier = Modifier.fillMaxWidth().focusRequester(fr)
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                GlassButton(
+                    onClick = {
+                        Repo.sendStatusReply(ownerUid, statusText, text.trim())
+                        AppToast.show("انرسل ردك")
+                        onDismiss()
+                    },
+                    backdrop = backdrop, tint = Color(0xFF1AA7FF), enabled = text.isNotBlank(),
+                    modifier = Modifier.size(52.dp)
+                ) { Icon(AppIcons.Reply, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
             }
         }
     }

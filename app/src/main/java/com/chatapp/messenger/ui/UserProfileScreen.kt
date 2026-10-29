@@ -91,17 +91,18 @@ fun UserProfileScreen(user: UserItem, onBack: () -> Unit, onMessage: () -> Unit)
     // الصداقة: أضيفه / ألغي الطلب / أقبل أو أرفض / ألغي الصداقة
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    val myUid = Repo.auth.currentUser?.uid ?: ""
+    val myUid = remember { Repo.auth.currentUser?.uid ?: "" }
     val isMe = user.uid == myUid
     val relation by remember(user.uid) { Repo.relationFlow(user.uid) }.collectAsState(initial = Relation.NONE)
     var relBusy by remember { mutableStateOf(false) }
     var confirmUnfriend by remember { mutableStateOf(false) }
+    var showStatusReply by remember { mutableStateOf(false) }
     fun relAction(block: suspend () -> Unit) {
         if (relBusy) return
         relBusy = true
         scope.launch {
             try { block() } catch (e: Exception) {
-                Toast.makeText(ctx, "فشلت العملية: ${e.message}", Toast.LENGTH_LONG).show()
+                AppToast.show("فشلت العملية: ${e.message}", long = true)
             }
             relBusy = false
         }
@@ -220,7 +221,7 @@ fun UserProfileScreen(user: UserItem, onBack: () -> Unit, onMessage: () -> Unit)
                                 .height(u * 240f),
                             contentAlignment = Alignment.BottomStart
                         ) {
-                            StatusBubble(activeStatus.text, glass, u, null)
+                            StatusBubble(activeStatus.text, glass, u, if (!isMe) ({ showStatusReply = true }) else null)
                         }
                     }
                     // الاسم واليوزر
@@ -326,6 +327,14 @@ fun UserProfileScreen(user: UserItem, onBack: () -> Unit, onMessage: () -> Unit)
                     onConfirm = { confirmUnfriend = false; relAction { Repo.removeFriend(user.uid) } },
                     onDismiss = { confirmUnfriend = false },
                     cancelText = "رجوع"
+                )
+            }
+            // الرد على حالة الشخص
+            val replyStatus = profile.status?.takeIf { !profile.restricted && System.currentTimeMillis() < it.expiresAt }
+            if (showStatusReply && !isMe && replyStatus != null) {
+                StatusReplySheet(
+                    ownerUid = user.uid, ownerName = name, statusText = replyStatus.text,
+                    backdrop = glass, onDismiss = { showStatusReply = false }
                 )
             }
         }

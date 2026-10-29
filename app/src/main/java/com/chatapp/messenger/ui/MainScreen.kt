@@ -77,7 +77,8 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 /** إذا الحساب محظور (بعد بلاغ ثبت صحته) تظهر شاشة الحظر، وإلا الشاشة الرئيسية */
 @Composable
 fun MainScreen() {
-    val myUid = Repo.auth.currentUser?.uid ?: ""
+    // ثابت طول عمر الشاشة: بعد تسجيل الخروج الشاشة تبقى ثواني بحركة الخروج، وإذا انقرأ uid فاضي ينهار التطبيق
+    val myUid = remember { Repo.auth.currentUser?.uid ?: "" }
     val ban by remember(myUid) { Repo.banFlow(myUid) }.collectAsState(initial = Ban())
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(ban.until) {
@@ -93,7 +94,7 @@ fun MainScreen() {
 /** الشاشة الرئيسية: المحتوى + الشريط السفلي الزجاجي (Home / BDF / Account) */
 @Composable
 private fun MainContent() {
-    val myUid = Repo.auth.currentUser?.uid ?: ""
+    val myUid = remember { Repo.auth.currentUser?.uid ?: "" }
     val ctx = LocalContext.current
     val notifPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     var tab by remember { mutableIntStateOf(0) }

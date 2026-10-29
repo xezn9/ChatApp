@@ -143,6 +143,7 @@ object Repo {
 
     /** آخر 50 رسالة، الأحدث أولاً */
     fun messagesFlow(me: String, other: String): Flow<List<Msg>> = callbackFlow {
+        if (me.isBlank()) { close(); return@callbackFlow }
         val reg = db.collection("chats").document(chatId(me, other)).collection("messages")
             .orderBy("createdAt", Query.Direction.DESCENDING)
             .limit(50)
@@ -174,6 +175,7 @@ object Repo {
 
     /** الرسائل المثبتة بالمحادثة (حتى لو أقدم من آخر 50 رسالة)، الأحدث تثبيتاً أولاً */
     fun pinnedMessagesFlow(me: String, other: String): Flow<List<Msg>> = callbackFlow {
+        if (me.isBlank()) { close(); return@callbackFlow }
         val reg = db.collection("chats").document(chatId(me, other)).collection("messages")
             .whereEqualTo("pinned", true)
             .addSnapshotListener { snap, _ ->
@@ -217,6 +219,7 @@ object Repo {
 
     /** المحادثات الي أنا طرف فيها (تظهر بعد أول رسالة)، الأحدث أولاً */
     fun chatsFlow(me: String): Flow<List<ChatItem>> = callbackFlow {
+        if (me.isBlank()) { close(); return@callbackFlow }
         val reg = db.collection("chats").whereArrayContains("participants", me)
             .addSnapshotListener { snap, _ ->
                 if (snap != null) {
@@ -282,6 +285,7 @@ object Repo {
 
     /** وقت آخر مرة الطرف الثاني قرأ المحادثة (0 = ما قرأ بعد) */
     fun readAtFlow(me: String, other: String): Flow<Long> = callbackFlow {
+        if (me.isBlank()) { close(); return@callbackFlow }
         val reg = db.collection("chats").document(chatId(me, other))
             .addSnapshotListener { d, _ ->
                 val t = (d?.get("readAt") as? Map<*, *>)?.get(other) as? com.google.firebase.Timestamp
@@ -292,6 +296,7 @@ object Repo {
 
     /** لكل شخص: وقت آخر "حذف محادثة" عندي. الرسائل الأقدم منه تنخفي عندي فقط */
     fun clearedFlow(me: String): Flow<Map<String, Long>> = callbackFlow {
+        if (me.isBlank()) { close(); return@callbackFlow }
         val reg = db.collection("settings").document(me).addSnapshotListener { d, _ ->
             if (d != null) {
                 val m = (d.get("cleared") as? Map<*, *>)?.mapNotNull { (k, v) ->
@@ -310,6 +315,7 @@ object Repo {
 
     /** معرّفات الرسائل الي حذفتها من عندي بهذي المحادثة */
     fun hiddenFlow(me: String, other: String): Flow<Set<String>> = callbackFlow {
+        if (me.isBlank()) { close(); return@callbackFlow }
         val reg = db.collection("settings").document(me).addSnapshotListener { d, _ ->
             if (d != null) {
                 val list = ((d.get("hidden") as? Map<*, *>)?.get(other) as? List<*>)
@@ -322,6 +328,7 @@ object Repo {
 
     /** المعاينات البديلة لقائمة المحادثات (لكل شخص) */
     fun previewOverridesFlow(me: String): Flow<Map<String, HiddenPreview>> = callbackFlow {
+        if (me.isBlank()) { close(); return@callbackFlow }
         val reg = db.collection("settings").document(me).addSnapshotListener { d, _ ->
             if (d != null) {
                 val m = (d.get("previews") as? Map<*, *>)?.mapNotNull { (k, v) ->
@@ -386,6 +393,7 @@ object Repo {
     }
 
     fun presenceFlow(uid: String): Flow<Presence> = callbackFlow {
+        if (uid.isBlank()) { close(); return@callbackFlow }
         val reg = db.collection("presence").document(uid).addSnapshotListener { d, err ->
             if (err != null) {
                 // الصلاحيات ترفض القراءة إذا هذا المستخدم حاظرني
@@ -422,6 +430,7 @@ object Repo {
 
     /** بيانات الملف الشخصي الأساسية فقط (بدون القصة): خفيفة، تنفع لصفوف القوائم */
     fun basicProfileFlow(uid: String): Flow<Profile> = callbackFlow {
+        if (uid.isBlank()) { close(); return@callbackFlow }
         val reg = db.collection("profiles").document(uid).addSnapshotListener { d, err ->
             if (err != null) {
                 // الصلاحيات ترفض القراءة إذا هذا المستخدم حاظرني
@@ -453,6 +462,7 @@ object Repo {
 
     /** القصة محفوظة بوثيقة منفصلة storyData/<uid> (القواعد تسمح بقراءتها لصاحبها وأصدقائه فقط) */
     private fun storyDocFlow(uid: String): Flow<Story?> = callbackFlow {
+        if (uid.isBlank()) { close(); return@callbackFlow }
         val reg = db.collection("storyData").document(uid).addSnapshotListener { d, err ->
             if (err != null) trySend(null)
             else if (d != null) trySend(if (d.exists()) (d.data as? Map<*, *>)?.let { parseStory(it) } else null)
@@ -709,6 +719,12 @@ object Repo {
         }
     }
 
+    /** رد على حالة شخص: يوصل كرسالة بالمحادثة معه (مع اقتباس نص الحالة) */
+    fun sendStatusReply(owner: String, statusText: String, text: String) {
+        val me = auth.currentUser?.uid ?: return
+        send(me, owner, text, replyId = "status", replyText = statusText.take(100), replyFrom = owner)
+    }
+
     /** رد على قصة: يوصل كرسالة بالمحادثة مع صاحب القصة (مع اقتباس "القصة") */
     fun sendStoryReply(owner: String, text: String) {
         val me = auth.currentUser?.uid ?: return
@@ -733,6 +749,7 @@ object Repo {
 
     /** أصدقائي (الأحدث صداقة أولاً) */
     fun friendsFlow(me: String): Flow<List<String>> = callbackFlow {
+        if (me.isBlank()) { close(); return@callbackFlow }
         val reg = db.collection("friendships").whereArrayContains("users", me)
             .addSnapshotListener { snap, _ ->
                 if (snap != null) {
@@ -756,6 +773,7 @@ object Repo {
 
     /** طلبات الصداقة الواردة لي (معرّفات المرسلين) */
     fun incomingRequestsFlow(me: String): Flow<List<String>> = callbackFlow {
+        if (me.isBlank()) { close(); return@callbackFlow }
         val reg = db.collection("friendRequests").whereEqualTo("to", me)
             .addSnapshotListener { snap, _ ->
                 if (snap != null) trySend(snap.documents.mapNotNull { it.getString("from") })
@@ -846,6 +864,7 @@ object Repo {
     // ---------- التثبيت (شخص مميز) ----------
 
     fun pinnedFlow(me: String): Flow<Set<String>> = callbackFlow {
+        if (me.isBlank()) { close(); return@callbackFlow }
         val reg = db.collection("settings").document(me).addSnapshotListener { d, _ ->
             if (d != null) {
                 val list = (d.get("pinned") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
@@ -882,6 +901,7 @@ object Repo {
     }
 
     fun banFlow(me: String): Flow<Ban> = callbackFlow {
+        if (me.isBlank()) { close(); return@callbackFlow }
         val reg = db.collection("bans").document(me).addSnapshotListener { d, err ->
             if (err != null) {
                 trySend(Ban())

@@ -168,7 +168,7 @@ private fun timeLabel(ms: Long): String {
 /** شاشة المحادثة بالكامل Liquid Glass: شريط علوي + فقاعات + مربع كتابة + إعدادات */
 @Composable
 fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = {}) {
-    val me = Repo.auth.currentUser?.uid ?: return
+    val me = remember { Repo.auth.currentUser?.uid } ?: return
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -227,7 +227,7 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
         if (uri != null) scope.launch {
             val bytes = ImageUtil.uriToJpeg(ctx, uri, 1600, 82)
             if (bytes == null) {
-                Toast.makeText(ctx, "ما گدرت أفتح الصورة", Toast.LENGTH_SHORT).show()
+                AppToast.show("ما گدرت أفتح الصورة")
             } else {
                 withContext(Dispatchers.IO) { bgFile.writeBytes(bytes) }
                 updateBg(bgCfg.copy(kind = "image", version = System.currentTimeMillis()))
@@ -282,21 +282,23 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
     val onWriteFail: (Exception) -> Unit = { e ->
         val denied = (e as? com.google.firebase.firestore.FirebaseFirestoreException)?.code ==
             com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED
-        Toast.makeText(
-            ctx,
+        AppToast.show(
             if (denied) "السيرفر رفض العملية: انشر firestore.rules (firebase deploy --only firestore:rules)"
             else "ما تمت العملية، تأكد من الإنترنت",
-            Toast.LENGTH_LONG
-        ).show()
+            long = true
+        )
     }
 
     fun nameOf(uid: String) = if (uid == me) "أنت" else shownName
 
     /** ينزل للرسالة الأصلية ويومّضها */
+    // فتح قصة من اقتباس "قصة فلان" بالرسالة
+    var storyOwner by remember { mutableStateOf<String?>(null) }
+
     fun jumpTo(id: String) {
         val idx = msgs.indexOfFirst { it.id == id }
         if (idx < 0) {
-            Toast.makeText(ctx, "هذي الرسالة قديمة وما انحملت بالمحادثة", Toast.LENGTH_SHORT).show()
+            AppToast.show("هذي الرسالة قديمة وما انحملت بالمحادثة")
             return
         }
         scope.launch {
@@ -404,7 +406,15 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                             replyName = nameOf(m.replyFrom),
                             replyDeleted = original?.deleted == true,
                             onReply = { if (!m.deleted) { editing = null; replyTo = m } },
-                            onJump = { jumpTo(it) },
+                            onJump = {
+                                when (it) {
+                                    // رسالة قصة (مشاركة أو رد): ضغطة على الاقتباس تفتح القصة
+                                    "story" -> storyOwner = m.replyFrom.ifBlank { other.uid }
+                                    // رد على حالة: ما أكو رسالة أصلية تنزل لها
+                                    "status" -> {}
+                                    else -> jumpTo(it)
+                                }
+                            },
                             onLongPress = { rect -> menu = MenuTarget(m, mine, rect) }
                         )
                     }
@@ -620,9 +630,9 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                 scope.launch {
                     try {
                         Repo.report(other.uid, reason, ids)
-                        Toast.makeText(ctx, "تم إرسال البلاغ، شكراً لك", Toast.LENGTH_LONG).show()
+                        AppToast.show("تم إرسال البلاغ، شكراً لك", long = true)
                     } catch (e: Exception) {
-                        Toast.makeText(ctx, "فشل إرسال البلاغ، تأكد من الإنترنت", Toast.LENGTH_LONG).show()
+                        AppToast.show("فشل إرسال البلاغ، تأكد من الإنترنت", long = true)
                     }
                 }
             },
@@ -685,6 +695,11 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                     )
                 }
             }
+        }
+
+        // ----- قصة مفتوحة من المحادثة -----
+        storyOwner?.let { ow ->
+            StoryFromChat(ownerUid = ow, onDismiss = { storyOwner = null })
         }
 
         // ----- قائمة الرسائل المثبتة -----

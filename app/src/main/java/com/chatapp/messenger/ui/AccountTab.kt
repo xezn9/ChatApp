@@ -170,7 +170,7 @@ fun AccountTab(
     /** true لما يكون هذا التبويب هو الظاهر (كل التبويبات مبنية من البداية) */
     active: Boolean = true
 ) {
-    val me = Repo.auth.currentUser
+    val me = remember { Repo.auth.currentUser }
     val myUid = me?.uid ?: ""
     val profile by remember(myUid) { Repo.profileFlow(myUid) }.collectAsState(initial = Profile())
     val fallbackName = me?.displayName?.takeIf { it.isNotBlank() } ?: me?.email?.substringBefore("@") ?: ""
@@ -472,6 +472,8 @@ fun AccountTab(
                 ownerUid = myUid,
                 showMenu = true,
                 onDismiss = { showViewer = false },
+                // ضغطة على مشاهد بقائمة المشاهدين = ملفه الشخصي
+                onOpenViewer = { u -> showViewer = false; onOpenProfile(u) },
                 onEdit = {
                     // نسكّر العارض أول، وبعدها يطلع المحرر من زر +
                     showViewer = false
@@ -593,7 +595,7 @@ internal fun rememberImagePicker(maxSide: Int, quality: Int, onPicked: (String) 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) scope.launch {
             val b64 = ImageUtil.uriToB64(ctx, uri, maxSide, quality)
-            if (b64 != null) cb(b64) else Toast.makeText(ctx, "تعذّر قراءة الصورة", Toast.LENGTH_SHORT).show()
+            if (b64 != null) cb(b64) else AppToast.show("تعذّر قراءة الصورة")
         }
     }
     return { launcher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
@@ -862,7 +864,7 @@ private fun EditProfileDialog(
                                         onDismiss()
                                     } catch (e: Exception) {
                                         saving = false
-                                        Toast.makeText(ctx, "فشل الحفظ: ${e.message}", Toast.LENGTH_LONG).show()
+                                        AppToast.show("فشل الحفظ: ${e.message}", long = true)
                                     }
                                 }
                             }

@@ -68,7 +68,7 @@ internal fun FriendsScreen(
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    val myUid = Repo.auth.currentUser?.uid ?: ""
+    val myUid = remember { Repo.auth.currentUser?.uid ?: "" }
     val friends by remember(myUid) { Repo.friendsFlow(myUid) }.collectAsState(initial = emptyList())
     val requests by remember(myUid) { Repo.incomingRequestsFlow(myUid) }.collectAsState(initial = emptyList())
     val fg = MaterialTheme.colorScheme.onBackground
@@ -126,7 +126,7 @@ internal fun FriendsScreen(
                                                     scope.launch {
                                                         try { Repo.acceptFriendRequest(uid) }
                                                         catch (e: Exception) {
-                                                            Toast.makeText(ctx, "فشل القبول: ${e.message}", Toast.LENGTH_LONG).show()
+                                                            AppToast.show("فشل القبول: ${e.message}", long = true)
                                                         }
                                                         busyUid = null
                                                     }
@@ -143,7 +143,7 @@ internal fun FriendsScreen(
                                                     scope.launch {
                                                         try { Repo.declineFriendRequest(uid) }
                                                         catch (e: Exception) {
-                                                            Toast.makeText(ctx, "فشل الرفض: ${e.message}", Toast.LENGTH_LONG).show()
+                                                            AppToast.show("فشل الرفض: ${e.message}", long = true)
                                                         }
                                                         busyUid = null
                                                     }
@@ -196,7 +196,7 @@ internal fun FriendsScreen(
                         scope.launch {
                             try { Repo.removeFriend(uid) }
                             catch (e: Exception) {
-                                Toast.makeText(ctx, "فشل الإلغاء: ${e.message}", Toast.LENGTH_LONG).show()
+                                AppToast.show("فشل الإلغاء: ${e.message}", long = true)
                             }
                         }
                     },
