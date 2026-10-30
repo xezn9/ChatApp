@@ -230,7 +230,8 @@ private fun MainContent() {
                                 onOpenProfile = { viewProfile = it },
                                 onRequestLogout = { confirmLogout = true },
                                 onRequestDeleteChat = { uid, name, lastAt -> deleteChat = Triple(uid, name, lastAt) },
-                                onOverlayChange = { homeOverlay = it }
+                                onOverlayChange = { homeOverlay = it },
+                                backdrop = backdrop
                             )
                             1 -> BdfTab()
                             else -> AccountTab(

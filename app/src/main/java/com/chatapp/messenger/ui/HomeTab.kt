@@ -1,6 +1,8 @@
 package com.chatapp.messenger.ui
 
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.animation.expandIn
+import androidx.compose.animation.shrinkOut
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -38,6 +40,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -66,6 +69,21 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.input.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import kotlinx.coroutines.launch
+import com.kyant.backdrop.Backdrop
+import com.chatapp.messenger.ui.glass.GlassButton
 import com.chatapp.messenger.ChatItem
 import com.chatapp.messenger.Profile
 import com.chatapp.messenger.Repo
@@ -90,7 +108,7 @@ fun HomeTab(
     val cleared by remember(myUid) { Repo.clearedFlow(myUid) }.collectAsState(initial = emptyMap())
     // معاينة بديلة إذا حذفت (من عندي) آخر رسالة بمحادثة
     val previewOverrides by remember(myUid) { Repo.previewOverridesFlow(myUid) }.collectAsState(initial = emptyMap())
-    var query by remember { mutableStateOf("") }
+    var query by remember { mutableStateOf("") }\n    var createGroupOpen by remember { mutableStateOf(false) }
     // قصص كل المستخدمين (مع قصتي أولاً)
     val stories by remember { Repo.activeStoriesFlow() }.collectAsState(initial = emptyList())
     var viewIndex by remember { mutableStateOf<Int?>(null) }
@@ -120,7 +138,17 @@ fun HomeTab(
             TopAppBar(
                 title = { Text("المحادثات") },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-                actions = { TextButton(onClick = onRequestLogout) { Text("تسجيل الخروج") } }
+                actions = {
+                    GlassButton(
+                        onClick = { createGroupOpen = true }, backdrop = backdrop,
+                        modifier = Modifier.padding(end = 8.dp).padding(horizontal = 12.dp, vertical = 9.dp)
+                    ) {
+                        Icon(Icons.Filled.GroupAdd, null, tint = MaterialTheme.colorScheme.onBackground)
+                        Spacer(Modifier.width(6.dp))
+                        Text("إنشاء مجموعة", color = MaterialTheme.colorScheme.onBackground, fontSize = 13.sp)
+                    }
+                    TextButton(onClick = onRequestLogout) { Text("تسجيل الخروج") }
+                }
             )
         }
     ) { padding ->
@@ -229,6 +257,19 @@ fun HomeTab(
             }
         }
     }
+    }
+
+    AnimatedVisibility(
+        visible = createGroupOpen,
+        enter = expandIn(tween(420), expandFrom = Alignment.TopEnd, clip = false) + fadeIn(tween(180)),
+        exit = shrinkOut(tween(320), shrinkTowards = Alignment.TopEnd, clip = false) + fadeOut(tween(160)),
+        modifier = Modifier.fillMaxSize()
+    ) {
+        CreateGroupScreen(
+            backdrop = backdrop,
+            onClose = { createGroupOpen = false },
+            onOverlayChange = onOverlayChange
+        )
     }
 }
 
