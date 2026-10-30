@@ -5,6 +5,14 @@ import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.QuerySnapshot
+import com.google.firebase.firestore.Source
+import com.google.firebase.FirebaseApp
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.database.ServerValue
+import com.google.firebase.database.ValueEventListener
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -113,6 +121,33 @@ object Repo {
     val auth: FirebaseAuth by lazy { FirebaseAuth.getInstance() }
     private val db: FirebaseFirestore by lazy { FirebaseFirestore.getInstance() }
 
+    /**
+     * Realtime Database: الرسائل والمحادثات وعداد غير المقروء (بدون حد على عدد القراءات/الكتابات).
+     * إذا قاعدة البيانات مو بمنطقة us-central1 وتطلع رسالة "Can't determine Firebase Database URL"،
+     * حط رابطها هنا (تلقاه بصفحة Realtime Database بالـ Console)، أو نزّل google-services.json من جديد.
+     */
+    private const val RTDB_URL = ""
+    val rtdb: FirebaseDatabase by lazy {
+        val inst = if (RTDB_URL.isBlank()) FirebaseDatabase.getInstance() else FirebaseDatabase.getInstance(RTDB_URL)
+        // كاش على القرص + الرسائل المكتوبة بدون نت تنرسل تلقائياً لما يرجع الاتصال
+        runCatching { inst.setPersistenceEnabled(true) }
+        inst
+    }
+
+    private fun DataSnapshot.num(name: String): Long = (child(name).value as? Number)?.toLong() ?: 0L
+    private fun DataSnapshot.str(name: String): String = child(name).value as? String ?: ""
+    private fun DataSnapshot.flag(name: String): Boolean = child(name).value == true
+
+    /** يحول أي استعلام Realtime Database إلى Flow (يتحدث فوراً مع كل تغيير) */
+    private fun <T> rtFlow(q: com.google.firebase.database.Query, map: (DataSnapshot) -> T): Flow<T> = callbackFlow {
+        val l = object : ValueEventListener {
+            override fun onDataChange(s: DataSnapshot) { trySend(map(s)) }
+            override fun onCancelled(e: DatabaseError) {}
+        }
+        q.addValueEventListener(l)
+        awaitClose { q.removeEventListener(l) }
+    }
+
     /** نطاق يعيش بعمر التطبيق (حتى ما ينلغي الإرسال لو تغيرت الشاشة) */
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -129,169 +164,164 @@ object Repo {
         db.collection("users").document(u.uid).set(data, SetOptions.merge()).await()
     }
 
+    private fun parseUsers(snap: QuerySnapshot): List<UserItem> = snap.documents.mapNotNull { d ->
+        val uid = d.getString("uid") ?: return@mapNotNull null
+        UserItem(uid, d.getString("name") ?: "", d.getString("email") ?: "", d.getString("username") ?: "")
+    }
+
+    /**
+     * قائمة المستخدمين: بدل listener دائم (كل تغيير بأي حساب = قراءة عند الكل)،
+     * نعرض الكاش أولاً (مجاني) ونجلب من السيرفر مرة كل 15 دقيقة فقط.
+     */
     fun usersFlow(): Flow<List<UserItem>> = callbackFlow {
-        val reg = db.collection("users").addSnapshotListener { snap, _ ->
-            if (snap != null) {
-                trySend(snap.documents.mapNotNull { d ->
-                    val uid = d.getString("uid") ?: return@mapNotNull null
-                    UserItem(uid, d.getString("name") ?: "", d.getString("email") ?: "", d.getString("username") ?: "")
-                })
+        val col = db.collection("users")
+        val prefs = FirebaseApp.getInstance().applicationContext
+            .getSharedPreferences("repo_cache", android.content.Context.MODE_PRIVATE)
+        runCatching { col.get(Source.CACHE).await() }.getOrNull()
+            ?.takeIf { !it.isEmpty }?.let { trySend(parseUsers(it)) }
+        val now = System.currentTimeMillis()
+        if (now - prefs.getLong("users_synced_at", 0L) > 15L * 60 * 1000) {
+            runCatching { col.get(Source.SERVER).await() }.getOrNull()?.let {
+                prefs.edit().putLong("users_synced_at", now).apply()
+                trySend(parseUsers(it))
             }
         }
-        awaitClose { reg.remove() }
+        awaitClose { }
     }
 
     /** آخر 50 رسالة، الأحدث أولاً */
-    fun messagesFlow(me: String, other: String): Flow<List<Msg>> = callbackFlow {
-        if (me.isBlank()) { close(); return@callbackFlow }
-        val reg = db.collection("chats").document(chatId(me, other)).collection("messages")
-            .orderBy("createdAt", Query.Direction.DESCENDING)
-            .limit(50)
-            .addSnapshotListener { snap, _ ->
-                if (snap != null) {
-                    trySend(snap.documents.map { it.toMsg() })
-                }
-            }
-        awaitClose { reg.remove() }
+    fun messagesFlow(me: String, other: String): Flow<List<Msg>> {
+        if (me.isBlank()) return flowOf(emptyList())
+        val q = rtdb.getReference("chats/${chatId(me, other)}/messages")
+            .orderByChild("createdAt").limitToLast(50)
+        return rtFlow(q) { snap ->
+            snap.children.map { it.toMsg() }
+                .sortedWith(compareByDescending<Msg> { it.createdAt }.thenByDescending { it.id })
+        }
     }
 
-
-    private fun DocumentSnapshot.toMsg() = Msg(
-        id = id,
-        from = getString("from") ?: "",
-        text = getString("text") ?: "",
-        // الرسالة الي توها انرسلت (الوقت لسا null) نستخدم الوقت التقديري
-        createdAt = getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-            ?.toDate()?.time ?: System.currentTimeMillis(),
-        deleted = getBoolean("deleted") == true,
-        edited = getBoolean("edited") == true,
-        pinned = getBoolean("pinned") == true,
-        pinnedAt = getTimestamp("pinnedAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-            ?.toDate()?.time ?: 0L,
-        replyId = getString("replyId") ?: "",
-        replyText = getString("replyText") ?: "",
-        replyFrom = getString("replyFrom") ?: ""
+    private fun DataSnapshot.toMsg() = Msg(
+        id = key ?: "",
+        from = str("from"),
+        text = str("text"),
+        // الرسالة الي توها انرسلت: الـ SDK يعطي وقت تقديري لين يأكد السيرفر
+        createdAt = num("createdAt").takeIf { it > 0L } ?: System.currentTimeMillis(),
+        deleted = flag("deleted"),
+        edited = flag("edited"),
+        pinned = flag("pinned"),
+        pinnedAt = num("pinnedAt"),
+        replyId = str("replyId"),
+        replyText = str("replyText"),
+        replyFrom = str("replyFrom")
     )
 
     /** الرسائل المثبتة بالمحادثة (حتى لو أقدم من آخر 50 رسالة)، الأحدث تثبيتاً أولاً */
-    fun pinnedMessagesFlow(me: String, other: String): Flow<List<Msg>> = callbackFlow {
-        if (me.isBlank()) { close(); return@callbackFlow }
-        val reg = db.collection("chats").document(chatId(me, other)).collection("messages")
-            .whereEqualTo("pinned", true)
-            .addSnapshotListener { snap, _ ->
-                if (snap != null) {
-                    trySend(snap.documents.map { it.toMsg() }.filter { !it.deleted }.sortedByDescending { it.pinnedAt })
-                }
-            }
-        awaitClose { reg.remove() }
+    fun pinnedMessagesFlow(me: String, other: String): Flow<List<Msg>> {
+        if (me.isBlank()) return flowOf(emptyList())
+        val q = rtdb.getReference("chats/${chatId(me, other)}/messages")
+            .orderByChild("pinned").equalTo(true)
+        return rtFlow(q) { snap ->
+            snap.children.map { it.toMsg() }.filter { !it.deleted }.sortedByDescending { it.pinnedAt }
+        }
     }
 
     private fun msgRef(me: String, other: String, id: String) =
-        db.collection("chats").document(chatId(me, other)).collection("messages").document(id)
+        rtdb.getReference("chats/${chatId(me, other)}/messages/$id")
 
-    /** تحديث "آخر رسالة" بقائمة المحادثات (يُستدعى إذا الرسالة المعدّلة/المحذوفة هي الأخيرة) */
+    /** تحديث "آخر رسالة" بقائمة المحادثات عند الطرفين (يُستدعى إذا الرسالة المعدّلة/المحذوفة هي الأخيرة) */
     private fun updateLastText(me: String, other: String, text: String) {
-        db.collection("chats").document(chatId(me, other)).set(
-            mapOf("participants" to listOf(me, other), "lastText" to text.take(100)),
-            SetOptions.merge()
+        val t = text.take(100)
+        rtdb.reference.updateChildren(
+            mapOf<String, Any>(
+                "userChats/$me/$other/lastText" to t,
+                "userChats/$other/$me/lastText" to t
+            )
         )
     }
 
     /** حذف ناعم: الرسالة تبقى بمكانها وتظهر "رسالة مَحذوفة"، ونص الرسالة الأصلي يتمسح */
     fun deleteMessage(me: String, other: String, id: String, isLast: Boolean, onFail: (Exception) -> Unit = {}) {
-        msgRef(me, other, id).update(
-            mapOf("deleted" to true, "text" to "", "pinned" to false, "edited" to false)
+        msgRef(me, other, id).updateChildren(
+            mapOf<String, Any>("deleted" to true, "text" to "", "pinned" to false, "edited" to false)
         ).addOnFailureListener(onFail)
         if (isLast) updateLastText(me, other, "رسالة مَحذوفة")
     }
 
     fun editMessage(me: String, other: String, id: String, newText: String, isLast: Boolean, onFail: (Exception) -> Unit = {}) {
-        msgRef(me, other, id).update(mapOf("text" to newText, "edited" to true)).addOnFailureListener(onFail)
+        msgRef(me, other, id).updateChildren(mapOf<String, Any>("text" to newText, "edited" to true))
+            .addOnFailureListener(onFail)
         if (isLast) updateLastText(me, other, newText)
     }
 
     fun setMessagePinned(me: String, other: String, id: String, pinned: Boolean, onFail: (Exception) -> Unit = {}) {
-        msgRef(me, other, id).update(
-            if (pinned) mapOf("pinned" to true, "pinnedAt" to FieldValue.serverTimestamp(), "pinnedBy" to me)
-            else mapOf("pinned" to false)
+        msgRef(me, other, id).updateChildren(
+            if (pinned) mapOf<String, Any>("pinned" to true, "pinnedAt" to ServerValue.TIMESTAMP, "pinnedBy" to me)
+            else mapOf<String, Any>("pinned" to false)
         ).addOnFailureListener(onFail)
     }
 
     /** المحادثات الي أنا طرف فيها (تظهر بعد أول رسالة)، الأحدث أولاً */
-    fun chatsFlow(me: String): Flow<List<ChatItem>> = callbackFlow {
-        if (me.isBlank()) { close(); return@callbackFlow }
-        val reg = db.collection("chats").whereArrayContains("participants", me)
-            .addSnapshotListener { snap, _ ->
-                if (snap != null) {
-                    trySend(
-                        snap.documents.mapNotNull { d ->
-                            val parts = d.get("participants") as? List<*> ?: return@mapNotNull null
-                            val other = parts.firstOrNull { it != me } as? String ?: return@mapNotNull null
-                            ChatItem(
-                                other,
-                                d.getString("lastText") ?: "",
-                                // الرسالة الي توها انرسلت (الوقت لسا null) تنحسب الأحدث
-                                d.getTimestamp("lastAt")?.toDate()?.time ?: Long.MAX_VALUE,
-                                ((d.get("unread") as? Map<*, *>)?.get(me) as? Number)?.toInt() ?: 0
-                            )
-                        }.sortedByDescending { it.lastAt }
-                    )
-                }
-            }
-        awaitClose { reg.remove() }
+    fun chatsFlow(me: String): Flow<List<ChatItem>> {
+        if (me.isBlank()) return flowOf(emptyList())
+        return rtFlow(rtdb.getReference("userChats/$me")) { snap ->
+            snap.children.mapNotNull { c ->
+                val other = c.key ?: return@mapNotNull null
+                // عقدة بدون lastAt = ما صار فيها رسائل بعد (مثلاً فقط تصفير عداد)
+                if (!c.hasChild("lastAt")) return@mapNotNull null
+                ChatItem(other, c.str("lastText"), c.num("lastAt"), c.num("unread").toInt())
+            }.sortedByDescending { it.lastAt }
+        }
     }
 
     fun send(
         me: String, other: String, text: String,
         replyId: String = "", replyText: String = "", replyFrom: String = ""
     ) {
-        db.collection("chats").document(chatId(me, other)).set(
-            mapOf(
-                "participants" to listOf(me, other),
-                "lastText" to text.take(100),
-                "lastAt" to FieldValue.serverTimestamp(),
-                // عداد الرسائل غير المقروءة عند الطرف الثاني
-                "unread" to mapOf(other to FieldValue.increment(1))
-            ),
-            SetOptions.merge()
-        )
-        val data = mutableMapOf<String, Any>(
+        val cid = chatId(me, other)
+        val key = rtdb.getReference("chats/$cid/messages").push().key ?: return
+        val msg = hashMapOf<String, Any>(
             "from" to me,
             "to" to other,
             "text" to text,
-            "createdAt" to FieldValue.serverTimestamp()
+            "createdAt" to ServerValue.TIMESTAMP
         )
         if (replyId.isNotEmpty()) {
-            data["replyId"] = replyId
-            data["replyText"] = replyText.take(100)
-            data["replyFrom"] = replyFrom
+            msg["replyId"] = replyId
+            msg["replyText"] = replyText.take(100)
+            msg["replyFrom"] = replyFrom
         }
-        db.collection("chats").document(chatId(me, other)).collection("messages").add(data)
+        val preview = text.take(100)
+        // عملية واحدة ذرية: الرسالة + قائمة المحادثات عند الطرفين + عداد غير المقروء عند الطرف الثاني
+        val updates = hashMapOf<String, Any>(
+            "chats/$cid/messages/$key" to msg,
+            "userChats/$other/$me/lastText" to preview,
+            "userChats/$other/$me/lastAt" to ServerValue.TIMESTAMP,
+            "userChats/$other/$me/unread" to ServerValue.increment(1),
+            "userChats/$me/$other/lastText" to preview,
+            "userChats/$me/$other/lastAt" to ServerValue.TIMESTAMP
+        )
+        rtdb.reference.updateChildren(updates)
     }
 
 
     // ---------- غير المقروء + حذف المحادثة من عندي فقط ----------
 
-    /** أصفّر عداد الرسائل غير المقروءة لهذي المحادثة (update فقط حتى ما تنخلق وثيقة فارغة) */
+    /** أصفّر عداد الرسائل غير المقروءة لهذي المحادثة وأسجل وقت قراءتي (الطرف الثاني يشوف منه "مقروء") */
     fun markRead(me: String, other: String) {
-        db.collection("chats").document(chatId(me, other)).update(
-            mapOf(
-                "unread.$me" to 0,
-                // وقت آخر قراءة مني: الطرف الثاني يشوف منه "مقروء" تحت رسائله
-                "readAt.$me" to FieldValue.serverTimestamp()
+        rtdb.reference.updateChildren(
+            mapOf<String, Any>(
+                "userChats/$me/$other/unread" to 0,
+                "chats/${chatId(me, other)}/readAt/$me" to ServerValue.TIMESTAMP
             )
         )
     }
 
     /** وقت آخر مرة الطرف الثاني قرأ المحادثة (0 = ما قرأ بعد) */
-    fun readAtFlow(me: String, other: String): Flow<Long> = callbackFlow {
-        if (me.isBlank()) { close(); return@callbackFlow }
-        val reg = db.collection("chats").document(chatId(me, other))
-            .addSnapshotListener { d, _ ->
-                val t = (d?.get("readAt") as? Map<*, *>)?.get(other) as? com.google.firebase.Timestamp
-                trySend(t?.toDate()?.time ?: 0L)
-            }
-        awaitClose { reg.remove() }
+    fun readAtFlow(me: String, other: String): Flow<Long> {
+        if (me.isBlank()) return flowOf(0L)
+        return rtFlow(rtdb.getReference("chats/${chatId(me, other)}/readAt/$other")) { snap ->
+            (snap.value as? Number)?.toLong() ?: 0L
+        }
     }
 
     /** لكل شخص: وقت آخر "حذف محادثة" عندي. الرسائل الأقدم منه تنخفي عندي فقط */
@@ -384,8 +414,17 @@ object Repo {
     // مجموعة presence/<uid> منفصلة عن profiles (حتى ما تنرسل صور base64 مع كل نبضة)
 
     /** أكتب حالتي: online=true مع وقت السيرفر، أو online=false = آخر ظهور الحين */
+    private var lastPresenceKey = ""
+    private var lastPresenceAt = 0L
+
     fun setPresence(online: Boolean) {
         val u = auth.currentUser ?: return
+        val now = System.currentTimeMillis()
+        val key = "${u.uid}:$online"
+        // نفس الحالة خلال أقل من 60 ثانية (تبديل سريع بين التطبيقات): ما نكتب مرة ثانية
+        if (key == lastPresenceKey && now - lastPresenceAt < 60_000L) return
+        lastPresenceKey = key
+        lastPresenceAt = now
         db.collection("presence").document(u.uid).set(
             mapOf("online" to online, "lastSeen" to FieldValue.serverTimestamp()),
             SetOptions.merge()
@@ -859,6 +898,9 @@ object Repo {
         val u = auth.currentUser ?: return
         val ref = db.collection("blocks").document(u.uid).collection("users").document(other)
         if (blocked) ref.set(mapOf("at" to FieldValue.serverTimestamp())) else ref.delete()
+        // نسخة بـ Realtime Database حتى قواعد الرسائل تمنع المحظور من المراسلة
+        val r = rtdb.getReference("blocks/${u.uid}/$other")
+        if (blocked) r.setValue(true) else r.removeValue()
     }
 
     // ---------- التثبيت (شخص مميز) ----------
@@ -927,8 +969,27 @@ object Repo {
             .set(mapOf("at" to FieldValue.serverTimestamp()))
     }
 
+    /** مرة وحدة لكل حساب: ينسخ قائمة الحظر الحالية من Firestore إلى Realtime Database */
+    private fun syncBlocksToRtdb() {
+        val u = auth.currentUser ?: return
+        val prefs = FirebaseApp.getInstance().applicationContext
+            .getSharedPreferences("repo_cache", android.content.Context.MODE_PRIVATE)
+        val flag = "blocks_synced_${u.uid}"
+        if (prefs.getBoolean(flag, false)) return
+        appScope.launch {
+            runCatching {
+                val snap = db.collection("blocks").document(u.uid).collection("users").get().await()
+                val up = HashMap<String, Any>()
+                for (d in snap.documents) up["blocks/${u.uid}/${d.id}"] = true
+                if (up.isNotEmpty()) rtdb.reference.updateChildren(up).await()
+                prefs.edit().putBoolean(flag, true).apply()
+            }
+        }
+    }
+
     fun registerFcmToken() {
         if (auth.currentUser == null) return
+        syncBlocksToRtdb()
         com.google.firebase.messaging.FirebaseMessaging.getInstance().token
             .addOnSuccessListener { saveFcmToken(it) }
     }

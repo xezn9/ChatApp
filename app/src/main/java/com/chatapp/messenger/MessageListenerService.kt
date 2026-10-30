@@ -13,11 +13,11 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.firestore.DocumentChange
-import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.DatabaseReference
+import com.google.firebase.database.ValueEventListener
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -30,7 +30,7 @@ import kotlinx.coroutines.tasks.await
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * خدمة بالخلفية (Foreground Service) تسمع لمحادثات المستخدم بـ Firestore
+ * خدمة بالخلفية (Foreground Service) تسمع لمحادثات المستخدم بـ Realtime Database
  * وتطلع إشعار لما توصل رسالة جديدة والتطبيق مو مفتوح. بدون سيرفر وبدون Cloud Functions.
  *
  * - تشتغل فقط وانت مسجل دخول (تتوقف تلقائياً عند الخروج).
@@ -40,19 +40,18 @@ import java.util.concurrent.ConcurrentHashMap
 class MessageListenerService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val db by lazy { FirebaseFirestore.getInstance() }
     private lateinit var prefs: SharedPreferences
     private val locks = ConcurrentHashMap<String, Mutex>()
 
-    private var reg: ListenerRegistration? = null
+    private var listenRef: DatabaseReference? = null
+    private var listener: ValueEventListener? = null
     private var myUid: String? = null
     private var initialDone = false
 
     private val authListener = FirebaseAuth.AuthStateListener { a ->
         val u = a.currentUser
         if (u == null) {
-            reg?.remove()
-            reg = null
+            stopListening()
             myUid = null
             stopSelf()
         } else if (u.uid != myUid) {
@@ -62,7 +61,7 @@ class MessageListenerService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        prefs = getSharedPreferences("notif_cursor", Context.MODE_PRIVATE)
+        prefs = getSharedPreferences("notif_cursor_rt", Context.MODE_PRIVATE)
         Repo.auth.addAuthStateListener(authListener)
     }
 
@@ -80,8 +79,7 @@ class MessageListenerService : Service() {
 
     override fun onDestroy() {
         Repo.auth.removeAuthStateListener(authListener)
-        reg?.remove()
-        reg = null
+        stopListening()
         scope.cancel()
         super.onDestroy()
     }
@@ -112,45 +110,53 @@ class MessageListenerService : Service() {
     }
 
     // ------------------------------------------------------------ الاستماع
+    private fun stopListening() {
+        listener?.let { listenRef?.removeEventListener(it) }
+        listener = null
+        listenRef = null
+    }
+
     private fun startListening() {
         val me = Repo.auth.currentUser?.uid ?: return
-        if (reg != null && myUid == me) return
-        reg?.remove()
+        if (listener != null && myUid == me) return
+        stopListening()
         myUid = me
         initialDone = false
 
-        reg = db.collection("chats").whereArrayContains("participants", me)
-            .addSnapshotListener { snap, err ->
-                if (err != null || snap == null) {
-                    // خطأ نهائي (مثلاً صلاحيات): نعيد المحاولة بعد دقيقة
-                    reg?.remove()
-                    reg = null
-                    scope.launch {
-                        delay(60_000)
-                        if (Repo.auth.currentUser?.uid == me) startListening()
-                    }
-                    return@addSnapshotListener
-                }
+        val ref = Repo.rtdb.getReference("userChats/$me")
+        val l = object : ValueEventListener {
+            override fun onDataChange(snap: DataSnapshot) {
                 val first = !initialDone
                 initialDone = true
-                for (ch in snap.documentChanges) {
-                    if (ch.type == DocumentChange.Type.REMOVED) continue
-                    val d = ch.document
-                    // الكتابة الي توها انرسلت وقتها لسا null: ننتظر التأكيد من السيرفر
-                    val lastAt = d.getTimestamp("lastAt")?.nanos() ?: continue
-                    val has = prefs.contains(d.id)
+                for (c in snap.children) {
+                    val other = c.key ?: continue
+                    val lastAt = (c.child("lastAt").value as? Number)?.toLong() ?: continue
+                    val chatId = Repo.chatId(me, other)
+                    val has = prefs.contains(chatId)
                     if (!has && first) {
                         // أول مرة نشوف المحادثة على هذا الجهاز: ما نطلع إشعار للتاريخ القديم
-                        prefs.edit().putLong(d.id, lastAt).apply()
+                        prefs.edit().putLong(chatId, lastAt).apply()
                         continue
                     }
-                    if (lastAt <= prefs.getLong(d.id, 0L)) continue   // مثلاً تصفير عداد القراءة
-                    trigger(d.id, lastAt, me, if (first) 0L else 1200L)
+                    if (lastAt <= prefs.getLong(chatId, 0L)) continue   // مثلاً تصفير عداد القراءة
+                    trigger(chatId, lastAt, me, if (first) 0L else 300L)
                 }
             }
+
+            override fun onCancelled(e: DatabaseError) {
+                // خطأ نهائي (مثلاً صلاحيات): نعيد المحاولة بعد دقيقة
+                stopListening()
+                scope.launch {
+                    delay(60_000)
+                    if (Repo.auth.currentUser?.uid == me) startListening()
+                }
+            }
+        }
+        listenRef = ref
+        listener = l
+        ref.addValueEventListener(l)
     }
 
-    /** وثيقة المحادثة تنكتب قبل الرسالة بلحظات، فننتظر شوي قبل ما نجلب الرسائل */
     private fun trigger(chatId: String, lastAt: Long, me: String, delayMs: Long) {
         scope.launch {
             if (delayMs > 0) delay(delayMs)
@@ -167,35 +173,31 @@ class MessageListenerService : Service() {
         var cursor = prefs.getLong(chatId, 0L)
         if (lastAt <= cursor) return
 
-        val snap = db.collection("chats").document(chatId).collection("messages")
-            .whereGreaterThan("createdAt", fromNanos(cursor))
-            .orderBy("createdAt")
-            .limit(10)
+        val snap = Repo.rtdb.getReference("chats/$chatId/messages")
+            .orderByChild("createdAt")
+            .startAt((cursor + 1).toDouble())
+            .limitToFirst(10)
             .get().await()
 
-        if (snap.isEmpty) {
+        if (!snap.hasChildren()) {
             if (attempt < 3) {
                 delay(1500L * (attempt + 1))
                 process(chatId, lastAt, me, attempt + 1)
             }
             return
         }
-        for (doc in snap.documents) {
-            val t = doc.getTimestamp("createdAt")?.nanos() ?: continue
+        for (doc in snap.children) {
+            val t = (doc.child("createdAt").value as? Number)?.toLong() ?: continue
             cursor = t
             prefs.edit().putLong(chatId, t).apply()
 
-            val from = doc.getString("from") ?: continue
-            if (from == me || doc.getBoolean("deleted") == true) continue
-            val text = doc.getString("text") ?: continue
+            val from = doc.child("from").value as? String ?: continue
+            if (from == me || doc.child("deleted").value == true) continue
+            val text = doc.child("text").value as? String ?: continue
             if (AppState.foreground) continue            // التطبيق مفتوح: الرسالة تبين بالمحادثة
             ChatNotifier.show(applicationContext, from, text)
         }
     }
-
-    // الوقت بالنانو ثانية (Firestore يخزن بدقة أعلى من الميلي ثانية، فلو قصيناه تتكرر الرسائل)
-    private fun Timestamp.nanos() = seconds * 1_000_000_000L + nanoseconds
-    private fun fromNanos(n: Long) = Timestamp(n / 1_000_000_000L, (n % 1_000_000_000L).toInt())
 
     companion object {
         private const val NOTIF_ID = 7001

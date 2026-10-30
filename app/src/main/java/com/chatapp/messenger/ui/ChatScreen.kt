@@ -265,8 +265,14 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
     val newestMine = newest?.from == me
     // أي رسالة تصل وأنا داخل المحادثة والتطبيق قدامي = مقروءة (أصفّر العداد وأسجل وقت القراءة).
     // إذا التطبيق بالخلفية ما تنحسب مقروءة، وترجع تنحسب أول ما أفتحه.
+    // أول تصفير فوراً، وبعدها نؤخر ثانية ونص: لو الرسائل تتتابع نكتب مرة وحدة بدل كل رسالة
+    var firstMark by remember(other.uid) { mutableStateOf(true) }
     LaunchedEffect(other.uid, newestId, AppState.foreground) {
-        if (AppState.foreground) Repo.markRead(me, other.uid)
+        if (AppState.foreground) {
+            if (!firstMark) delay(1500)
+            firstMark = false
+            Repo.markRead(me, other.uid)
+        }
     }
     LaunchedEffect(newestId) {
         if (newestId != null && (newestMine || listState.firstVisibleItemIndex <= 1)) {
@@ -281,9 +287,10 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
 
     val onWriteFail: (Exception) -> Unit = { e ->
         val denied = (e as? com.google.firebase.firestore.FirebaseFirestoreException)?.code ==
-            com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED
+            com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED ||
+            e.message?.contains("permission", ignoreCase = true) == true
         AppToast.show(
-            if (denied) "السيرفر رفض العملية: انشر firestore.rules (firebase deploy --only firestore:rules)"
+            if (denied) "السيرفر رفض العملية: تأكد من نشر قواعد Realtime Database (database.rules.json)"
             else "ما تمت العملية، تأكد من الإنترنت",
             long = true
         )

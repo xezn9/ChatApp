@@ -23,8 +23,8 @@ import kotlinx.coroutines.delay
 import java.util.Calendar
 
 /** نبضة الحضور كل دقيقتين، وإذا انقطعت النبضات أكثر من 5 دقائق (كراش/ما في نت) نعتبره غير متصل */
-const val PRESENCE_HEARTBEAT_MS = 2L * 60 * 1000
-const val PRESENCE_STALE_MS = 5L * 60 * 1000
+const val PRESENCE_HEARTBEAT_MS = 4L * 60 * 1000
+const val PRESENCE_STALE_MS = 9L * 60 * 1000
 
 val OnlineGreen = Color(0xFF34C759)
 
