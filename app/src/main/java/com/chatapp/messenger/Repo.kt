@@ -31,6 +31,8 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.tasks.await
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 data class UserItem(val uid: String, val name: String, val email: String, val username: String = "")
 
@@ -1197,27 +1199,32 @@ object Repo {
             "المعرّف يجب أن يتكون من 5 أحرف أو أرقام على الأقل"
         }
         val ref = rtdb.getReference("groups/$normalized")
-        val result = ref.runTransaction(object : com.google.firebase.database.Transaction.Handler {
-            override fun doTransaction(currentData: com.google.firebase.database.MutableData):
-                com.google.firebase.database.Transaction.Result {
-                if (currentData.value != null) return com.google.firebase.database.Transaction.abort()
-                currentData.value = mapOf(
-                    "id" to normalized,
-                    "name" to name.trim(),
-                    "about" to about.trim(),
-                    "photo" to photo,
-                    "owner" to me.uid,
-                    "createdAt" to ServerValue.TIMESTAMP,
-                    "members" to mapOf(me.uid to true)
-                )
-                return com.google.firebase.database.Transaction.success(currentData)
-            }
-            override fun onComplete(
-                error: DatabaseError?, committed: Boolean,
-                snapshot: DataSnapshot?
-            ) { }
-        }, false).await()
-        if (!result.committed) throw IllegalArgumentException("هذا المعرّف مستخدم، جرّب غيره")
+        kotlinx.coroutines.suspendCancellableCoroutine<Unit> { continuation ->
+            ref.runTransaction(object : com.google.firebase.database.Transaction.Handler {
+                override fun doTransaction(currentData: com.google.firebase.database.MutableData):
+                    com.google.firebase.database.Transaction.Result {
+                    if (currentData.value != null) return com.google.firebase.database.Transaction.abort()
+                    currentData.value = mapOf(
+                        "id" to normalized,
+                        "name" to name.trim(),
+                        "about" to about.trim(),
+                        "photo" to photo,
+                        "owner" to me.uid,
+                        "createdAt" to ServerValue.TIMESTAMP,
+                        "members" to mapOf(me.uid to true)
+                    )
+                    return com.google.firebase.database.Transaction.success(currentData)
+                }
+                override fun onComplete(error: DatabaseError?, committed: Boolean, snapshot: DataSnapshot?) {
+                    if (!continuation.isActive) return
+                    when {
+                        error != null -> continuation.resumeWithException(error.toException())
+                        !committed -> continuation.resumeWithException(IllegalArgumentException("هذا المعرّف مستخدم، جرّب غيره"))
+                        else -> continuation.resume(Unit)
+                    }
+                }
+            }, false)
+        }
         rtdb.getReference("userGroups/${me.uid}/$normalized").setValue(true).await()
     }
 }

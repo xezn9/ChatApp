@@ -40,7 +40,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.GroupAdd
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -77,7 +77,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.text.input.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -99,7 +99,8 @@ import com.chatapp.messenger.UserItem
 fun HomeTab(
     onOpenChat: (UserItem) -> Unit, onOpenProfile: (UserItem) -> Unit, onRequestLogout: () -> Unit,
     onRequestDeleteChat: (uid: String, name: String, lastAt: Long) -> Unit = { _, _, _ -> },
-    onOverlayChange: (Boolean) -> Unit = {}
+    onOverlayChange: (Boolean) -> Unit = {},
+    backdrop: Backdrop
 ) {
     val myUid = remember { Repo.auth.currentUser?.uid ?: "" }
     val users by remember { Repo.usersFlow() }.collectAsState(initial = emptyList())
@@ -108,7 +109,8 @@ fun HomeTab(
     val cleared by remember(myUid) { Repo.clearedFlow(myUid) }.collectAsState(initial = emptyMap())
     // معاينة بديلة إذا حذفت (من عندي) آخر رسالة بمحادثة
     val previewOverrides by remember(myUid) { Repo.previewOverridesFlow(myUid) }.collectAsState(initial = emptyMap())
-    var query by remember { mutableStateOf("") }\n    var createGroupOpen by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    var createGroupOpen by remember { mutableStateOf(false) }
     // قصص كل المستخدمين (مع قصتي أولاً)
     val stories by remember { Repo.activeStoriesFlow() }.collectAsState(initial = emptyList())
     var viewIndex by remember { mutableStateOf<Int?>(null) }
@@ -143,7 +145,7 @@ fun HomeTab(
                         onClick = { createGroupOpen = true }, backdrop = backdrop,
                         modifier = Modifier.padding(end = 8.dp).padding(horizontal = 12.dp, vertical = 9.dp)
                     ) {
-                        Icon(Icons.Filled.GroupAdd, null, tint = MaterialTheme.colorScheme.onBackground)
+                        Icon(Icons.Filled.Add, null, tint = MaterialTheme.colorScheme.onBackground)
                         Spacer(Modifier.width(6.dp))
                         Text("إنشاء مجموعة", color = MaterialTheme.colorScheme.onBackground, fontSize = 13.sp)
                     }

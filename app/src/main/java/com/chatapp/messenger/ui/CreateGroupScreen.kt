@@ -10,7 +10,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -22,11 +22,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.BackHandler
+import androidx.activity.compose.BackHandler
 import com.chatapp.messenger.Repo
 import com.chatapp.messenger.ui.glass.GlassButton
 import com.kyant.backdrop.Backdrop
@@ -45,6 +45,7 @@ fun CreateGroupScreen(
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val fg = MaterialTheme.colorScheme.onBackground
+    val isDark = androidx.compose.foundation.isSystemInDarkTheme()
     var name by remember { mutableStateOf("") }
     var groupId by remember { mutableStateOf("") }
     var about by remember { mutableStateOf("") }
@@ -58,7 +59,7 @@ fun CreateGroupScreen(
             if (photo.isBlank()) error = "تعذّر تحميل الصورة"
         }
     }
-    BackHandler { onClose() }
+    BackHandler(onBack = onClose)
     LaunchedEffect(Unit) { onOverlayChange(true) }
     DisposableEffect(Unit) { onDispose { onOverlayChange(false) } }
 
@@ -72,7 +73,7 @@ fun CreateGroupScreen(
                     backdrop = backdrop,
                     shape = { RoundedCornerShape(30.dp) },
                     effects = { vibrancy(); blur(18.dp.toPx()); lens(18.dp.toPx(), 28.dp.toPx()) },
-                    onDrawSurface = { drawRect(if (androidx.compose.foundation.isSystemInDarkTheme()) Color(0xDD171A20) else Color(0xDDF8FAFF)) }
+                    onDrawSurface = { drawRect(if (isDark) Color(0xDD171A20) else Color(0xDDF8FAFF)) }
                 )
                 .padding(20.dp)
                 .verticalScroll(rememberScrollState()),
@@ -97,7 +98,7 @@ fun CreateGroupScreen(
             ) {
                 val image = rememberB64Image(photo)
                 if (image != null) Image(image, null, Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
-                else Icon(Icons.Filled.AddPhotoAlternate, null, tint = fg.copy(alpha = 0.65f), modifier = Modifier.size(38.dp))
+                else Icon(Icons.Filled.Add, null, tint = fg.copy(alpha = 0.65f), modifier = Modifier.size(38.dp))
             }
             TextButton(onClick = { picker.launch("image/*") }) {
                 Text(if (photo.isBlank()) "إضافة صورة للمجموعة (اختياري)" else "تغيير صورة المجموعة")
