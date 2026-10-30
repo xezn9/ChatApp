@@ -83,7 +83,9 @@ data class Story(
     val musicTitle: String = "",
     val musicArtist: String = "",
     val musicCover: String = "",
-    val musicStart: Int = 0
+    val musicStart: Int = 0,
+    /** true = عامة (تطلع لكل المستخدمين)، false = خاصة (للأصدقاء فقط) */
+    val isPublic: Boolean = false
 ) {
     val expiresAt: Long get() = createdAt + STORY_MS
 }
@@ -464,7 +466,8 @@ object Repo {
         musicTitle = it["musicTitle"] as? String ?: "",
         musicArtist = it["musicArtist"] as? String ?: "",
         musicCover = it["musicCover"] as? String ?: "",
-        musicStart = (it["musicStart"] as? Number)?.toInt() ?: 0
+        musicStart = (it["musicStart"] as? Number)?.toInt() ?: 0,
+        isPublic = it["public"] as? Boolean ?: false
     )
 
     /** بيانات الملف الشخصي الأساسية فقط (بدون القصة): خفيفة، تنفع لصفوف القوائم */
@@ -509,12 +512,26 @@ object Repo {
         awaitClose { reg.remove() }
     }
 
-    /** الملف الشخصي + القصة. قصة غير الأصدقاء ما تنقرأ أبداً (فتطلع null) */
+    /** هل قصة هذا المستخدم عامة؟ (من الفهرس العام stories/<uid>) */
+    private fun storyPublicFlow(uid: String): Flow<Boolean> = callbackFlow {
+        if (uid.isBlank()) { close(); return@callbackFlow }
+        val reg = db.collection("stories").document(uid).addSnapshotListener { d, err ->
+            if (err != null) trySend(false)
+            else if (d != null) trySend(d.exists() && d.getBoolean("public") == true)
+        }
+        awaitClose { reg.remove() }
+    }
+
+    /** الملف الشخصي + القصة. قصة غير الأصدقاء تنقرأ فقط إذا كانت عامة، وإلا تطلع null */
     @OptIn(ExperimentalCoroutinesApi::class)
     fun profileFlow(uid: String): Flow<Profile> {
         val story: Flow<Story?> =
             if (uid == auth.currentUser?.uid) storyDocFlow(uid)
-            else isFriendFlow(uid).flatMapLatest { friend -> if (friend) storyDocFlow(uid) else flowOf(null) }
+            else isFriendFlow(uid).flatMapLatest { friend ->
+                // الصديق يشوف القصة دائماً. غير الصديق يشوفها فقط إذا القصة عامة (حسب الفهرس العام)
+                if (friend) storyDocFlow(uid)
+                else storyPublicFlow(uid).flatMapLatest { pub -> if (pub) storyDocFlow(uid) else flowOf(null) }
+            }
         return combine(basicProfileFlow(uid), story) { p, s -> p.copy(story = s) }
     }
 
@@ -601,11 +618,12 @@ object Repo {
             "text" to st.text, "color" to st.color, "image" to st.image, "createdAt" to st.createdAt,
             "bg" to st.bg, "filter" to st.filter,
             "musicUrl" to st.musicUrl, "musicTitle" to st.musicTitle, "musicArtist" to st.musicArtist,
-            "musicCover" to st.musicCover, "musicStart" to st.musicStart
+            "musicCover" to st.musicCover, "musicStart" to st.musicStart,
+            "public" to st.isPublic
         )
         db.batch()
             .set(db.collection("storyData").document(u.uid), map)
-            .set(db.collection("stories").document(u.uid), mapOf("uid" to u.uid, "createdAt" to st.createdAt))
+            .set(db.collection("stories").document(u.uid), mapOf("uid" to u.uid, "createdAt" to st.createdAt, "public" to st.isPublic))
             // نشيل أي نسخة قديمة من القصة كانت مكشوفة داخل الملف الشخصي
             .set(db.collection("profiles").document(u.uid), mapOf("story" to FieldValue.delete()), SetOptions.merge())
             .commit().await()
@@ -628,10 +646,19 @@ object Repo {
     }
 
     /** يضمن وجود القصة الحالية بالفهرس العام (للقصص المنشورة بنسخ قديمة) */
-    suspend fun syncStoryIndex(createdAt: Long) {
+    suspend fun syncStoryIndex(createdAt: Long, isPublic: Boolean = false) {
         val u = auth.currentUser ?: return
         db.collection("stories").document(u.uid)
-            .set(mapOf("uid" to u.uid, "createdAt" to createdAt), SetOptions.merge()).await()
+            .set(mapOf("uid" to u.uid, "createdAt" to createdAt, "public" to isPublic), SetOptions.merge()).await()
+    }
+
+    /** تغيير خصوصية القصة الحالية: عامة (الكل) أو خاصة (الأصدقاء فقط) */
+    suspend fun setStoryPublic(isPublic: Boolean) {
+        val u = auth.currentUser ?: return
+        db.batch()
+            .set(db.collection("storyData").document(u.uid), mapOf("public" to isPublic), SetOptions.merge())
+            .set(db.collection("stories").document(u.uid), mapOf("public" to isPublic), SetOptions.merge())
+            .commit().await()
     }
 
     suspend fun deleteStory() {
@@ -645,25 +672,26 @@ object Repo {
     }
 
     /** معرّفات أصحاب القصص الفعّالة (آخر 24 ساعة) */
-    private fun storyIndexFlow(): Flow<List<String>> = callbackFlow {
+    private fun storyIndexFlow(): Flow<List<Pair<String, Boolean>>> = callbackFlow {
         val since = System.currentTimeMillis() - STORY_MS
         val reg = db.collection("stories").whereGreaterThan("createdAt", since)
             .addSnapshotListener { snap, err ->
                 if (err != null) trySend(emptyList())
-                else if (snap != null) trySend(snap.documents.map { it.id })
+                else if (snap != null) trySend(snap.documents.map { it.id to (it.getBoolean("public") == true) })
             }
         awaitClose { reg.remove() }
     }
 
     /**
-     * قصص الفعّالة: قصتي + قصص أصدقائي فقط (الأحدث أولاً، وقصتي أولاً).
+     * قصص الفعّالة: قصتي + قصص أصدقائي + القصص العامة (الأحدث أولاً، وقصتي أولاً).
      * من حاظرني تنرفض قراءة ملفه بالقواعد فتختفي قصته تلقائياً (restricted).
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     fun activeStoriesFlow(): Flow<List<ActiveStory>> =
         combine(storyIndexFlow(), friendIdsFlow()) { uids, friends ->
             val me = auth.currentUser?.uid
-            uids.filter { it == me || it in friends }.sorted()
+            // قصتي + قصص الأصدقاء + أي قصة عامة
+            uids.filter { (id, pub) -> id == me || id in friends || pub }.map { it.first }.sorted()
         }.distinctUntilChanged().flatMapLatest { uids ->
             if (uids.isEmpty()) flowOf(emptyList())
             else combine(uids.map { uid -> profileFlow(uid).map { ActiveStory(uid, it) } }) { arr ->

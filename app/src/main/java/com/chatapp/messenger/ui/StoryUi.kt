@@ -350,37 +350,72 @@ object MusicApi {
     }
 }
 
-/** مشغّل مقاطع القصة: يشغّل من ثانية معينة ويوقف لحاله بعد [STORY_SECONDS] */
-class StoryPlayer {
+/**
+ * مشغّل مقاطع القصة: يشغّل من ثانية معينة ويوقف لحاله بعد [STORY_SECONDS].
+ * المقطع ينزّل أول مرة لملف مؤقت بالكاش (حتى القفز لثانية البداية يصير فوري بدل ما ينتظر الشبكة)،
+ * و[ready] تصير true بس يبدأ الصوت فعلاً (الواجهة تنتظرها حتى ما تسبق الأغنية القصة).
+ */
+class StoryPlayer(private val cacheDir: java.io.File? = null) {
     private var mp: MediaPlayer? = null
     private val handler = Handler(Looper.getMainLooper())
     private var stopper: Runnable? = null
+    private var gen = 0
     var playingUrl by mutableStateOf<String?>(null)
         private set
+    var ready by mutableStateOf(false)
+        private set
+
+    private fun cacheFile(url: String): java.io.File? =
+        cacheDir?.let { java.io.File(it, "story_music_${url.hashCode().toUInt()}.m4a") }
 
     fun play(url: String, startSec: Int = 0, maxSec: Int = STORY_SECONDS) {
         stop()
-        try {
-            val p = MediaPlayer()
-            p.setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .setUsage(AudioAttributes.USAGE_MEDIA).build()
-            )
-            p.setDataSource(url)
-            p.setOnPreparedListener { it.seekTo(startSec * 1000) }
-            p.setOnSeekCompleteListener { it.start() }
-            p.setOnCompletionListener { stop() }
-            p.setOnErrorListener { _, _, _ -> stop(); true }
-            p.prepareAsync()
-            mp = p
-            playingUrl = url
-            val r = Runnable { stop() }
-            stopper = r
-            handler.postDelayed(r, maxSec * 1000L + 1500L)
-        } catch (e: Exception) {
-            stop()
-        }
+        val myGen = ++gen
+        playingUrl = url
+        ready = false
+        Thread {
+            // 1) نحمّل المقطع كامل للكاش (30 ثانية فقط، حجمه صغير)
+            var source: String = url
+            val f = cacheFile(url)
+            if (f != null) {
+                runCatching {
+                    if (!f.exists() || f.length() < 1024) {
+                        val tmp = java.io.File(f.path + ".tmp")
+                        URL(url).openStream().use { inp -> tmp.outputStream().use { out -> inp.copyTo(out) } }
+                        tmp.renameTo(f)
+                    }
+                    source = f.path
+                }
+            }
+            handler.post {
+                if (myGen != gen) return@post   // تغيّر الطلب أو انوقف
+                try {
+                    val p = MediaPlayer()
+                    p.setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                            .setUsage(AudioAttributes.USAGE_MEDIA).build()
+                    )
+                    p.setDataSource(source)
+                    p.setOnPreparedListener { it.seekTo(startSec * 1000) }
+                    p.setOnSeekCompleteListener {
+                        if (myGen != gen) return@setOnSeekCompleteListener
+                        it.start()
+                        ready = true
+                        // مؤقت الإيقاف يبدأ من لحظة بدء الصوت الفعلية
+                        val r = Runnable { stop() }
+                        stopper = r
+                        handler.postDelayed(r, maxSec * 1000L + 1500L)
+                    }
+                    p.setOnCompletionListener { stop() }
+                    p.setOnErrorListener { _, _, _ -> stop(); true }
+                    p.prepareAsync()
+                    mp = p
+                } catch (e: Exception) {
+                    stop()
+                }
+            }
+        }.start()
     }
 
     private var pausedByUs = false
@@ -398,18 +433,21 @@ class StoryPlayer {
     }
 
     fun stop() {
+        gen++
         stopper?.let { handler.removeCallbacks(it) }
         stopper = null
         pausedByUs = false
         runCatching { mp?.release() }
         mp = null
         playingUrl = null
+        ready = false
     }
 }
 
 @Composable
 fun rememberStoryPlayer(): StoryPlayer {
-    val p = remember { StoryPlayer() }
+    val cache = LocalContext.current.cacheDir
+    val p = remember { StoryPlayer(cache) }
     DisposableEffect(Unit) { onDispose { p.stop() } }
     return p
 }
@@ -595,7 +633,8 @@ internal fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
                                                 createdAt = System.currentTimeMillis(), bg = 0,
                                                 filter = filterId,
                                                 musicUrl = musicUrl, musicTitle = musicTitle, musicArtist = musicArtist,
-                                                musicCover = "", musicStart = startF.toInt()
+                                                musicCover = "", musicStart = startF.toInt(),
+                                                isPublic = existing?.isPublic ?: false
                                             )
                                         )
                                         player.stop()
@@ -905,7 +944,10 @@ fun StoryViewerScreen(
     var holding by remember { mutableStateOf(false) }
     var viewersOpen by remember { mutableStateOf(false) }
     var shareOpen by remember { mutableStateOf(false) }
-    val paused = menuOpen || confirmDelete || replyFocused || holding || viewersOpen || shareOpen
+    // القصة تنتظر الأغنية تجهز (بحد أقصى 6 ثواني) حتى تبدأ الأغنية والقصة سوا من البداية
+    var musicTimeout by remember(story.createdAt) { mutableStateOf(false) }
+    val musicLoading = story.musicUrl.isNotBlank() && !player.ready && !musicTimeout
+    val paused = menuOpen || confirmDelete || replyFocused || holding || viewersOpen || shareOpen || musicLoading
     // الإعجاب: أي صديق يگدر يعجب بقصة صاحبه. العدد والمشاهدين يظهرون لصاحب القصة فقط
     val liked by remember(realOwner, story.createdAt, mine) {
         if (!mine && realOwner.isNotBlank()) Repo.myStoryLikeFlow(realOwner, story.createdAt)
@@ -927,7 +969,11 @@ fun StoryViewerScreen(
         }
     }
     LaunchedEffect(story.musicUrl) {
-        if (story.musicUrl.isNotBlank()) player.play(story.musicUrl, story.musicStart)
+        if (story.musicUrl.isNotBlank()) {
+            player.play(story.musicUrl, story.musicStart)
+            delay(6_000)
+            musicTimeout = true
+        }
     }
     // التقدم يوقف لما تنفتح القائمة أو التأكيد، ويكمل بعدها
     LaunchedEffect(paused) {
@@ -1287,6 +1333,23 @@ fun StoryViewerScreen(
                     menuOpen = false
                     player.stop()
                     onEdit()
+                }
+                Box(Modifier.fillMaxWidth().padding(horizontal = 14.dp).height(0.6.dp).background(Color.White.copy(0.18f)))
+                StoryMenuItem(
+                    if (story.isPublic) AppIcons.Public else AppIcons.Lock,
+                    if (story.isPublic) "القصة: عامة (اضغط لجعلها خاصة)" else "القصة: خاصة (اضغط لجعلها عامة)",
+                    Color.White
+                ) {
+                    menuOpen = false
+                    val target = !story.isPublic
+                    scope.launch {
+                        try {
+                            Repo.setStoryPublic(target)
+                            AppToast.show(if (target) "القصة صارت عامة، تطلع لكل المستخدمين" else "القصة صارت خاصة، تطلع للأصدقاء فقط")
+                        } catch (e: Exception) {
+                            AppToast.show("فشل التغيير: ${e.message}", long = true)
+                        }
+                    }
                 }
                 Box(Modifier.fillMaxWidth().padding(horizontal = 14.dp).height(0.6.dp).background(Color.White.copy(0.18f)))
                 StoryMenuItem(Icons.Filled.Delete, "حذف القصة", Color(0xFFFF6B61)) {

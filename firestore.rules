@@ -47,9 +47,15 @@ service cloud.firestore {
       allow write: if verified() && request.auth.uid == uid;
     }
 
-    // محتوى القصة: صاحبها وأصدقاؤه فقط (غير الأصدقاء ما يگدرون يقرؤونها نهائياً)
+    // هل قصة [owner] عامة؟ (خيار عام/خاص من إعدادات القصة)
+    function storyIsPublic(owner) {
+      return get(/databases/$(database)/documents/storyData/$(owner)).data.get('public', false) == true;
+    }
+
+    // محتوى القصة: صاحبها وأصدقاؤه دائماً، وغير الأصدقاء فقط إذا القصة "عامة"
     match /storyData/{uid} {
-      allow read: if verified() && (request.auth.uid == uid || (isFriendWith(uid) && !blockedBy(uid)));
+      allow read: if verified() && (request.auth.uid == uid
+        || (!blockedBy(uid) && (isFriendWith(uid) || resource.data.get('public', false) == true)));
       allow write: if verified() && request.auth.uid == uid;
     }
 
@@ -62,7 +68,7 @@ service cloud.firestore {
       allow create, update: if verified()
         && request.auth.uid == viewer
         && viewer != uid
-        && isFriendWith(uid) && !blockedBy(uid)
+        && (isFriendWith(uid) || storyIsPublic(uid)) && !blockedBy(uid)
         && request.resource.data.keys().hasOnly(['uid', 'storyAt', 'liked', 'at', 'likedAt'])
         && request.resource.data.uid == viewer
         && request.resource.data.liked is bool;

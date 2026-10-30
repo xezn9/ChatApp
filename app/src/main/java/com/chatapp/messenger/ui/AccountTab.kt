@@ -184,7 +184,7 @@ fun AccountTab(
     LaunchedEffect(story?.createdAt) {
         if (story != null) {
             // القصص المنشورة بنسخ قديمة تنضاف للفهرس العام حتى تظهر عند الكل
-            if (System.currentTimeMillis() < story.expiresAt) runCatching { Repo.syncStoryIndex(story.createdAt) }
+            if (System.currentTimeMillis() < story.expiresAt) runCatching { Repo.syncStoryIndex(story.createdAt, story.isPublic) }
             val wait = story.expiresAt - System.currentTimeMillis()
             if (wait > 0) delay(wait)
             storyActive = false
