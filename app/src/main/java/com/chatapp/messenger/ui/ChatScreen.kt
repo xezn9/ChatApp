@@ -20,6 +20,9 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -317,6 +320,67 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
         }
     }
 
+    // ---- إرسال وعرض الصور والفيديوهات ----
+    var mediaStatus by remember { mutableStateOf<String?>(null) }
+    var mediaProgress by remember { mutableFloatStateOf(-1f) }   // -1 = غير محدد
+    var viewImage by remember { mutableStateOf<String?>(null) }
+    var viewVideo by remember { mutableStateOf<java.io.File?>(null) }
+    val mediaPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null && mediaStatus == null) scope.launch {
+            var prepared: MediaUtil.Prepared? = null
+            try {
+                val isVideo = (ctx.contentResolver.getType(uri) ?: "").startsWith("video")
+                mediaProgress = -1f
+                mediaStatus = if (isVideo) "جاري تجهيز الفيديو (ضغط)..." else "جاري تجهيز الصورة..."
+                val p = if (isVideo) MediaUtil.prepareVideo(ctx, uri) { mediaProgress = it }
+                else MediaUtil.prepareImage(ctx, uri)
+                prepared = p
+                mediaStatus = "جاري الإرسال..."
+                mediaProgress = 0f
+                val id = Repo.uploadMedia(me, other.uid, p.file, p.type) { mediaProgress = it }
+                // نسخة محلية عند المرسل حتى تنفتح فوراً بدون تنزيل
+                runCatching { p.file.copyTo(MediaUtil.mediaFile(ctx, id, p.type), overwrite = true) }
+                val r = replyTo
+                Repo.sendMedia(
+                    me, other.uid, p.type, id, p.thumb, p.w, p.h, p.durSec,
+                    replyId = r?.id ?: "",
+                    replyText = r?.let { msgPreview(it, 100) } ?: "",
+                    replyFrom = r?.from ?: ""
+                )
+                replyTo = null
+                listState.animateScrollToItem(0)
+            } catch (e: IllegalStateException) {
+                AppToast.show(e.message ?: "فشل الإرسال", long = true)
+            } catch (e: Exception) {
+                AppToast.show("فشل الإرسال، تأكد من الإنترنت", long = true)
+            } finally {
+                prepared?.file?.delete()
+                mediaStatus = null
+            }
+        }
+    }
+    fun openMedia(m: Msg) {
+        if (mediaStatus != null) return
+        scope.launch {
+            try {
+                mediaProgress = -1f
+                mediaStatus = "جاري التحميل..."
+                val f = MediaUtil.mediaFile(ctx, m.mediaId, m.mediaType)
+                if (!f.exists() || f.length() == 0L) {
+                    Repo.downloadMedia(me, other.uid, m.mediaId, f) { mediaProgress = it }
+                }
+                if (m.mediaType == "video") viewVideo = f
+                else viewImage = withContext(Dispatchers.IO) {
+                    android.util.Base64.encodeToString(f.readBytes(), android.util.Base64.NO_WRAP)
+                }
+            } catch (e: Exception) {
+                AppToast.show("تعذّر فتح الملف (يمكن انحذف أو الإنترنت ضعيف)", long = true)
+            } finally {
+                mediaStatus = null
+            }
+        }
+    }
+
     /** إرسال رسالة جديدة (مع رد إذا موجود) أو حفظ التعديل */
     fun submit() {
         val t = text.trim()
@@ -422,7 +486,8 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                                     else -> jumpTo(it)
                                 }
                             },
-                            onLongPress = { rect -> menu = MenuTarget(m, mine, rect) }
+                            onLongPress = { rect -> menu = MenuTarget(m, mine, rect) },
+                            onOpenMedia = { openMedia(m) }
                         )
                     }
                 }
@@ -491,6 +556,10 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                     .onSizeChanged { barHeightPx = it.height }
                     .navigationBarsPadding().imePadding().padding(12.dp)
             ) {
+                // حالة إرسال/تنزيل صورة أو فيديو
+                mediaStatus?.let { st ->
+                    MediaStatusPill(backdrop = contentBackdrop, dark = dark, fg = fg, text = st, progress = mediaProgress)
+                }
                 // شريط "رد على ..." أو "تعديل الرسالة" فوق مربع الكتابة
                 val stripLast = remember { arrayOfNulls<Pair<Boolean, Msg>>(1) }
                 val editNow = editing
@@ -545,6 +614,16 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                         }
                     }
                 } else {
+                    GlassButton(
+                        onClick = {
+                            mediaPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+                        },
+                        backdrop = contentBackdrop,
+                        enabled = mediaStatus == null && editing == null,
+                        modifier = Modifier.size(52.dp)
+                    ) {
+                        Icon(Icons.Filled.Add, null, tint = fg, modifier = Modifier.size(26.dp))
+                    }
                     Box(
                         Modifier.weight(1f).heightIn(min = 52.dp)
                             .drawBackdrop(
@@ -655,7 +734,7 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                 // الرسالة المحذوفة للجميع ("رسالة مَحذوفة") ما يصير عليها رد/تعديل/تثبيت، بس إخفاء من عندي
                 if (!mm.deleted) {
                     add(MsgAction(AppIcons.Reply, "رد", Blue) { menu = null; editing = null; replyTo = mm })
-                    if (mt.mine) add(MsgAction(Icons.Filled.Edit, "تعديل", Color(0xFF8A5CFF)) {
+                    if (mt.mine && mm.mediaType.isEmpty()) add(MsgAction(Icons.Filled.Edit, "تعديل", Color(0xFF8A5CFF)) {
                         menu = null; replyTo = null; editing = mm; text = mm.text
                     })
                     add(MsgAction(AppIcons.Pin, if (mm.pinned) "إلغاء التثبيت" else "تثبيت", Color(0xFFFFC107)) {
@@ -679,7 +758,7 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                 // حذف للجميع: رسائلي فقط (الي كان اسمه "حذف")
                 if (mt.mine && !mm.deleted) add(MsgAction(Icons.Filled.Delete, "حذف للجميع", Color(0xFFE5484D)) {
                     menu = null
-                    Repo.deleteMessage(me, other.uid, mm.id, isLast = mm.id == rawMsgs.firstOrNull()?.id, onFail = onWriteFail)
+                    Repo.deleteMessage(me, other.uid, mm.id, isLast = mm.id == rawMsgs.firstOrNull()?.id, onFail = onWriteFail, mediaId = mm.mediaId)
                 })
             }
             GlassMessageMenu(
@@ -719,6 +798,10 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                 onDismiss = { showPinned = false }
             )
         }
+
+        // ----- عارض الصورة / الفيديو -----
+        ImageViewerHost(viewImage) { viewImage = null }
+        viewVideo?.let { vf -> VideoViewerScreen(vf) { viewVideo = null } }
         }
     }
 }
@@ -787,7 +870,8 @@ private fun BubbleBody(
     replyName: String,
     replyDeleted: Boolean,
     onJump: (String) -> Unit,
-    onLongPress: () -> Unit
+    onLongPress: () -> Unit,
+    onOpenMedia: () -> Unit = {}
 ) {
     Column(Modifier.animateContentSize(spring(0.85f, 400f))) {
         if (m.replyId.isNotEmpty() && !m.deleted) {
@@ -813,8 +897,10 @@ private fun BubbleBody(
             }
         }
 
+        // صورة/فيديو: صورة مصغّرة، والضغط يفتحها بملء الشاشة
+        val isMedia = m.mediaType.isNotEmpty() && !m.deleted
         // تعديل/حذف: النص يتبدل بتلاشي ناعم
-        AnimatedContent(
+        if (isMedia) MediaThumb(m, textColor, onOpenMedia, onLongPress) else AnimatedContent(
             targetState = if (m.deleted) null else m.text,
             transitionSpec = { fadeIn(tween(240)) togetherWith fadeOut(tween(160)) },
             label = "bubbleText"
@@ -878,7 +964,8 @@ private fun MessageRow(
     replyDeleted: Boolean = false,
     onReply: () -> Unit = {},
     onJump: (String) -> Unit = {},
-    onLongPress: (Rect) -> Unit = {}
+    onLongPress: (Rect) -> Unit = {},
+    onOpenMedia: () -> Unit = {}
 ) {
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
@@ -974,7 +1061,7 @@ private fun MessageRow(
         ) { textColor ->
             BubbleBody(
                 m = m, textColor = textColor, replyName = replyName, replyDeleted = replyDeleted,
-                onJump = onJump, onLongPress = { fireLongPress() }
+                onJump = onJump, onLongPress = { fireLongPress() }, onOpenMedia = onOpenMedia
             )
         }
     }
@@ -1042,6 +1129,74 @@ private fun MessageRow(
                 fontSize = 11.sp,
                 color = fg.copy(alpha = 0.6f)
             )
+        }
+    }
+}
+
+/** صورة مصغّرة لرسالة وسائط: صورة أو فيديو (مع زر تشغيل والمدة) */
+@Composable
+private fun MediaThumb(m: Msg, textColor: Color, onOpen: () -> Unit, onLongPress: () -> Unit) {
+    val img = rememberB64Image(m.thumb)
+    val ratio = if (m.mediaW > 0 && m.mediaH > 0) (m.mediaW.toFloat() / m.mediaH).coerceIn(0.6f, 1.8f) else 1f
+    Box(
+        Modifier.width(220.dp).aspectRatio(ratio)
+            .clip(RoundedCornerShape(14.dp))
+            .background(textColor.copy(alpha = 0.12f))
+            .pointerInput(m.id) { detectTapGestures(onTap = { onOpen() }, onLongPress = { onLongPress() }) },
+        contentAlignment = Alignment.Center
+    ) {
+        if (img != null) Image(img, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        if (m.mediaType == "video") {
+            Box(
+                Modifier.size(48.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.45f)),
+                contentAlignment = Alignment.Center
+            ) { Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(30.dp)) }
+            val d = m.mediaDur
+            Text(
+                "%d:%02d".format(d / 60, d % 60),
+                color = Color.White, fontSize = 11.sp,
+                modifier = Modifier.align(Alignment.BottomStart).padding(8.dp)
+                    .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            )
+        }
+    }
+}
+
+/** شريط حالة فوق مربع الكتابة أثناء ضغط/رفع/تنزيل وسائط */
+@Composable
+private fun MediaStatusPill(backdrop: Backdrop, dark: Boolean, fg: Color, text: String, progress: Float) {
+    val shape = RoundedCornerShape(22.dp)
+    Box(Modifier.padding(bottom = 8.dp)) {
+        Column(
+            Modifier.fillMaxWidth()
+                .drawBackdrop(
+                    backdrop = backdrop,
+                    shape = { shape },
+                    effects = {
+                        vibrancy()
+                        blur(2f.dp.toPx())
+                        lens(10f.dp.toPx(), 20f.dp.toPx())
+                    },
+                    onDrawSurface = { drawRect(if (dark) Color.Black.copy(0.30f) else Color.White.copy(0.40f)) }
+                )
+                .border(
+                    0.8.dp,
+                    Brush.verticalGradient(listOf(Color.White.copy(0.40f), Color.White.copy(0.06f))),
+                    shape
+                )
+                .padding(horizontal = 16.dp, vertical = 10.dp)
+        ) {
+            Text(
+                text + if (progress >= 0f) "  ${(progress.coerceIn(0f, 1f) * 100).toInt()}%" else "",
+                color = fg.copy(alpha = 0.9f), fontSize = 14.sp
+            )
+            if (progress >= 0f) {
+                Spacer(Modifier.height(6.dp))
+                Box(Modifier.fillMaxWidth().height(4.dp).clip(CircleShape).background(fg.copy(alpha = 0.18f))) {
+                    Box(Modifier.fillMaxHeight().fillMaxWidth(progress.coerceIn(0f, 1f)).clip(CircleShape).background(Blue))
+                }
+            }
         }
     }
 }

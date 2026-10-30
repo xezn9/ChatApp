@@ -20,6 +20,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -49,7 +51,17 @@ data class Msg(
     /** الرد: معرّف الرسالة الأصلية + نص مختصر + صاحبها */
     val replyId: String = "",
     val replyText: String = "",
-    val replyFrom: String = ""
+    val replyFrom: String = "",
+    /** رسالة وسائط: "image" أو "video" (فاضي = رسالة نص عادية) */
+    val mediaType: String = "",
+    /** معرّف الملف بمسار media/<chatId>/<mediaId> (يتنزّل عند الضغط فقط) */
+    val mediaId: String = "",
+    /** صورة مصغّرة صغيرة (base64) تظهر بالفقاعة مباشرة */
+    val thumb: String = "",
+    val mediaW: Int = 0,
+    val mediaH: Int = 0,
+    /** مدة الفيديو بالثواني */
+    val mediaDur: Int = 0
 )
 
 /**
@@ -214,7 +226,13 @@ object Repo {
         pinnedAt = num("pinnedAt"),
         replyId = str("replyId"),
         replyText = str("replyText"),
-        replyFrom = str("replyFrom")
+        replyFrom = str("replyFrom"),
+        mediaType = str("mediaType"),
+        mediaId = str("mediaId"),
+        thumb = str("thumb"),
+        mediaW = num("mediaW").toInt(),
+        mediaH = num("mediaH").toInt(),
+        mediaDur = num("mediaDur").toInt()
     )
 
     /** الرسائل المثبتة بالمحادثة (حتى لو أقدم من آخر 50 رسالة)، الأحدث تثبيتاً أولاً */
@@ -242,10 +260,15 @@ object Repo {
     }
 
     /** حذف ناعم: الرسالة تبقى بمكانها وتظهر "رسالة مَحذوفة"، ونص الرسالة الأصلي يتمسح */
-    fun deleteMessage(me: String, other: String, id: String, isLast: Boolean, onFail: (Exception) -> Unit = {}) {
+    fun deleteMessage(
+        me: String, other: String, id: String, isLast: Boolean,
+        onFail: (Exception) -> Unit = {}, mediaId: String = ""
+    ) {
         msgRef(me, other, id).updateChildren(
             mapOf<String, Any>("deleted" to true, "text" to "", "pinned" to false, "edited" to false)
         ).addOnFailureListener(onFail)
+        // حذف للجميع يمسح ملف الصورة/الفيديو نفسه من السيرفر
+        if (mediaId.isNotEmpty()) mediaRef(me, other, mediaId).removeValue()
         if (isLast) updateLastText(me, other, "رسالة مَحذوفة")
     }
 
@@ -277,7 +300,8 @@ object Repo {
 
     fun send(
         me: String, other: String, text: String,
-        replyId: String = "", replyText: String = "", replyFrom: String = ""
+        replyId: String = "", replyText: String = "", replyFrom: String = "",
+        extra: Map<String, Any> = emptyMap()
     ) {
         val cid = chatId(me, other)
         val key = rtdb.getReference("chats/$cid/messages").push().key ?: return
@@ -292,6 +316,7 @@ object Repo {
             msg["replyText"] = replyText.take(100)
             msg["replyFrom"] = replyFrom
         }
+        msg.putAll(extra)
         val preview = text.take(100)
         // عملية واحدة ذرية: الرسالة + قائمة المحادثات عند الطرفين + عداد غير المقروء عند الطرف الثاني
         val updates = hashMapOf<String, Any>(
@@ -303,6 +328,93 @@ object Repo {
             "userChats/$me/$other/lastAt" to ServerValue.TIMESTAMP
         )
         rtdb.reference.updateChildren(updates)
+    }
+
+    // ---------- الصور والفيديوهات ----------
+    // الملف نفسه يتخزن مقسّم (base64) بمسار media/<chatId>/<mediaId>/c/<i> + meta،
+    // والرسالة تحمل فقط صورة مصغّرة صغيرة ومعرّف الملف. الطرف الثاني ينزّله عند الضغط ويحفظه بالكاش.
+
+    private const val MEDIA_RAW_CHUNK = 375_000   // ينتج 500,000 حرف base64 بالضبط (بدون حشو)
+
+    private fun mediaRef(me: String, other: String, id: String) =
+        rtdb.getReference("media/${chatId(me, other)}/$id")
+
+    /** يرفع الملف على دفعات ويرجّع معرّفه. [onProgress] من 0 إلى 1 */
+    suspend fun uploadMedia(
+        me: String, other: String, file: java.io.File, type: String, onProgress: (Float) -> Unit
+    ): String {
+        val key = rtdb.getReference("media/${chatId(me, other)}").push().key
+            ?: throw IllegalStateException("تعذّر الإرسال")
+        val ref = mediaRef(me, other, key)
+        val total = file.length()
+        val n = ((total + MEDIA_RAW_CHUNK - 1) / MEDIA_RAW_CHUNK).toInt().coerceAtLeast(1)
+        try {
+            withTimeout(30_000) {
+                ref.child("meta").setValue(mapOf("from" to me, "type" to type, "n" to n, "size" to total)).await()
+            }
+            withContext(Dispatchers.IO) {
+                file.inputStream().use { inp ->
+                    val buf = ByteArray(MEDIA_RAW_CHUNK)
+                    for (i in 0 until n) {
+                        var read = 0
+                        while (read < MEDIA_RAW_CHUNK) {
+                            val r = inp.read(buf, read, MEDIA_RAW_CHUNK - read)
+                            if (r < 0) break
+                            read += r
+                        }
+                        val str = android.util.Base64.encodeToString(buf, 0, read, android.util.Base64.NO_WRAP)
+                        withTimeout(90_000) { ref.child("c").child(i.toString()).setValue(str).await() }
+                        onProgress((i + 1f) / n)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            runCatching { ref.removeValue() }
+            throw e
+        }
+        return key
+    }
+
+    /** ينزّل الملف ويكتبه بـ [dest]. يرمي خطأ إذا انحذف أو انقطع النت */
+    suspend fun downloadMedia(
+        me: String, other: String, id: String, dest: java.io.File, onProgress: (Float) -> Unit
+    ) {
+        val ref = mediaRef(me, other, id)
+        withContext(Dispatchers.IO) {
+            val n = (withTimeout(30_000) { ref.child("meta").child("n").get().await() }.value as? Number)?.toInt()
+                ?: throw IllegalStateException("الملف انحذف")
+            val tmp = java.io.File(dest.path + ".part")
+            try {
+                tmp.outputStream().use { out ->
+                    for (i in 0 until n) {
+                        val str = withTimeout(90_000) { ref.child("c").child(i.toString()).get().await() }.value as? String
+                            ?: throw IllegalStateException("الملف ناقص")
+                        out.write(android.util.Base64.decode(str, android.util.Base64.NO_WRAP))
+                        onProgress((i + 1f) / n)
+                    }
+                }
+                if (!tmp.renameTo(dest)) throw IllegalStateException("تعذّر حفظ الملف")
+            } finally {
+                if (tmp.exists()) tmp.delete()
+            }
+        }
+    }
+
+    /** يرسل رسالة وسائط (بعد ما انرفع الملف). النص البديل يظهر بالإشعارات وقائمة المحادثات */
+    fun sendMedia(
+        me: String, other: String, type: String, mediaId: String, thumb: String,
+        w: Int, h: Int, durSec: Int,
+        replyId: String = "", replyText: String = "", replyFrom: String = ""
+    ) {
+        val extra = hashMapOf<String, Any>(
+            "mediaType" to type, "mediaId" to mediaId, "thumb" to thumb,
+            "mediaW" to w, "mediaH" to h
+        )
+        if (type == "video") extra["mediaDur"] = durSec
+        send(
+            me, other, if (type == "video") "🎥 فيديو" else "📷 صورة",
+            replyId, replyText, replyFrom, extra
+        )
     }
 
 
