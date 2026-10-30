@@ -60,8 +60,10 @@ data class Msg(
     val thumb: String = "",
     val mediaW: Int = 0,
     val mediaH: Int = 0,
-    /** مدة الفيديو بالثواني */
-    val mediaDur: Int = 0
+    /** مدة الفيديو أو الرسالة الصوتية بالثواني */
+    val mediaDur: Int = 0,
+    /** موجة الرسالة الصوتية: نص أرقام 1..9 (ارتفاع كل عمود) */
+    val wave: String = ""
 )
 
 /**
@@ -232,7 +234,8 @@ object Repo {
         thumb = str("thumb"),
         mediaW = num("mediaW").toInt(),
         mediaH = num("mediaH").toInt(),
-        mediaDur = num("mediaDur").toInt()
+        mediaDur = num("mediaDur").toInt(),
+        wave = str("wave")
     )
 
     /** الرسائل المثبتة بالمحادثة (حتى لو أقدم من آخر 50 رسالة)، الأحدث تثبيتاً أولاً */
@@ -415,6 +418,18 @@ object Repo {
             me, other, if (type == "video") "🎥 فيديو" else "📷 صورة",
             replyId, replyText, replyFrom, extra
         )
+    }
+
+    /** يرسل رسالة صوتية (بعد ما انرفع الملف بنوع "audio"). المدة بالثواني والموجة نص أرقام */
+    fun sendVoice(
+        me: String, other: String, mediaId: String, durSec: Int, wave: String,
+        replyId: String = "", replyText: String = "", replyFrom: String = ""
+    ) {
+        val extra = hashMapOf<String, Any>(
+            "mediaType" to "audio", "mediaId" to mediaId,
+            "mediaDur" to durSec, "wave" to wave
+        )
+        send(me, other, "🎤 رسالة صوتية", replyId, replyText, replyFrom, extra)
     }
 
 

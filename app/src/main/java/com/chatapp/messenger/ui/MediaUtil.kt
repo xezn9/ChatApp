@@ -50,7 +50,7 @@ object MediaUtil {
 
     /** مكان نسخة الملف المحلية (نفس الاسم عند المرسل والمستلم بعد التنزيل) */
     fun mediaFile(ctx: Context, id: String, type: String): File =
-        File(mediaDir(ctx), id + if (type == "video") ".mp4" else ".jpg")
+        File(mediaDir(ctx), id + when (type) { "video" -> ".mp4"; "audio" -> ".m4a"; else -> ".jpg" })
 
     private fun tmpFile(ctx: Context, ext: String) = File(mediaDir(ctx), "tmp_${System.nanoTime()}.$ext")
 

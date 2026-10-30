@@ -48,6 +48,13 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import kotlinx.coroutines.delay
 import kotlin.math.abs
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -361,6 +368,14 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
     }
     fun openMedia(m: Msg) {
         if (mediaStatus != null) return
+        // رسالة صوتية موجودة محلياً (أو تشتغل هسه): تشغيل/إيقاف مباشر بدون تحميل
+        if (m.mediaType == "audio") {
+            val af = MediaUtil.mediaFile(ctx, m.mediaId, "audio")
+            if (VoicePlayer.playingId == m.id || (af.exists() && af.length() > 0L)) {
+                VoicePlayer.toggle(m.id, af)
+                return
+            }
+        }
         scope.launch {
             try {
                 mediaProgress = -1f
@@ -369,7 +384,8 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                 if (!f.exists() || f.length() == 0L) {
                     Repo.downloadMedia(me, other.uid, m.mediaId, f) { mediaProgress = it }
                 }
-                if (m.mediaType == "video") viewVideo = f
+                if (m.mediaType == "audio") VoicePlayer.toggle(m.id, f)
+                else if (m.mediaType == "video") viewVideo = f
                 else viewImage = withContext(Dispatchers.IO) {
                     android.util.Base64.encodeToString(f.readBytes(), android.util.Base64.NO_WRAP)
                 }
@@ -378,6 +394,110 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
             } finally {
                 mediaStatus = null
             }
+        }
+    }
+
+    // ---- رسالة صوتية: ضغطة مطولة على المايك = تسجيل، وبعدها تسمعها أو تحذفها أو ترسلها ----
+    val recorder = remember { VoiceRecorder(ctx) }
+    var voiceMode by remember { mutableIntStateOf(0) }   // 0 = عادي، 1 = يسجّل، 2 = مراجعة قبل الإرسال
+    var recMs by remember { mutableLongStateOf(0L) }
+    val recLevels = remember { mutableStateListOf<Float>() }
+    var voiceDraft by remember { mutableStateOf<VoiceUtil.Recorded?>(null) }
+    val voiceHaptic = LocalHapticFeedback.current
+    val voiceFocus = LocalFocusManager.current
+    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) AppToast.show("هسه اضغط مطولاً على المايك وتكلم")
+        else AppToast.show("لازم تسمح باستخدام المايك حتى تسجل رسالة صوتية", long = true)
+    }
+
+    fun startRecording() {
+        if (voiceMode != 0 || mediaStatus != null || editing != null) return
+        if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            micPermission.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        VoicePlayer.stop()
+        recLevels.clear()
+        if (!recorder.start()) {
+            AppToast.show("تعذّر بدء التسجيل", long = true)
+            return
+        }
+        voiceFocus.clearFocus()
+        recMs = 0L
+        voiceMode = 1
+        voiceHaptic.performHapticFeedback(HapticFeedbackType.LongPress)
+    }
+
+    /** رفع الإصبع (أو وصول لأقصى مدة): يوقف التسجيل وينقلك لشريط المعاينة */
+    fun finishRecording() {
+        if (voiceMode != 1) return
+        val r = recorder.stop()
+        if (r == null) {
+            voiceMode = 0
+            AppToast.show("التسجيل قصير جداً، اضغط مطولاً وتكلم")
+        } else {
+            voiceDraft = r
+            voiceMode = 2
+        }
+    }
+
+    fun discardVoice() {
+        VoicePlayer.stop()
+        voiceDraft?.file?.delete()
+        voiceDraft = null
+        voiceMode = 0
+    }
+
+    fun sendVoice() {
+        val d = voiceDraft ?: return
+        if (mediaStatus != null) return
+        VoicePlayer.stop()
+        scope.launch {
+            try {
+                mediaProgress = 0f
+                mediaStatus = "جاري إرسال الرسالة الصوتية..."
+                val id = Repo.uploadMedia(me, other.uid, d.file, "audio") { mediaProgress = it }
+                // نسخة محلية عند المرسل حتى تشتغل فوراً بدون تنزيل
+                runCatching { d.file.copyTo(MediaUtil.mediaFile(ctx, id, "audio"), overwrite = true) }
+                val r = replyTo
+                Repo.sendVoice(
+                    me, other.uid, id, ((d.durMs + 500) / 1000).toInt().coerceAtLeast(1), d.wave,
+                    replyId = r?.id ?: "",
+                    replyText = r?.let { msgPreview(it, 100) } ?: "",
+                    replyFrom = r?.from ?: ""
+                )
+                replyTo = null
+                d.file.delete()
+                voiceDraft = null
+                voiceMode = 0
+                listState.animateScrollToItem(0)
+            } catch (e: Exception) {
+                // التسجيل يبقى محفوظ حتى تعيد المحاولة
+                AppToast.show("فشل الإرسال، تأكد من الإنترنت وجرّب مرة ثانية", long = true)
+            } finally {
+                mediaStatus = null
+            }
+        }
+    }
+
+    // أثناء التسجيل: الوقت + مستوى الصوت (للموجة الحيّة وللموجة المحفوظة مع الرسالة)
+    LaunchedEffect(voiceMode) {
+        if (voiceMode == 1) {
+            while (true) {
+                recMs = recorder.elapsedMs()
+                recLevels.add(recorder.sample())
+                if (recLevels.size > 40) recLevels.removeAt(0)
+                delay(80)
+            }
+        }
+    }
+    DisposableEffect(Unit) {
+        recorder.onMaxReached = { finishRecording() }
+        onDispose {
+            recorder.onMaxReached = null
+            recorder.cancel()
+            VoicePlayer.stop()
+            voiceDraft?.file?.delete()
         }
     }
 
@@ -614,6 +734,20 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                         }
                     }
                 } else {
+                    if (voiceMode == 1) {
+                        VoiceRecordingBar(
+                            backdrop = contentBackdrop, dark = dark, fg = fg,
+                            ms = recMs, levels = recLevels,
+                            modifier = Modifier.weight(1f)
+                        )
+                    } else if (voiceMode == 2) {
+                        VoiceReviewBar(
+                            backdrop = contentBackdrop, dark = dark, fg = fg,
+                            file = voiceDraft?.file, durMs = voiceDraft?.durMs ?: 0L, wave = voiceDraft?.wave ?: "",
+                            onDelete = { discardVoice() },
+                            modifier = Modifier.weight(1f)
+                        )
+                    } else {
                     GlassButton(
                         onClick = {
                             mediaPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
@@ -654,11 +788,25 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                             modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
                         )
                     }
+                    }
                     val rtlNow = LocalLayoutDirection.current == LayoutDirection.Rtl
-                    GlassButton(
-                        onClick = { submit() },
+                    // الكتابة فاضية = زر المايك (ضغطة مطولة تسجل)، فيه نص = زر الإرسال، وبالمراجعة = إرسال التسجيل
+                    val showMic = voiceMode == 1 || (voiceMode == 0 && text.isBlank() && editing == null)
+                    if (showMic) {
+                        GlassMicButton(
+                            backdrop = contentBackdrop,
+                            recording = voiceMode == 1,
+                            enabled = mediaStatus == null,
+                            onTap = { if (voiceMode == 0) AppToast.show("اضغط مطولاً على المايك للتسجيل") },
+                            onHoldStart = { startRecording() },
+                            onHoldEnd = { finishRecording() },
+                            modifier = Modifier.size(52.dp)
+                        )
+                    } else GlassButton(
+                        onClick = { if (voiceMode == 2) sendVoice() else submit() },
                         backdrop = contentBackdrop,
                         tint = Blue,
+                        enabled = !(voiceMode == 2 && mediaStatus != null),
                         modifier = Modifier.size(52.dp)
                     ) {
                         // أيقونة الإرسال تتحول لعلامة صح أثناء التعديل، وتطير عند الإرسال
@@ -900,7 +1048,8 @@ private fun BubbleBody(
         // صورة/فيديو: صورة مصغّرة، والضغط يفتحها بملء الشاشة
         val isMedia = m.mediaType.isNotEmpty() && !m.deleted
         // تعديل/حذف: النص يتبدل بتلاشي ناعم
-        if (isMedia) MediaThumb(m, textColor, onOpenMedia, onLongPress) else AnimatedContent(
+        if (isMedia && m.mediaType == "audio") VoiceBubble(m, textColor, onOpenMedia, onLongPress)
+        else if (isMedia) MediaThumb(m, textColor, onOpenMedia, onLongPress) else AnimatedContent(
             targetState = if (m.deleted) null else m.text,
             transitionSpec = { fadeIn(tween(240)) togetherWith fadeOut(tween(160)) },
             label = "bubbleText"

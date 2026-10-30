@@ -50,7 +50,7 @@
               ".validate": "newData.isString() && newData.val().length <= 100"
             },
             "mediaType": {
-              ".validate": "newData.isString() && (newData.val() === 'image' || newData.val() === 'video')"
+              ".validate": "newData.isString() && (newData.val() === 'image' || newData.val() === 'video' || newData.val() === 'audio')"
             },
             "mediaId": {
               ".validate": "newData.isString() && newData.val().length <= 100"
@@ -65,7 +65,10 @@
               ".validate": "newData.isNumber()"
             },
             "mediaDur": {
-              ".validate": "newData.isNumber() && newData.val() <= 61"
+              ".validate": "newData.isNumber() && newData.val() <= 301"
+            },
+            "wave": {
+              ".validate": "newData.isString() && newData.val().length <= 100"
             },
             "$other": {
               ".validate": false
@@ -91,7 +94,7 @@
           "meta": {
             ".validate": "newData.hasChildren(['from', 'type', 'n', 'size'])",
             "from": { ".validate": "newData.isString()" },
-            "type": { ".validate": "newData.val() === 'image' || newData.val() === 'video'" },
+            "type": { ".validate": "newData.val() === 'image' || newData.val() === 'video' || newData.val() === 'audio'" },
             "n": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 30" },
             "size": { ".validate": "newData.isNumber() && newData.val() <= 11000000" },
             "$other": { ".validate": false }
