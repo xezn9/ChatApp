@@ -109,10 +109,15 @@ service cloud.firestore {
     }
 
     // حجز اليوزرات: كل يوزر يشير لصاحبه، ما أحد يسرق يوزر غيره
+    // اليوزر لازم 3 حروف/أرقام على الأقل (a-z و 0-9)، ويسمح بـ _ و . وأقصى طول 24
+    function validUsername(name) {
+      return name.size() <= 24
+        && name.matches('^[a-z0-9_.]*[a-z0-9][a-z0-9_.]*[a-z0-9][a-z0-9_.]*[a-z0-9][a-z0-9_.]*$');
+    }
     match /usernames/{name} {
       allow read: if verified();
-      allow create: if verified() && request.resource.data.uid == request.auth.uid;
-      allow update: if verified() && resource.data.uid == request.auth.uid
+      allow create: if verified() && validUsername(name) && request.resource.data.uid == request.auth.uid;
+      allow update: if verified() && validUsername(name) && resource.data.uid == request.auth.uid
         && request.resource.data.uid == request.auth.uid;
       allow delete: if verified() && resource.data.uid == request.auth.uid;
     }

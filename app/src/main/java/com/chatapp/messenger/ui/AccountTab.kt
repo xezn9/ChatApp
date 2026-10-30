@@ -855,7 +855,7 @@ private fun EditProfileDialog(
                         }
                         GlassButton(
                             backdrop = bd, tint = AccentBlue, modifier = Modifier.height(48.dp),
-                            enabled = !saving && name.isNotBlank(),
+                            enabled = !saving && name.isNotBlank() && (username.isBlank() || Repo.isValidUsername(username)),
                             onClick = {
                                 saving = true
                                 scope.launch {
@@ -990,6 +990,13 @@ private fun EditProfileDialog(
                             username = v.lowercase().filter { it in 'a'..'z' || it in '0'..'9' || it == '_' || it == '.' }.take(24)
                         }
                     )
+                    if (username.isNotBlank() && !Repo.isValidUsername(username)) {
+                        Text(
+                            "اليوزر لازم يكون 3 حروف أو أرقام على الأقل",
+                            fontSize = 12.sp, color = Color(0xFFFF5A5F),
+                            modifier = Modifier.padding(top = 4.dp, start = 8.dp, end = 8.dp)
+                        )
+                    }
                 }
                 Spacer(Modifier.height(12.dp))
                 StaggerIn(4, Modifier.fillMaxWidth(), startDelay = 120L) {

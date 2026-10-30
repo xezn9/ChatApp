@@ -674,6 +674,9 @@ object Repo {
 
     // ---------- اليوزر: فريد لكل مستخدم (مجموعة usernames تحجز الاسم) ----------
 
+    /** اليوزر صالح إذا فيه 3 حروف أو أرقام على الأقل (الشرطة السفلية والنقطة ما تنحسب) */
+    fun isValidUsername(u: String): Boolean = u.count { it in 'a'..'z' || it in '0'..'9' } >= 3
+
     private fun genUsername(): String {
         val chars = "abcdefghijklmnopqrstuvwxyz0123456789"
         return "user_" + (1..7).map { chars.random() }.joinToString("")
@@ -703,14 +706,15 @@ object Repo {
         val u = auth.currentUser ?: return
         val profRef = db.collection("profiles").document(u.uid)
         val current = profRef.get().await().getString("username") ?: ""
-        if (current.isNotBlank()) {
+        if (current.isNotBlank() && isValidUsername(current)) {
             claimUsername(u.uid, current, "")
             db.collection("users").document(u.uid).set(mapOf("username" to current), SetOptions.merge()).await()
             return
         }
         repeat(8) {
             val cand = genUsername()
-            if (claimUsername(u.uid, cand, "")) {
+            // إذا اليوزر القديم قصير (أقل من 3) ينستبدل بيوزر جديد ويتفك حجز القديم
+            if (claimUsername(u.uid, cand, current)) {
                 profRef.set(mapOf("username" to cand), SetOptions.merge()).await()
                 db.collection("users").document(u.uid).set(mapOf("username" to cand), SetOptions.merge()).await()
                 return
@@ -723,8 +727,8 @@ object Repo {
         val u = auth.currentUser ?: return
         val old = db.collection("profiles").document(u.uid).get().await().getString("username") ?: ""
         val finalUser = username.ifBlank { old }
+        if (!isValidUsername(finalUser)) throw Exception("اليوزر لازم يكون 3 حروف أو أرقام على الأقل")
         if (finalUser != old) {
-            if (finalUser.length < 3) throw Exception("اليوزر لازم يكون 3 حروف على الأقل")
             if (!claimUsername(u.uid, finalUser, old)) throw Exception("اليوزر محجوز، اختر غيره")
         }
         db.collection("profiles").document(u.uid).set(
