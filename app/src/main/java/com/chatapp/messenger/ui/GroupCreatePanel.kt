@@ -5,7 +5,10 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -15,14 +18,23 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.CornerSize
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.ClipOp
@@ -47,6 +59,7 @@ import com.chatapp.messenger.R
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -55,26 +68,25 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /*
- * نسخة طبق الأصل من حركة الفيديو (قائمة iOS التي تتحول من الزر).
+ * حركة الفيديو (قائمة iOS تتحول من الزر) مأخوذة إطاراً إطاراً (res/raw/group_morph.bin: 43 إطار × 160 نقطة).
  *
- * الشكل (الـ silhouette) مأخوذ إطاراً إطاراً من الفيديو نفسه (30 إطار/ثانية) ومخزّن كنقاط في
- * res/raw/group_morph.bin: 43 إطار × 160 نقطة. كل إطار فيه شكل الزر ← القطرة ← المستطيل الممطوط ← التجاوز ← الاستقرار
- * بنفس حواف الفيديو الخشنة (roughen edges) وبنفس التوقيت. بين الإطارات نعمل interpolation فتطلع الحركة سلسة بأي معدل شاشة.
- *
- * فوق الشكل نركّب نفس طبقات الفيديو:
- *  1) drop shadow   2) glass fill + overlay (بلور الخلفية + طبقة بيضاء تخف مع الكبر)
- *  3) المحتوى يتمدد مع صندوق الشكل ويكون ضبابي (مسحوب أفقياً) ثم يتوضح   4) rim/border الخفيف
- *
- * progress = رقم الإطار (0 = على الزر، FRAMES-1 = مستقرة). يملكه MainScreen.
+ * - الإطارات الأصلية 30fps، ونعمل بينها interpolation مكعّب (Catmull-Rom) حتى تطلع سلسة على 60/90/120Hz.
+ * - النافذة تنتهي بالمنتصف أفقياً (تنزاح من زاوية الزر للمنتصف أثناء الفتح).
+ * - من إطار MORPH_END تتحول لزجاج Liquid Glass الحقيقي (blur + vibrancy + lens) مثل بقية التطبيق.
+ * - زر (X) بالأعلى للإغلاق، والإغلاق = نفس الحركة معكوسة.
+ * progress = رقم الإطار (0 = على الزر). يملكه MainScreen.
  */
 private const val FRAMES = 43
 private const val PTS = 160
-private const val STEP_MS = 33          // 30fps مثل الفيديو
-private const val START_FRAME = 2f      // أول إطار فعلي بالحركة (الضغطة)
-private const val SETTLED = 22f         // من هذا الإطار الشكل ثابت تقريباً
-private const val VBTN_R = 296f         // يمين زر الفيديو
-private const val VBTN_T = 75f          // أعلى زر الفيديو
-private const val VBTN_SIZE = 42f       // قطر زر الفيديو
+private const val STEP_MS = 33
+private const val START_FRAME = 2f
+private const val SETTLED = 22f
+private const val LENS_FROM = 12f       // من هنا يبدأ تدرّج الـ lens
+private const val ROUND_FROM = 14f      // من هنا الشكل مستطيل مدوّر فنستعمل زجاج Rounded الحقيقي
+private const val VBTN_R = 296f
+private const val VBTN_T = 75f
+private const val VBTN_SIZE = 42f
+private const val CORNER = 36f          // نصف قطر زوايا النافذة بوحدات الفيديو
 
 private var morphCache: FloatArray? = null
 private fun morphData(ctx: Context): FloatArray {
@@ -92,12 +104,29 @@ private class PathShape(val path: Path) : Shape {
         Outline.Generic(path)
 }
 
-private class Geo(val u: Float, val btnR: Float, val btnB: Float, val w: Float, val rtl: Boolean) {
+private class Geo(
+    val d: FloatArray, val u: Float, val btnR: Float, val btnB: Float, val w: Float, val rtl: Boolean
+) {
     fun x(vx: Float): Float {
         val x = btnR - (VBTN_R - vx) * u
         return if (rtl) w - x else x
     }
     fun y(vy: Float): Float = btnB - (vy - VBTN_T) * u
+
+    var finH = 1f
+    var shift = 0f
+
+    init {
+        var mnx = Float.MAX_VALUE; var mxx = -Float.MAX_VALUE
+        var mny = Float.MAX_VALUE; var mxy = -Float.MAX_VALUE
+        val base = (FRAMES - 1) * PTS * 2
+        for (j in 0 until PTS) {
+            val px = x(d[base + j * 2]); val py = y(d[base + j * 2 + 1])
+            mnx = min(mnx, px); mxx = max(mxx, px); mny = min(mny, py); mxy = max(mxy, py)
+        }
+        finH = max(mxy - mny, 1f)
+        shift = w / 2f - (mnx + mxx) / 2f     // لتصير النافذة بالمنتصف
+    }
 }
 
 private class Fr(
@@ -111,26 +140,38 @@ private class Fr(
     val midY get() = (minY + maxY) / 2f
 }
 
-private fun frame(d: FloatArray, g: Geo, f: Float): Fr {
+private fun cr(p0: Float, p1: Float, p2: Float, p3: Float, t: Float): Float {
+    val t2 = t * t; val t3 = t2 * t
+    return 0.5f * ((2f * p1) + (-p0 + p2) * t + (2f * p0 - 5f * p1 + 4f * p2 - p3) * t2 + (-p0 + 3f * p1 - 3f * p2 + p3) * t3)
+}
+
+private fun frame(g: Geo, f: Float): Fr {
+    val d = g.d
     val ff = f.coerceIn(0f, FRAMES - 1f)
-    val i0 = ff.toInt().coerceAtMost(FRAMES - 1)
-    val i1 = min(i0 + 1, FRAMES - 1)
-    val a = if (i0 == FRAMES - 1) 0f else ff - i0
+    val i1 = ff.toInt().coerceAtMost(FRAMES - 1)
+    val a = if (i1 >= FRAMES - 1) 0f else ff - i1
+    val i0 = max(i1 - 1, 0)
+    val i2 = min(i1 + 1, FRAMES - 1)
+    val i3 = min(i1 + 2, FRAMES - 1)
     val xs = FloatArray(PTS)
     val ys = FloatArray(PTS)
-    var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
-    var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+    var minY = Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+    for (j in 0 until PTS) {
+        val vx = cr(d[(i0 * PTS + j) * 2], d[(i1 * PTS + j) * 2], d[(i2 * PTS + j) * 2], d[(i3 * PTS + j) * 2], a)
+        val vy = cr(d[(i0 * PTS + j) * 2 + 1], d[(i1 * PTS + j) * 2 + 1], d[(i2 * PTS + j) * 2 + 1], d[(i3 * PTS + j) * 2 + 1], a)
+        xs[j] = g.x(vx); ys[j] = g.y(vy)
+        minY = min(minY, ys[j]); maxY = max(maxY, ys[j])
+    }
+    // انزياح تدريجي للمنتصف مع كبر الشكل
+    val s = ((maxY - minY) / g.finH).coerceIn(0f, 1f)
+    val e = s * s * (3f - 2f * s)
+    val dx = g.shift * e
+    var minX = Float.MAX_VALUE; var maxX = -Float.MAX_VALUE
     var sx = 0f; var sy = 0f
     for (j in 0 until PTS) {
-        val o0 = (i0 * PTS + j) * 2
-        val o1 = (i1 * PTS + j) * 2
-        val vx = d[o0] + (d[o1] - d[o0]) * a
-        val vy = d[o0 + 1] + (d[o1 + 1] - d[o0 + 1]) * a
-        val px = g.x(vx); val py = g.y(vy)
-        xs[j] = px; ys[j] = py
-        minX = min(minX, px); maxX = max(maxX, px)
-        minY = min(minY, py); maxY = max(maxY, py)
-        sx += px; sy += py
+        xs[j] += dx
+        minX = min(minX, xs[j]); maxX = max(maxX, xs[j])
+        sx += xs[j]; sy += ys[j]
     }
     val p = Path()
     p.moveTo((xs[PTS - 1] + xs[0]) / 2f, (ys[PTS - 1] + ys[0]) / 2f)
@@ -142,7 +183,6 @@ private fun frame(d: FloatArray, g: Geo, f: Float): Fr {
     return Fr(p, minX, minY, maxX, maxY, sx / PTS, sy / PTS)
 }
 
-/** جدول خطي بسيط: نقاط (إطار -> قيمة) */
 private fun table(f: Float, ks: FloatArray, vs: FloatArray): Float {
     if (f <= ks[0]) return vs[0]
     for (i in 1 until ks.size) {
@@ -154,14 +194,14 @@ private fun table(f: Float, ks: FloatArray, vs: FloatArray): Float {
     return vs[vs.size - 1]
 }
 
-// طبقة المحتوى (ui text + warp) مأخوذة من الفيديو: ظهور + ضبابية تتوضح (X = سحب أفقي، Y = عمودي)
 private val C_K = floatArrayOf(6f, 7f, 8f, 9f, 10f, 11f, 12f, 13f, 14f, 15f, 16f, 17f)
 private val C_A = floatArrayOf(0f, .15f, .30f, .35f, .80f, 1f, 1f, 1f, 1f, 1f, 1f, 1f)
 private val C_BX = floatArrayOf(14f, 14f, 20f, 24f, 18f, 26f, 8f, 3.5f, 1.8f, 1f, .5f, 0f)
 private val C_BY = floatArrayOf(10f, 10f, 10f, 8f, 12f, 1.5f, 3f, 2f, 1.2f, .8f, .5f, 0f)
-// أيقونة الزر تذوب أول الحركة
 private val I_K = floatArrayOf(4f, 5f, 6f, 7f)
 private val I_A = floatArrayOf(1f, 1f, .6f, 0f)
+private val X_K = floatArrayOf(14f, 19f)
+private val X_A = floatArrayOf(0f, 1f)
 
 @Composable
 fun GroupCreatePanel(
@@ -179,7 +219,6 @@ fun GroupCreatePanel(
             val ms = ((FRAMES - 1f - progress.value) * STEP_MS).toInt().coerceAtLeast(1)
             progress.animateTo(FRAMES - 1f, tween(ms, easing = LinearEasing))
         } else {
-            // الإغلاق = نفس الحركة معكوسة (نقفز لأول إطار مستقر حتى ما ننتظر الذيل الثابت)
             if (progress.value > SETTLED) progress.snapTo(SETTLED)
             val ms = ((progress.value - START_FRAME) * STEP_MS).toInt().coerceAtLeast(1)
             progress.animateTo(START_FRAME, tween(ms, easing = LinearEasing))
@@ -187,8 +226,9 @@ fun GroupCreatePanel(
         }
     }
 
-    val f = progress.value
-    if (f <= 0.001f && !open) return
+    // ما نقرأ progress هنا (حتى ما تعيد التركيب كل إطار): فقط يتغير لما تبدأ/تنتهي الحركة
+    val shown by remember(open) { derivedStateOf { open || progress.value > 0.001f } }
+    if (!shown) return
 
     val ctx = LocalContext.current
     val d = remember { morphData(ctx) }
@@ -203,19 +243,25 @@ fun GroupCreatePanel(
             val dp1 = density.density
             val navB = WindowInsets.navigationBars.getBottom(density).toFloat()
             val topI = WindowInsets.statusBars.getTop(density).toFloat()
-            val margin = 8f * dp1
-            // مكان الزر (نفس هوامش MainScreen: end=20dp, bottom=112dp فوق شريط التنقل)
-            val btnR = wPx - 20f * dp1
-            val btnB = hPx - navB - 112f * dp1
-            // مقياس الحركة: الزر 56dp = 42 وحدة بالفيديو. نصغّره فقط إذا الشاشة ما تكفي
-            val uFull = 56f * dp1 / VBTN_SIZE
-            val u = min(uFull, min((btnR - margin) / (VBTN_R - 40f), (btnB - topI - margin) / (560.5f - VBTN_T)))
-            val g = Geo(u, btnR, btnB, wPx, rtl)
+            val geo = remember(wPx, hPx, navB, topI, rtl, dp1) {
+                val margin = 8f * dp1
+                val btnR = wPx - 20f * dp1
+                val btnB = hPx - navB - 112f * dp1
+                val uFull = 56f * dp1 / VBTN_SIZE
+                val u = min(uFull, min((btnR - margin) / (VBTN_R - 40f), (btnB - topI - margin) / (560.5f - VBTN_T)))
+                Geo(d, u, btnR, btnB, wPx, rtl)
+            }
+            val u = geo.u
+            val fin = remember(geo) { frame(geo, FRAMES - 1f) }
 
-            val fr = frame(d, g, f)
-            val fin = frame(d, g, FRAMES - 1f)
+            // من هنا نقرأ progress (التركيب يعاد بس لهذا الجزء)
+            val f = progress.value
+            val fr = frame(geo, f)
+            val rounded = f >= ROUND_FROM
+            val lensK = ((f - LENS_FROM) / 6f).coerceIn(0f, 1f)
+            val cornerPx = (40f + (CORNER - 40f) * ((f - ROUND_FROM) / 8f).coerceIn(0f, 1f)) * u
+            val pathRel = Path().apply { addPath(fr.path, Offset(-fr.minX, -fr.minY)) }
 
-            // طبقة الشكل/الزجاج
             Box(
                 Modifier
                     .fillMaxSize()
@@ -227,87 +273,126 @@ fun GroupCreatePanel(
                             }
                         } else Modifier
                     )
-                    // 1) drop shadow: حلقة ناعمة خارج الشكل فقط (مثل طبقة shape drop shadow)
-                    .drawBehind {
-                        clipPath(fr.path, ClipOp.Difference) {
-                            val n = 16
-                            for (i in n downTo 1) {
-                                val dist = 24f * u * i / n
-                                drawPath(
-                                    fr.path,
-                                    Color.Black.copy(alpha = 0.0085f),
-                                    style = Stroke(width = dist * 2f)
-                                )
-                            }
-                        }
-                    }
-                    // 2) glass fill + overlay
-                    .drawBackdrop(
-                        backdrop = backdrop,
-                        shape = { PathShape(fr.path) },
-                        effects = {
-                            vibrancy()
-                            blur(16f.dp.toPx())
-                        },
-                        onDrawSurface = {
-                            // الفيديو: التعبئة أشد وهي صغيرة (≈0.74) وتخف للمستقر (≈0.555)
-                            val s = (fr.h / max(fin.h, 1f)).coerceIn(0f, 1.2f)
-                            val vid = if (s < 0.2f) 0.74f
-                            else 0.74f + (0.555f - 0.74f) * ((s - 0.2f) / 0.75f).coerceIn(0f, 1f)
-                            if (dark) drawRect(Color.Black.copy(alpha = (0.38f + (vid - 0.555f) * 0.5f).coerceIn(0f, 1f)))
-                            else drawRect(Color.White.copy(alpha = (0.70f + (vid - 0.555f) * 0.75f).coerceIn(0f, 1f)))
-                        }
-                    )
-                    // 3) المحتوى مقصوص بالشكل + 4) rim/border فوقه
-                    .drawWithContent {
-                        clipPath(fr.path) { this@drawWithContent.drawContent() }
-                        val rim = if (dark) 0.5f else 1f
-                        clipPath(fr.path) {
-                            drawPath(fr.path, Color.White.copy(alpha = 0.05f * rim), style = Stroke(width = 9f * u))
-                            drawPath(fr.path, Color.White.copy(alpha = 0.07f * rim), style = Stroke(width = 5f * u))
-                            drawPath(fr.path, Color.White.copy(alpha = 0.10f * rim), style = Stroke(width = 2f * u))
-                        }
-                        drawPath(fr.path, Color.White.copy(alpha = 0.65f), style = Stroke(width = 0.8f * dp1))
-                    }
             ) {
-                // أيقونة الزر (تتحرك مع مركز الشكل وتذوب)
-                val iconA = table(f, I_K, I_A)
-                if (iconA > 0.01f) {
-                    val iconPx = 26f * dp1
-                    Icon(
-                        AppIcons.GroupAdd, null,
-                        tint = if (dark) Color.White else Color.Black,
-                        modifier = Modifier
-                            .offset { IntOffset((fr.cx - iconPx / 2f).roundToInt(), (fr.cy - iconPx / 2f).roundToInt()) }
-                            .size(26.dp)
-                            .graphicsLayer { alpha = iconA }
-                    )
-                }
-
-                // المحتوى: مرسوم بحجمه النهائي ثم يتمدد/يتقلص مع صندوق الشكل (مثل طبقة ui text + warp)
-                val ca = table(f, C_K, C_A)
-                if (ca > 0.005f) {
-                    val bx = table(f, C_K, C_BX) * u
-                    val by = table(f, C_K, C_BY) * u
-                    Box(
-                        Modifier
-                            .offset { IntOffset(fin.minX.roundToInt(), fin.minY.roundToInt()) }
-                            .size(
-                                with(density) { fin.w.toDp() },
-                                with(density) { fin.h.toDp() }
-                            )
-                            .graphicsLayer {
-                                transformOrigin = TransformOrigin.Center
-                                scaleX = (fr.w / max(fin.w, 1f)).coerceAtLeast(0.01f)
-                                scaleY = (fr.h / max(fin.h, 1f)).coerceAtLeast(0.01f)
-                                translationX = fr.midX - fin.midX
-                                translationY = fr.midY - fin.midY
-                                alpha = ca
-                                renderEffect = if (bx > 0.3f || by > 0.3f)
-                                    BlurEffect(max(bx, 0.01f), max(by, 0.01f), TileMode.Decal) else null
+                // (A) الزجاج: عقدة بحجم صندوق الشكل فقط (أخف بكثير من ملء الشاشة)
+                Box(
+                    Modifier
+                        .offset { IntOffset(fr.minX.roundToInt(), fr.minY.roundToInt()) }
+                        .size(
+                            with(density) { fr.w.coerceAtLeast(1f).toDp() },
+                            with(density) { fr.h.coerceAtLeast(1f).toDp() }
+                        )
+                        // drop shadow خارج الشكل فقط
+                        .drawBehind {
+                            clipPath(pathRel, ClipOp.Difference) {
+                                val n = 16
+                                for (i in n downTo 1) {
+                                    drawPath(
+                                        pathRel,
+                                        Color.Black.copy(alpha = 0.0085f),
+                                        style = Stroke(width = 24f * u * i / n * 2f)
+                                    )
+                                }
                             }
-                    ) {
-                        CompositionLocalProvider(LocalLayoutDirection provides realDir) { content() }
+                        }
+                        .drawBackdrop(
+                            backdrop = backdrop,
+                            shape = { if (rounded) RoundedCornerShape(CornerSize(cornerPx)) else PathShape(pathRel) },
+                            effects = {
+                                vibrancy()
+                                blur(16f.dp.toPx())
+                                if (rounded && lensK > 0.01f) lens(12f.dp.toPx() * lensK, 24f.dp.toPx() * lensK)
+                            },
+                            onDrawSurface = {
+                                val s = (fr.h / max(fin.h, 1f)).coerceIn(0f, 1.2f)
+                                val vid = if (s < 0.2f) 0.74f
+                                else 0.74f + (0.555f - 0.74f) * ((s - 0.2f) / 0.75f).coerceIn(0f, 1f)
+                                // مثل بقية التطبيق: طبقة خفيفة فوق الزجاج
+                                if (dark) drawRect(Color.Black.copy(alpha = (0.30f + (vid - 0.555f) * 0.4f).coerceIn(0f, 1f)))
+                                else drawRect(Color.White.copy(alpha = (0.42f + (vid - 0.555f) * 0.7f).coerceIn(0f, 1f)))
+                            }
+                        )
+                        .drawWithContent {
+                            drawContent()
+                            val rim = if (dark) 0.5f else 1f
+                            clipPath(pathRel) {
+                                drawPath(pathRel, Color.White.copy(alpha = 0.05f * rim), style = Stroke(width = 9f * u))
+                                drawPath(pathRel, Color.White.copy(alpha = 0.07f * rim), style = Stroke(width = 5f * u))
+                                drawPath(pathRel, Color.White.copy(alpha = 0.10f * rim), style = Stroke(width = 2f * u))
+                            }
+                            drawPath(pathRel, Color.White.copy(alpha = 0.55f), style = Stroke(width = 0.8f * dp1))
+                        }
+                )
+
+                // (B) أيقونة الزر + المحتوى + زر X، مقصوصة بالشكل
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .drawWithContent { clipPath(fr.path) { this@drawWithContent.drawContent() } }
+                ) {
+                    val iconA = table(f, I_K, I_A)
+                    if (iconA > 0.01f) {
+                        val iconPx = 26f * dp1
+                        Icon(
+                            AppIcons.GroupAdd, null,
+                            tint = if (dark) Color.White else Color.Black,
+                            modifier = Modifier
+                                .offset { IntOffset((fr.cx - iconPx / 2f).roundToInt(), (fr.cy - iconPx / 2f).roundToInt()) }
+                                .size(26.dp)
+                                .graphicsLayer { alpha = iconA }
+                        )
+                    }
+
+                    val ca = table(f, C_K, C_A)
+                    if (ca > 0.005f) {
+                        val bx = table(f, C_K, C_BX) * u
+                        val by = table(f, C_K, C_BY) * u
+                        Box(
+                            Modifier
+                                .offset { IntOffset(fin.minX.roundToInt(), fin.minY.roundToInt()) }
+                                .size(with(density) { fin.w.toDp() }, with(density) { fin.h.toDp() })
+                                .graphicsLayer {
+                                    transformOrigin = TransformOrigin.Center
+                                    scaleX = (fr.w / max(fin.w, 1f)).coerceAtLeast(0.01f)
+                                    scaleY = (fr.h / max(fin.h, 1f)).coerceAtLeast(0.01f)
+                                    translationX = fr.midX - fin.midX
+                                    translationY = fr.midY - fin.midY
+                                    alpha = ca
+                                    renderEffect = if (bx > 0.3f || by > 0.3f)
+                                        BlurEffect(max(bx, 0.01f), max(by, 0.01f), TileMode.Decal) else null
+                                }
+                        ) {
+                            CompositionLocalProvider(LocalLayoutDirection provides realDir) { content() }
+                        }
+                    }
+
+                    // زر الإغلاق (X) بالزاوية العليا (جهة بداية اللغة: يمين بالعربي)
+                    val xa = table(f, X_K, X_A)
+                    if (xa > 0.01f) {
+                        val sizePx = 36f * dp1
+                        val pad = 14f * dp1
+                        val left = if (rtl) fin.maxX - pad - sizePx else fin.minX + pad
+                        Box(
+                            Modifier
+                                .offset { IntOffset(left.roundToInt(), (fin.minY + pad).roundToInt()) }
+                                .size(36.dp)
+                                .graphicsLayer { alpha = xa }
+                                .clip(CircleShape)
+                                .background(if (dark) Color.White.copy(0.16f) else Color.Black.copy(0.10f))
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    enabled = open && xa > 0.6f,
+                                    onClick = onDismiss
+                                ),
+                            contentAlignment = androidx.compose.ui.Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Filled.Close, "إغلاق",
+                                tint = if (dark) Color.White else Color(0xFF101418),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
                 }
             }

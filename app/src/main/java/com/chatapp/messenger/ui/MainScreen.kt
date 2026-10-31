@@ -296,22 +296,22 @@ private fun MainContent() {
             enter = slideInVertically(spring(0.8f, 380f)) { it } + fadeIn(tween(200)),
             exit = slideOutVertically(tween(220)) { it } + fadeOut(tween(160))
         ) {
-            GlassButton(
-                onClick = { groupOpen = true },
-                backdrop = backdrop,
-                // أثناء فتح/إغلاق النافذة الزر يختفي والنافذة هي الي تمثله (نفس المكان والحجم)
-                enabled = !groupOpen,
-                modifier = Modifier
-                    .navigationBarsPadding()
-                    .padding(end = 20.dp, bottom = 112.dp)
-                    .size(56.dp)
-                    .graphicsLayer { alpha = if (groupP.value > 0.001f || groupOpen) 0f else 1f }
-            ) {
-                Icon(
-                    AppIcons.GroupAdd, "إنشاء مجموعة",
-                    tint = contentColor,
-                    modifier = Modifier.size(26.dp)
-                )
+            // الزر يختفي تماماً أثناء فتح/إغلاق النافذة (النافذة هي الي تمثله بنفس المكان والحجم)
+            if (!groupOpen && groupP.value <= 0.001f) {
+                GlassButton(
+                    onClick = { groupOpen = true },
+                    backdrop = backdrop,
+                    modifier = Modifier
+                        .navigationBarsPadding()
+                        .padding(end = 20.dp, bottom = 112.dp)
+                        .size(56.dp)
+                ) {
+                    Icon(
+                        AppIcons.GroupAdd, "إنشاء مجموعة",
+                        tint = contentColor,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
             }
         }
 
