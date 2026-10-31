@@ -1,0 +1,144 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "chats": {
+      "$chatId": {
+        ".read": "auth != null && auth.token.email_verified === true && ($chatId.beginsWith(auth.uid + '_') || $chatId.endsWith('_' + auth.uid))",
+        "messages": {
+          ".indexOn": [
+            "createdAt",
+            "pinned"
+          ],
+          "$msgId": {
+            ".write": "auth != null && auth.token.email_verified === true && ($chatId.beginsWith(auth.uid + '_') || $chatId.endsWith('_' + auth.uid)) && (!root.child('bans').child(auth.uid).exists() || root.child('bans').child(auth.uid).child('until').val() < now) && (!data.exists() ? (newData.child('from').val() === auth.uid && ($chatId === auth.uid + '_' + newData.child('to').val() || $chatId === newData.child('to').val() + '_' + auth.uid) && !root.child('blocks').child(newData.child('to').val()).child(auth.uid).exists()) : (newData.exists() && newData.child('from').val() === data.child('from').val() && newData.child('to').val() === data.child('to').val() && newData.child('createdAt').val() === data.child('createdAt').val() && newData.child('replyId').val() === data.child('replyId').val() && newData.child('replyText').val() === data.child('replyText').val() && newData.child('replyFrom').val() === data.child('replyFrom').val() && newData.child('mediaId').val() === data.child('mediaId').val() && newData.child('mediaType').val() === data.child('mediaType').val() && !root.child('blocks').child((data.child('from').val() === auth.uid ? data.child('to').val() : data.child('from').val())).child(auth.uid).exists() && (data.child('from').val() === auth.uid || (newData.child('text').val() === data.child('text').val() && newData.child('deleted').val() === data.child('deleted').val() && newData.child('edited').val() === data.child('edited').val()))))",
+            ".validate": "newData.hasChildren(['from', 'to', 'text', 'createdAt'])",
+            "from": {
+              ".validate": "newData.isString()"
+            },
+            "to": {
+              ".validate": "newData.isString()"
+            },
+            "text": {
+              ".validate": "newData.isString() && newData.val().length <= 2000 && (newData.val().length > 0 || newData.parent().child('deleted').val() === true)"
+            },
+            "createdAt": {
+              ".validate": "newData.isNumber()"
+            },
+            "deleted": {
+              ".validate": "newData.isBoolean()"
+            },
+            "edited": {
+              ".validate": "newData.isBoolean()"
+            },
+            "pinned": {
+              ".validate": "newData.isBoolean()"
+            },
+            "pinnedAt": {
+              ".validate": "newData.isNumber()"
+            },
+            "pinnedBy": {
+              ".validate": "newData.isString()"
+            },
+            "replyId": {
+              ".validate": "newData.isString() && newData.val().length <= 100"
+            },
+            "replyText": {
+              ".validate": "newData.isString() && newData.val().length <= 300"
+            },
+            "replyFrom": {
+              ".validate": "newData.isString() && newData.val().length <= 100"
+            },
+            "mediaType": {
+              ".validate": "newData.isString() && (newData.val() === 'image' || newData.val() === 'video' || newData.val() === 'audio')"
+            },
+            "mediaId": {
+              ".validate": "newData.isString() && newData.val().length <= 100"
+            },
+            "thumb": {
+              ".validate": "newData.isString() && newData.val().length <= 40000"
+            },
+            "mediaW": {
+              ".validate": "newData.isNumber()"
+            },
+            "mediaH": {
+              ".validate": "newData.isNumber()"
+            },
+            "mediaDur": {
+              ".validate": "newData.isNumber() && newData.val() <= 301"
+            },
+            "wave": {
+              ".validate": "newData.isString() && newData.val().length <= 100"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        },
+        "readAt": {
+          "$uid": {
+            ".write": "auth != null && auth.token.email_verified === true && auth.uid === $uid && ($chatId.beginsWith(auth.uid + '_') || $chatId.endsWith('_' + auth.uid))",
+            ".validate": "newData.isNumber()"
+          }
+        },
+        "$other": {
+          ".validate": false
+        }
+      }
+    },
+    "media": {
+      "$chatId": {
+        ".read": "auth != null && auth.token.email_verified === true && ($chatId.beginsWith(auth.uid + '_') || $chatId.endsWith('_' + auth.uid))",
+        "$mediaId": {
+          ".write": "auth != null && auth.token.email_verified === true && ($chatId.beginsWith(auth.uid + '_') || $chatId.endsWith('_' + auth.uid)) && (!root.child('bans').child(auth.uid).exists() || root.child('bans').child(auth.uid).child('until').val() < now) && (data.exists() ? data.child('meta').child('from').val() === auth.uid : (newData.child('meta').child('from').val() === auth.uid && !root.child('blocks').child($chatId.replace(auth.uid, '').replace('_', '')).child(auth.uid).exists()))",
+          "meta": {
+            ".validate": "newData.hasChildren(['from', 'type', 'n', 'size'])",
+            "from": { ".validate": "newData.isString()" },
+            "type": { ".validate": "newData.val() === 'image' || newData.val() === 'video' || newData.val() === 'audio'" },
+            "n": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 30" },
+            "size": { ".validate": "newData.isNumber() && newData.val() <= 11000000" },
+            "$other": { ".validate": false }
+          },
+          "c": {
+            "$i": { ".validate": "newData.isString() && newData.val().length <= 500000" }
+          },
+          "$other": { ".validate": false }
+        }
+      }
+    },
+    "userChats": {
+      "$uid": {
+        ".read": "auth != null && auth.token.email_verified === true && auth.uid === $uid",
+        "$other": {
+          ".write": "auth != null && auth.token.email_verified === true && (auth.uid === $uid || (auth.uid === $other && (!root.child('bans').child(auth.uid).exists() || root.child('bans').child(auth.uid).child('until').val() < now) && !root.child('blocks').child($uid).child(auth.uid).exists()))",
+          "lastText": {
+            ".validate": "newData.isString() && newData.val().length <= 500"
+          },
+          "lastAt": {
+            ".validate": "newData.isNumber()"
+          },
+          "unread": {
+            ".validate": "newData.isNumber() && newData.val() >= 0"
+          },
+          "$field": {
+            ".validate": false
+          }
+        }
+      }
+    },
+    "blocks": {
+      "$owner": {
+        ".read": "auth != null && auth.token.email_verified === true && auth.uid === $owner",
+        "$target": {
+          ".write": "auth != null && auth.token.email_verified === true && auth.uid === $owner",
+          ".validate": "newData.isBoolean()"
+        }
+      }
+    },
+    "bans": {
+      "$uid": {
+        ".read": "auth != null && auth.token.email_verified === true && auth.uid === $uid"
+      }
+    }
+  }
+}
