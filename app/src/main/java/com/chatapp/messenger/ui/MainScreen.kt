@@ -7,6 +7,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloat
@@ -112,6 +113,9 @@ private fun MainContent() {
     // نتذكر آخر محادثة/بروفايل حتى تشتغل حركة الإغلاق قبل ما تختفي الشاشة
     var lastChat by remember { mutableStateOf<UserItem?>(null) }
     var lastProfile by remember { mutableStateOf<UserItem?>(null) }
+    // نافذة إنشاء مجموعة: groupOpen = مفتوحة/مغلقة، groupP = تقدّم الحركة (0 مطوية على الزر ... 1 مفتوحة)
+    var groupOpen by remember { mutableStateOf(false) }
+    val groupP = remember { Animatable(0f) }
     val backdrop = rememberLayerBackdrop()
     val contentColor = if (isSystemInDarkTheme()) Color.White else Color.Black
     val iconColorFilter = ColorFilter.tint(contentColor)
@@ -165,11 +169,13 @@ private fun MainContent() {
     val pendingChat = Nav.openChatUid
     LaunchedEffect(pendingChat) {
         if (pendingChat != null) {
+            groupOpen = false
             viewProfile = null
             chatWith = UserItem(pendingChat, "", "", "")
             Nav.openChatUid = null
         }
     }
+    BackHandler(enabled = groupOpen) { groupOpen = false }
     BackHandler(enabled = confirmLogout || deleteChat != null) { confirmLogout = false; deleteChat = null }
     BackHandler(enabled = (chatWith != null || viewProfile != null) && !confirmLogout && deleteChat == null) {
         if (viewProfile != null) viewProfile = null else chatWith = null
@@ -291,12 +297,15 @@ private fun MainContent() {
             exit = slideOutVertically(tween(220)) { it } + fadeOut(tween(160))
         ) {
             GlassButton(
-                onClick = { AppToast.show("إنشاء المجموعات قريباً") },
+                onClick = { groupOpen = true },
                 backdrop = backdrop,
+                // أثناء فتح/إغلاق النافذة الزر يختفي والنافذة هي الي تمثله (نفس المكان والحجم)
+                enabled = !groupOpen,
                 modifier = Modifier
                     .navigationBarsPadding()
                     .padding(end = 20.dp, bottom = 112.dp)
                     .size(56.dp)
+                    .graphicsLayer { alpha = if (groupP.value > 0.001f || groupOpen) 0f else 1f }
             ) {
                 Icon(
                     AppIcons.GroupAdd, "إنشاء مجموعة",
@@ -305,6 +314,15 @@ private fun MainContent() {
                 )
             }
         }
+
+        // نافذة إنشاء مجموعة (فارغة مؤقتاً): تتحول من الزر وترجع له بنفس الحركة
+        GroupCreatePanel(
+            progress = groupP,
+            open = groupOpen,
+            backdrop = backdrop,
+            dark = isSystemInDarkTheme(),
+            onDismiss = { groupOpen = false }
+        )
 
         // انيميشن دخول المحادثة: تنزلق من الجانب مع تلاشي وتكبير خفيف
         AnimatedVisibility(
