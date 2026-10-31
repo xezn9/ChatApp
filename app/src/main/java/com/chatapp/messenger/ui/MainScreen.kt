@@ -231,7 +231,8 @@ private fun MainContent() {
                                 onRequestLogout = { confirmLogout = true },
                                 onRequestDeleteChat = { uid, name, lastAt -> deleteChat = Triple(uid, name, lastAt) },
                                 onOverlayChange = { homeOverlay = it },
-                                backdrop = backdrop
+                                backdrop = backdrop,
+                                onCreateGroup = { AppToast.show("إنشاء المجموعات قريباً") }
                             )
                             1 -> BdfTab()
                             else -> AccountTab(

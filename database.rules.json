@@ -93,30 +93,16 @@
           ".write": "auth != null && auth.token.email_verified === true && ($chatId.beginsWith(auth.uid + '_') || $chatId.endsWith('_' + auth.uid)) && (!root.child('bans').child(auth.uid).exists() || root.child('bans').child(auth.uid).child('until').val() < now) && (data.exists() ? data.child('meta').child('from').val() === auth.uid : (newData.child('meta').child('from').val() === auth.uid && !root.child('blocks').child($chatId.replace(auth.uid, '').replace('_', '')).child(auth.uid).exists()))",
           "meta": {
             ".validate": "newData.hasChildren(['from', 'type', 'n', 'size'])",
-            "from": {
-              ".validate": "newData.isString()"
-            },
-            "type": {
-              ".validate": "newData.val() === 'image' || newData.val() === 'video' || newData.val() === 'audio'"
-            },
-            "n": {
-              ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 30"
-            },
-            "size": {
-              ".validate": "newData.isNumber() && newData.val() <= 11000000"
-            },
-            "$other": {
-              ".validate": false
-            }
+            "from": { ".validate": "newData.isString()" },
+            "type": { ".validate": "newData.val() === 'image' || newData.val() === 'video' || newData.val() === 'audio'" },
+            "n": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 30" },
+            "size": { ".validate": "newData.isNumber() && newData.val() <= 11000000" },
+            "$other": { ".validate": false }
           },
           "c": {
-            "$i": {
-              ".validate": "newData.isString() && newData.val().length <= 500000"
-            }
+            "$i": { ".validate": "newData.isString() && newData.val().length <= 500000" }
           },
-          "$other": {
-            ".validate": false
-          }
+          "$other": { ".validate": false }
         }
       }
     },
@@ -152,48 +138,6 @@
     "bans": {
       "$uid": {
         ".read": "auth != null && auth.token.email_verified === true && auth.uid === $uid"
-      }
-    },
-    "groups": {
-      "$groupId": {
-        ".read": "auth != null && auth.token.email_verified === true",
-        ".write": "auth != null && auth.token.email_verified === true && !data.exists() && newData.child('owner').val() === auth.uid && newData.child('id').val() === $groupId",
-        ".validate": "newData.hasChildren(['id','name','owner','createdAt','members'])",
-        "id": {
-          ".validate": "newData.isString() && newData.val() === $groupId && newData.val().matches(/^[a-z0-9]{5,32}$/)"
-        },
-        "name": {
-          ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 60"
-        },
-        "about": {
-          ".validate": "newData.isString() && newData.val().length <= 300"
-        },
-        "photo": {
-          ".validate": "newData.isString() && newData.val().length <= 500000"
-        },
-        "owner": {
-          ".validate": "newData.isString() && newData.val() === auth.uid"
-        },
-        "createdAt": {
-          ".validate": "newData.isNumber()"
-        },
-        "members": {
-          "$uid": {
-            ".validate": "newData.val() === true && $uid === auth.uid"
-          }
-        },
-        "$other": {
-          ".validate": false
-        }
-      }
-    },
-    "userGroups": {
-      "$uid": {
-        ".read": "auth != null && auth.token.email_verified === true && auth.uid === $uid",
-        "$groupId": {
-          ".write": "auth != null && auth.token.email_verified === true && auth.uid === $uid && newData.val() === true && root.child('groups').child($groupId).child('owner').val() === auth.uid",
-          ".validate": "newData.val() === true"
-        }
       }
     }
   }

@@ -16,8 +16,6 @@ object AppState {
 class ChatApp : Application() {
     override fun onCreate() {
         super.onCreate()
-        // Save uncaught crashes to a TXT file under Downloads/ChatAppCrashLogs.
-        CrashLogger.install(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val ch = NotificationChannel(CHANNEL_MESSAGES, "الرسائل", NotificationManager.IMPORTANCE_HIGH)
             val nm = getSystemService(NotificationManager::class.java)
