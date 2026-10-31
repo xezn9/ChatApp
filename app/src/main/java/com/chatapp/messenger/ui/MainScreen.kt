@@ -68,6 +68,8 @@ import androidx.compose.ui.unit.sp
 import com.chatapp.messenger.AppState
 import com.chatapp.messenger.Repo
 import com.chatapp.messenger.UserItem
+import com.chatapp.messenger.ui.glass.GlassButton
+import androidx.compose.material3.Icon
 import com.chatapp.messenger.ui.glass.LiquidBottomTab
 import com.chatapp.messenger.ui.glass.LiquidBottomTabs
 import com.chatapp.messenger.ui.theme.appBackground
@@ -230,9 +232,7 @@ private fun MainContent() {
                                 onOpenProfile = { viewProfile = it },
                                 onRequestLogout = { confirmLogout = true },
                                 onRequestDeleteChat = { uid, name, lastAt -> deleteChat = Triple(uid, name, lastAt) },
-                                onOverlayChange = { homeOverlay = it },
-                                backdrop = backdrop,
-                                onCreateGroup = { AppToast.show("إنشاء المجموعات قريباً") }
+                                onOverlayChange = { homeOverlay = it }
                             )
                             1 -> BdfTab()
                             else -> AccountTab(
@@ -279,6 +279,30 @@ private fun MainContent() {
                         BasicText(label, style = TextStyle(contentColor, 12f.sp))
                     }
                 }
+            }
+        }
+
+        // زر إنشاء مجموعة (Liquid Glass دائري): خارج صندوق layerBackdrop عمداً،
+        // لأن الزجاج ما ينفع يقرأ نفس الطبقة الي هو مرسوم داخلها (هذا كان سبب الكراش)
+        AnimatedVisibility(
+            visible = tab == 0 && open == null && profileOpen == null && !overlayOpen,
+            modifier = Modifier.align(Alignment.BottomEnd),
+            enter = slideInVertically(spring(0.8f, 380f)) { it } + fadeIn(tween(200)),
+            exit = slideOutVertically(tween(220)) { it } + fadeOut(tween(160))
+        ) {
+            GlassButton(
+                onClick = { AppToast.show("إنشاء المجموعات قريباً") },
+                backdrop = backdrop,
+                modifier = Modifier
+                    .navigationBarsPadding()
+                    .padding(end = 20.dp, bottom = 112.dp)
+                    .size(56.dp)
+            ) {
+                Icon(
+                    AppIcons.GroupAdd, "إنشاء مجموعة",
+                    tint = contentColor,
+                    modifier = Modifier.size(26.dp)
+                )
             }
         }
 

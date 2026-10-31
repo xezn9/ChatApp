@@ -16,6 +16,7 @@ object AppState {
 class ChatApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        CrashLogger.install(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val ch = NotificationChannel(CHANNEL_MESSAGES, "الرسائل", NotificationManager.IMPORTANCE_HIGH)
             val nm = getSystemService(NotificationManager::class.java)

@@ -28,7 +28,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -71,8 +70,6 @@ import com.chatapp.messenger.ChatItem
 import com.chatapp.messenger.Profile
 import com.chatapp.messenger.Repo
 import com.chatapp.messenger.UserItem
-import com.chatapp.messenger.ui.glass.GlassButton
-import com.kyant.backdrop.Backdrop
 
 /**
  * تبويب Home:
@@ -84,10 +81,7 @@ import com.kyant.backdrop.Backdrop
 fun HomeTab(
     onOpenChat: (UserItem) -> Unit, onOpenProfile: (UserItem) -> Unit, onRequestLogout: () -> Unit,
     onRequestDeleteChat: (uid: String, name: String, lastAt: Long) -> Unit = { _, _, _ -> },
-    onOverlayChange: (Boolean) -> Unit = {},
-    // خلفية الزجاج (نفس الي تستعملها بقية الأزرار) + إجراء إنشاء مجموعة
-    backdrop: Backdrop? = null,
-    onCreateGroup: () -> Unit = {}
+    onOverlayChange: (Boolean) -> Unit = {}
 ) {
     val myUid = remember { Repo.auth.currentUser?.uid ?: "" }
     val users by remember { Repo.usersFlow() }.collectAsState(initial = emptyList())
@@ -197,27 +191,6 @@ fun HomeTab(
                         }
                     }
                 }
-            }
-        }
-    }
-
-    // زر إنشاء مجموعة: دائري Liquid Glass عائم فوق الشريط السفلي
-    if (backdrop != null) {
-        Box(
-            Modifier.fillMaxSize().navigationBarsPadding()
-                .padding(end = 20.dp, bottom = 112.dp),
-            contentAlignment = Alignment.BottomEnd
-        ) {
-            GlassButton(
-                onClick = onCreateGroup,
-                backdrop = backdrop,
-                modifier = Modifier.size(56.dp)
-            ) {
-                Icon(
-                    AppIcons.GroupAdd, "إنشاء مجموعة",
-                    tint = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier.size(26.dp)
-                )
             }
         }
     }
