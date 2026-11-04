@@ -287,7 +287,7 @@ fun AccountTab(
                         }
                 ) {
                     if (bannerImg != null) {
-                        AnimatedBannerImage(bannerGif, bannerImg, Modifier.matchParentSize(), ContentScale.Crop)
+                        AnimatedBannerImage(bannerGif, bannerImg, Modifier.matchParentSize(), ContentScale.Crop, androidx.compose.ui.BiasAlignment(profile.bannerFx, profile.bannerFy))
                     } else {
                         Box(
                             Modifier.matchParentSize().background(
@@ -474,6 +474,8 @@ fun AccountTab(
                 initAvatar = profile.avatar,
                 initBanner = profile.banner,
                 initBannerGifV = profile.bannerGifV,
+                initBannerFx = profile.bannerFx,
+                initBannerFy = profile.bannerFy,
                 onDismiss = { showEdit = false }
             )
         }
@@ -654,7 +656,7 @@ internal fun rememberImagePicker(maxSide: Int, quality: Int, onGif: ((bytes: Byt
 
 /** خلفية الديالوجات: تدرج التطبيق + باكدروب تستخدمه الأزرار الزجاجية */
 @Composable
-private fun GlassDialogRoot(content: @Composable (Backdrop) -> Unit) {
+internal fun GlassDialogRoot(content: @Composable (Backdrop) -> Unit) {
     val bd = rememberLayerBackdrop()
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.matchParentSize().layerBackdrop(bd).background(appBackground()))
@@ -868,6 +870,8 @@ private fun EditProfileDialog(
     initAvatar: String,
     initBanner: String,
     initBannerGifV: Long,
+    initBannerFx: Float,
+    initBannerFy: Float,
     onDismiss: () -> Unit
 ) {
     val ctx = LocalContext.current
@@ -888,12 +892,17 @@ private fun EditProfileDialog(
     val myUidEdit = remember { Repo.auth.currentUser?.uid ?: "" }
     val storedGif = rememberBannerGif(myUidEdit, gifV)
     fun clearGif() { gifV = 0L; pendingGif = null; pendingGifFile = null }
+    // موضع القص (أي جزء من البانر يبين) + شاشة التحريك
+    var bfx by remember { mutableFloatStateOf(initBannerFx) }
+    var bfy by remember { mutableFloatStateOf(initBannerFy) }
+    var showBannerCrop by remember { mutableStateOf(false) }
     val pickBanner = rememberImagePicker(
         maxSide = 1000, quality = 70,
         onGif = { bytes, still ->
             clearGif()
             bannerB64 = still
             pendingGif = bytes
+            bfx = 0f; bfy = 0f; showBannerCrop = true
             scope.launch {
                 // ملف مؤقت للمعاينة المتحركة قبل الحفظ
                 pendingGifFile = withContext(Dispatchers.IO) {
@@ -904,7 +913,7 @@ private fun EditProfileDialog(
                 }
             }
         }
-    ) { clearGif(); bannerB64 = it }
+    ) { clearGif(); bannerB64 = it; bfx = 0f; bfy = 0f; showBannerCrop = true }
     var cropSrc by remember { mutableStateOf<String?>(null) }
     // نختار الصورة بدقة أعلى ثم المستخدم يحرّكها ويقص الجزء المطلوب
     val pickAvatar = rememberImagePicker(maxSide = 1000, quality = 85) { cropSrc = it }
@@ -938,7 +947,7 @@ private fun EditProfileDialog(
                                         // GIF جديد: يرتفع أول (RTDB)، وبعدها نحفظ رقم نسخته بالبروفايل
                                         var finalV = gifV
                                         pendingGif?.let { finalV = Repo.uploadBannerGif(it) }
-                                        Repo.saveProfileInfo(name.trim(), username.trim(), bio.trim(), avatarB64, bannerB64, finalV)
+                                        Repo.saveProfileInfo(name.trim(), username.trim(), bio.trim(), avatarB64, bannerB64, finalV, bfx, bfy)
                                         if (finalV == 0L && initBannerGifV > 0L) Repo.deleteBannerGif()
                                         onDismiss()
                                     } catch (e: Exception) {
@@ -975,7 +984,7 @@ private fun EditProfileDialog(
                             contentAlignment = Alignment.Center
                         ) {
                             if (banner != null) {
-                                AnimatedBannerImage(pendingGifFile ?: storedGif, banner, Modifier.fillMaxSize(), ContentScale.Crop)
+                                AnimatedBannerImage(pendingGifFile ?: storedGif, banner, Modifier.fillMaxSize(), ContentScale.Crop, androidx.compose.ui.BiasAlignment(bfx, bfy))
                                 Box(
                                     Modifier.matchParentSize().background(
                                         Brush.verticalGradient(0f to Color.Transparent, 0.6f to Color.Transparent, 1f to Color.Black.copy(0.35f))
@@ -997,6 +1006,14 @@ private fun EditProfileDialog(
                                         onClick = { clearGif(); bannerB64 = "" }, backdrop = bd, tint = Color(0xFFE5484D),
                                         modifier = Modifier.size(40.dp)
                                     ) { Icon(Icons.Filled.Delete, null, tint = Color.White, modifier = Modifier.size(20.dp)) }
+                                }
+                                if (bannerB64.isNotEmpty()) {
+                                    GlassButton(onClick = { showBannerCrop = true }, backdrop = bd, modifier = Modifier.height(40.dp)) {
+                                        Text(
+                                            "تحريك", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                                            modifier = Modifier.padding(horizontal = 16.dp)
+                                        )
+                                    }
                                 }
                                 GlassButton(onClick = pickBanner, backdrop = bd, modifier = Modifier.height(40.dp)) {
                                     Icon(AppIcons.Image, null, tint = Color.White, modifier = Modifier.padding(start = 14.dp).size(18.dp))
@@ -1092,6 +1109,13 @@ private fun EditProfileDialog(
         if (src != null) {
             AvatarCropOverlay(srcB64 = src, onCancel = { cropSrc = null }, onDone = { avatarB64 = it; cropSrc = null })
         }
+        if (showBannerCrop && bannerB64.isNotEmpty()) {
+            BannerCropOverlay(
+                still = banner, gif = pendingGifFile ?: storedGif, initFx = bfx, initFy = bfy,
+                onCancel = { showBannerCrop = false },
+                onDone = { x, y -> bfx = x; bfy = y; showBannerCrop = false }
+            )
+        }
     }
 }
 
@@ -1185,6 +1209,88 @@ internal fun AvatarCropOverlay(srcB64: String, onCancel: () -> Unit, onDone: (St
                 }
                 Text(
                     "اسحب لتحريك الصورة، وقرّب بإصبعين للتكبير",
+                    fontSize = 14.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+            }
+        }
+    }
+}
+
+
+/**
+ * اختيار الجزء الظاهر من البانر: تسحب الصورة (أو الـ GIF المتحرك) يمين/يسار/فوق/تحت.
+ * الإطار بنفس نسبة بانر شاشة الملف الشخصي (بما فيها منطقة شريط الحالة)، فالي تشوفه هو الي يظهر.
+ * النتيجة موضع (fx, fy) من -1 إلى 1 يُطبَّق وقت العرض، فنقدر نحرّك حتى GIF بدون إعادة تشفيره.
+ */
+@Composable
+internal fun BannerCropOverlay(
+    still: ImageBitmap?,
+    gif: java.io.File?,
+    initFx: Float,
+    initFy: Float,
+    onCancel: () -> Unit,
+    onDone: (Float, Float) -> Unit
+) {
+    BackHandler(onBack = onCancel)
+    var fx by remember { mutableFloatStateOf(initFx) }
+    var fy by remember { mutableFloatStateOf(initFy) }
+    var frame by remember { mutableStateOf(IntSize.Zero) }
+
+    Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { } }) {
+        GlassDialogRoot { bd ->
+            Column(
+                Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    GlassButton(onClick = onCancel, backdrop = bd, modifier = Modifier.size(40.dp)) {
+                        Icon(Icons.Filled.Close, null)
+                    }
+                    Text("حرّك البانر", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f).padding(horizontal = 8.dp))
+                    GlassButton(
+                        backdrop = bd, tint = AccentBlue, modifier = Modifier.height(40.dp),
+                        enabled = still != null,
+                        onClick = { onDone(fx, fy) }
+                    ) { Text("تم", color = Color.White, modifier = Modifier.padding(horizontal = 22.dp)) }
+                }
+
+                BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    // نفس معادلة ارتفاع البانر بشاشة الملف الشخصي: عرض/1440*620 + شريط الحالة
+                    val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+                    val screenW = maxWidth + 32.dp
+                    val aspect = screenW.value / (screenW.value / 1440f * 620f + statusTop.value)
+                    Box(
+                        Modifier.fillMaxWidth().aspectRatio(aspect)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color(0xFF2B2F36))
+                            .onSizeChanged { frame = it }
+                            .pointerInput(still) {
+                                androidx.compose.foundation.gestures.detectDragGestures { change, drag ->
+                                    change.consume()
+                                    val b = still ?: return@detectDragGestures
+                                    val fw = frame.width.toFloat()
+                                    val fh = frame.height.toFloat()
+                                    if (fw <= 0f || fh <= 0f) return@detectDragGestures
+                                    // مقدار زيادة الصورة عن الإطار بكل محور (الصورة مكبّرة لتغطي الإطار)
+                                    val s = kotlin.math.max(fw / b.width, fh / b.height)
+                                    val ovx = b.width * s - fw
+                                    val ovy = b.height * s - fh
+                                    // سحب الصورة لليمين = نعرض جزء أيسر منها (الإشارة معكوسة)
+                                    if (ovx > 1f) fx = (fx - 2f * drag.x / ovx).coerceIn(-1f, 1f)
+                                    if (ovy > 1f) fy = (fy - 2f * drag.y / ovy).coerceIn(-1f, 1f)
+                                }
+                            }
+                    ) {
+                        AnimatedBannerImage(
+                            gif, still, Modifier.fillMaxSize(), ContentScale.Crop,
+                            androidx.compose.ui.BiasAlignment(fx, fy)
+                        )
+                        Box(Modifier.fillMaxSize().border(2.dp, Color.White.copy(alpha = 0.6f), RoundedCornerShape(16.dp)))
+                    }
+                }
+                Text(
+                    "اسحب الصورة لاختيار الجزء الي يظهر بالبانر",
                     fontSize = 14.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
                     modifier = Modifier.padding(bottom = 12.dp)
                 )

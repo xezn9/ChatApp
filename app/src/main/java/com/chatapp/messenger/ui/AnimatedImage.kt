@@ -175,7 +175,8 @@ fun AnimatedGifImage(
     file: File,
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop,
-    key: Any = 0
+    key: Any = 0,
+    alignment: androidx.compose.ui.Alignment = androidx.compose.ui.Alignment.Center
 ) {
     val ctx = LocalContext.current
     val request = remember(file.path, key) {
@@ -189,7 +190,8 @@ fun AnimatedGifImage(
         contentDescription = null,
         imageLoader = GifLoader.get(ctx),
         modifier = modifier,
-        contentScale = contentScale
+        contentScale = contentScale,
+        alignment = alignment
     )
 }
 
@@ -202,10 +204,11 @@ fun AnimatedBannerImage(
     gif: File?,
     bitmap: ImageBitmap?,
     modifier: Modifier = Modifier,
-    contentScale: ContentScale = ContentScale.Crop
+    contentScale: ContentScale = ContentScale.Crop,
+    alignment: androidx.compose.ui.Alignment = androidx.compose.ui.Alignment.Center
 ) {
-    if (gif != null) AnimatedGifImage(gif, modifier, contentScale, key = gif.path)
-    else if (bitmap != null) Image(bitmap, null, modifier, contentScale = contentScale)
+    if (gif != null) AnimatedGifImage(gif, modifier, contentScale, key = gif.path, alignment = alignment)
+    else if (bitmap != null) Image(bitmap, null, modifier, contentScale = contentScale, alignment = alignment)
 }
 
 /** ينزّل (أو يقرأ من الكاش) GIF بانر مستخدم. null = ما فيه GIF أو لسا ينزل */

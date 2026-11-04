@@ -141,7 +141,7 @@ fun UserProfileScreen(user: UserItem, onBack: () -> Unit, onMessage: () -> Unit)
                         }
                 ) {
                     if (bannerImg != null) {
-                        AnimatedBannerImage(bannerGif, bannerImg, Modifier.matchParentSize(), ContentScale.Crop)
+                        AnimatedBannerImage(bannerGif, bannerImg, Modifier.matchParentSize(), ContentScale.Crop, androidx.compose.ui.BiasAlignment(profile.bannerFx, profile.bannerFy))
                     } else {
                         Box(
                             Modifier.matchParentSize().background(

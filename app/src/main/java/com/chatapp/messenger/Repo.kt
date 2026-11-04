@@ -217,6 +217,9 @@ data class Profile(
     val banner: String = "",
     /** رقم نسخة GIF البانر المخزّن بـ RTDB (0 = ما فيه GIF، البانر صورة ثابتة) */
     val bannerGifV: Long = 0L,
+    /** موضع القص: أي جزء من البانر يظهر. -1..1 (0 = المنتصف) لكل محور */
+    val bannerFx: Float = 0f,
+    val bannerFy: Float = 0f,
     val story: Story? = null,
     val status: Status? = null,
     /** شكل فقاعات الرسائل المختار (يطبق على كل محادثات المستخدم ويظهر للطرفين) */
@@ -1304,6 +1307,8 @@ object Repo {
                         avatar = d.getString("avatar") ?: "",
                         banner = d.getString("banner") ?: "",
                         bannerGifV = d.getLong("bannerGifV") ?: 0L,
+                        bannerFx = (d.getDouble("bannerFx") ?: 0.0).toFloat(),
+                        bannerFy = (d.getDouble("bannerFy") ?: 0.0).toFloat(),
                         story = null,
                         status = status,
                         bubbleStyle = d.getString("bubbleStyle") ?: "glass",
@@ -1410,7 +1415,7 @@ object Repo {
     }
 
     /** حفظ الاسم/اليوزر/النبذة/الصور. الصور نص base64 مضغوط */
-    suspend fun saveProfileInfo(name: String, username: String, bio: String, avatar: String, banner: String, bannerGifV: Long = 0L) {
+    suspend fun saveProfileInfo(name: String, username: String, bio: String, avatar: String, banner: String, bannerGifV: Long = 0L, bannerFx: Float = 0f, bannerFy: Float = 0f) {
         val u = auth.currentUser ?: return
         val old = db.collection("profiles").document(u.uid).get().await().getString("username") ?: ""
         val finalUser = username.ifBlank { old }
@@ -1419,7 +1424,8 @@ object Repo {
             if (!claimUsername(u.uid, finalUser, old)) throw Exception("اليوزر محجوز، اختر غيره")
         }
         db.collection("profiles").document(u.uid).set(
-            mapOf("name" to name, "username" to finalUser, "bio" to bio, "avatar" to avatar, "banner" to banner, "bannerGifV" to bannerGifV),
+            mapOf("name" to name, "username" to finalUser, "bio" to bio, "avatar" to avatar, "banner" to banner, "bannerGifV" to bannerGifV,
+                "bannerFx" to bannerFx.coerceIn(-1f, 1f).toDouble(), "bannerFy" to bannerFy.coerceIn(-1f, 1f).toDouble()),
             SetOptions.merge()
         ).await()
         db.collection("users").document(u.uid).set(mapOf("name" to name, "username" to finalUser), SetOptions.merge()).await()
