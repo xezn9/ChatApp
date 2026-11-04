@@ -89,6 +89,9 @@ dependencies {
     implementation("androidx.media3:media3-common:1.5.1")
     // ملصقات الرموز المتحركة (tgs)
     implementation("com.airbnb.android:lottie-compose:6.6.7")
+    // عرض صور GIF المتحركة (البانر وخلفية المحادثات)
+    implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("io.coil-kt:coil-gif:2.7.0")
 }
 
 // حل خطأ checkDebugAarMetadata: تخطّي فحص بيانات مكتبات AAR (الفحص بس تحقق من متطلبات compileSdk/AGP ولا يؤثر على البناء)

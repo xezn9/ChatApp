@@ -40,10 +40,13 @@ object ImageUtil {
     suspend fun saveToGallery(ctx: Context, bytes: ByteArray, name: String): Boolean =
         withContext(Dispatchers.IO) {
             try {
+                val gif = GifUtil.isGifBytes(bytes)
+                val ext = if (gif) "gif" else "jpg"
+                val mime = if (gif) "image/gif" else "image/jpeg"
                 if (Build.VERSION.SDK_INT >= 29) {
                     val values = ContentValues().apply {
-                        put(MediaStore.Images.Media.DISPLAY_NAME, "$name.jpg")
-                        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                        put(MediaStore.Images.Media.DISPLAY_NAME, "$name.$ext")
+                        put(MediaStore.Images.Media.MIME_TYPE, mime)
                         put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/ChatApp")
                         put(MediaStore.Images.Media.IS_PENDING, 1)
                     }
@@ -62,9 +65,9 @@ object ImageUtil {
                         Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "ChatApp"
                     )
                     dir.mkdirs()
-                    val f = java.io.File(dir, "$name.jpg")
+                    val f = java.io.File(dir, "$name.$ext")
                     f.writeBytes(bytes)
-                    MediaScannerConnection.scanFile(ctx, arrayOf(f.absolutePath), arrayOf("image/jpeg"), null)
+                    MediaScannerConnection.scanFile(ctx, arrayOf(f.absolutePath), arrayOf(mime), null)
                     true
                 }
             } catch (e: Exception) {

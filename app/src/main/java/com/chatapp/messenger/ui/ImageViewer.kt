@@ -113,8 +113,8 @@ private fun ImageViewerScreen(b64: String, onDismiss: () -> Unit) {
     Box(Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) { detectTapGestures { } }) {
         Box(Modifier.fillMaxSize().layerBackdrop(bd), contentAlignment = Alignment.Center) {
             if (img != null) {
-                Image(
-                    img, null,
+                AnimatedB64Image(
+                    b64, img,
                     Modifier.fillMaxSize()
                         .pointerInput(Unit) {
                             detectTapGestures(onDoubleTap = {

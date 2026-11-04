@@ -263,13 +263,9 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
     val hasImage = remember(bgCfg.version) { prefs.hasImage(me, other.uid) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) scope.launch {
-            val bytes = ImageUtil.uriToJpeg(ctx, uri, 1600, 82)
-            if (bytes == null) {
-                AppToast.show("ما گدرت أفتح الصورة")
-            } else {
-                withContext(Dispatchers.IO) { bgFile.writeBytes(bytes) }
-                updateBg(bgCfg.copy(kind = "image", version = System.currentTimeMillis()))
-            }
+            val err = saveChatBackgroundFromUri(ctx, uri, bgFile)
+            if (err != null) AppToast.show(err)
+            else updateBg(bgCfg.copy(kind = "image", version = System.currentTimeMillis()))
         }
     }
 

@@ -1,5 +1,8 @@
 package com.chatapp.messenger.ui
 
+import android.util.Base64
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.chatapp.messenger.ui.theme.AppFont
 
 import com.chatapp.messenger.ui.theme.GlassFx
@@ -283,7 +286,7 @@ fun AccountTab(
                         }
                 ) {
                     if (bannerImg != null) {
-                        Image(bannerImg, null, Modifier.matchParentSize(), contentScale = ContentScale.Crop)
+                        AnimatedB64Image(profile.banner, bannerImg, Modifier.matchParentSize(), ContentScale.Crop)
                     } else {
                         Box(
                             Modifier.matchParentSize().background(
@@ -622,12 +625,21 @@ private fun AvatarWithStory(
 
 /** يفتح معرض الصور، يضغط الصورة ويرجعها كنص base64 */
 @Composable
-internal fun rememberImagePicker(maxSide: Int, quality: Int, onPicked: (String) -> Unit): () -> Unit {
+internal fun rememberImagePicker(maxSide: Int, quality: Int, allowGif: Boolean = false, onPicked: (String) -> Unit): () -> Unit {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val cb by rememberUpdatedState(onPicked)
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) scope.launch {
+            // GIF يُحفظ كما هو (بدون ضغط JPEG) حتى تبقى الحركة، بشرط ما يتجاوز الحد
+            if (allowGif && withContext(Dispatchers.IO) { GifUtil.isGifUri(ctx, uri) }) {
+                when (val r = GifUtil.readLimited(ctx, uri, GifUtil.MAX_BANNER_BYTES)) {
+                    is GifRead.Ok -> cb(Base64.encodeToString(r.bytes, Base64.NO_WRAP))
+                    is GifRead.TooBig -> AppToast.show("ملف الـ GIF كبير، الحد الأقصى للبانر 500 كيلوبايت", long = true)
+                    else -> AppToast.show("تعذّر قراءة الصورة")
+                }
+                return@launch
+            }
             val b64 = ImageUtil.uriToB64(ctx, uri, maxSide, quality)
             if (b64 != null) cb(b64) else AppToast.show("تعذّر قراءة الصورة")
         }
@@ -863,7 +875,7 @@ private fun EditProfileDialog(
     var bannerB64 by remember { mutableStateOf(initBanner) }
     var saving by remember { mutableStateOf(false) }
 
-    val pickBanner = rememberImagePicker(maxSide = 1000, quality = 70) { bannerB64 = it }
+    val pickBanner = rememberImagePicker(maxSide = 1000, quality = 70, allowGif = true) { bannerB64 = it }
     var cropSrc by remember { mutableStateOf<String?>(null) }
     // نختار الصورة بدقة أعلى ثم المستخدم يحرّكها ويقص الجزء المطلوب
     val pickAvatar = rememberImagePicker(maxSide = 1000, quality = 85) { cropSrc = it }
@@ -930,7 +942,7 @@ private fun EditProfileDialog(
                             contentAlignment = Alignment.Center
                         ) {
                             if (banner != null) {
-                                Image(banner, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                                AnimatedB64Image(bannerB64, banner, Modifier.fillMaxSize(), ContentScale.Crop)
                                 Box(
                                     Modifier.matchParentSize().background(
                                         Brush.verticalGradient(0f to Color.Transparent, 0.6f to Color.Transparent, 1f to Color.Black.copy(0.35f))

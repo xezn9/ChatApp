@@ -140,7 +140,7 @@ fun UserProfileScreen(user: UserItem, onBack: () -> Unit, onMessage: () -> Unit)
                         }
                 ) {
                     if (bannerImg != null) {
-                        Image(bannerImg, null, Modifier.matchParentSize(), contentScale = ContentScale.Crop)
+                        AnimatedB64Image(profile.banner, bannerImg, Modifier.matchParentSize(), ContentScale.Crop)
                     } else {
                         Box(
                             Modifier.matchParentSize().background(

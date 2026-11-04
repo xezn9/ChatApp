@@ -276,7 +276,7 @@ fun AnimatedVisibilityScope.ChatSettingsPanel(
                         ) {
                             Icon(AppIcons.Image, null, tint = Color.White, modifier = Modifier.size(20.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("اختيار من المعرض", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                            Text("اختيار صورة أو GIF", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                         }
                         Spacer(Modifier.height(10.dp))
                         Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {

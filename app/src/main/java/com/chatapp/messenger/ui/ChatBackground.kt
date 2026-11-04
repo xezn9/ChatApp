@@ -159,8 +159,21 @@ fun ChatBackground(bg: ChatBg, imageFile: File, modifier: Modifier = Modifier) {
     Box(modifier.clipToBounds()) {
         when (bg.kind) {
             "image" -> {
-                val img = rememberFileImage(imageFile.path, bg.version, softBlur = bg.blur && !canBlur)
-                if (img != null) {
+                // GIF؟ (نعرف من محتوى الملف). null = لسا نفحص
+                val animated by produceState<Boolean?>(null, imageFile.path, bg.version) {
+                    value = withContext(Dispatchers.IO) { GifUtil.isGifFile(imageFile) }
+                }
+                val img = if (animated == false) rememberFileImage(imageFile.path, bg.version, softBlur = bg.blur && !canBlur) else null
+                if (animated == true) {
+                    // GIF يتكرر للأبد حتى لو قصير. التمويه يشتغل بأندرويد 12+ فقط
+                    AnimatedGifImage(
+                        imageFile,
+                        Modifier.fillMaxSize().then(blurMod),
+                        ContentScale.Crop,
+                        key = bg.version
+                    )
+                    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.28f)))
+                } else if (img != null) {
                     Image(
                         img, null,
                         modifier = Modifier.fillMaxSize().then(blurMod),
