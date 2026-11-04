@@ -60,6 +60,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.activity.compose.BackHandler
 import com.kyant.backdrop.effects.vibrancy
@@ -1266,7 +1267,7 @@ internal fun BannerCropOverlay(
                             .background(Color(0xFF2B2F36))
                             .onSizeChanged { frame = it }
                             .pointerInput(still) {
-                                androidx.compose.foundation.gestures.detectDragGestures { change, drag ->
+                                detectDragGestures { change, drag ->
                                     change.consume()
                                     val b = still ?: return@detectDragGestures
                                     val fw = frame.width.toFloat()
