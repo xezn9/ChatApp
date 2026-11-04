@@ -1,0 +1,4 @@
+name = "chatapp-push"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+# السر: npx wrangler secret put SERVICE_ACCOUNT   (والصق محتوى ملف الـ JSON كامل)
