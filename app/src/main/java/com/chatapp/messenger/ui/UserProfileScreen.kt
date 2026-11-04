@@ -78,6 +78,7 @@ fun UserProfileScreen(user: UserItem, onBack: () -> Unit, onMessage: () -> Unit)
     val name = profile.name.ifBlank { user.name }.ifBlank { "مستخدم" }
     val username = profile.username.ifBlank { user.username }
     val bannerImg = rememberB64Image(profile.banner)
+    val bannerGif = rememberBannerGif(user.uid, profile.bannerGifV)
     val avatarImg = rememberB64Image(profile.avatar)
     val gray = Color(0xFFB0B3B8)
 
@@ -140,7 +141,7 @@ fun UserProfileScreen(user: UserItem, onBack: () -> Unit, onMessage: () -> Unit)
                         }
                 ) {
                     if (bannerImg != null) {
-                        AnimatedB64Image(profile.banner, bannerImg, Modifier.matchParentSize(), ContentScale.Crop)
+                        AnimatedBannerImage(bannerGif, bannerImg, Modifier.matchParentSize(), ContentScale.Crop)
                     } else {
                         Box(
                             Modifier.matchParentSize().background(
@@ -353,6 +354,6 @@ fun UserProfileScreen(user: UserItem, onBack: () -> Unit, onMessage: () -> Unit)
         )
     }
     // عرض البانر / الصورة الشخصية بملء الشاشة مع حفظ بالمعرض
-    ImageViewerHost(viewImage) { viewImage = null }
+    ImageViewerHost(viewImage, gifFile = bannerGif.takeIf { viewImage != null && viewImage == profile.banner }) { viewImage = null }
     }
 }

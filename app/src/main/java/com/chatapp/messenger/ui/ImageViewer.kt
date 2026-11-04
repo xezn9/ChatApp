@@ -60,7 +60,7 @@ import kotlinx.coroutines.launch
  * وزر يحفظ الصورة بمعرض الجهاز. [b64] = الصورة (null = مخفي).
  */
 @Composable
-fun ImageViewerHost(b64: String?, onDismiss: () -> Unit) {
+fun ImageViewerHost(b64: String?, gifFile: java.io.File? = null, onDismiss: () -> Unit) {
     // نتذكر آخر صورة حتى تشتغل حركة الإغلاق قبل ما تختفي
     var last by remember { mutableStateOf(b64 ?: "") }
     LaunchedEffect(b64) { if (b64 != null) last = b64 }
@@ -69,12 +69,12 @@ fun ImageViewerHost(b64: String?, onDismiss: () -> Unit) {
         enter = fadeIn(tween(200)) + scaleIn(spring(0.85f, 400f), initialScale = 0.9f),
         exit = fadeOut(tween(170)) + scaleOut(tween(190), targetScale = 0.94f)
     ) {
-        ImageViewerScreen(last, onDismiss)
+        ImageViewerScreen(last, gifFile, onDismiss)
     }
 }
 
 @Composable
-private fun ImageViewerScreen(b64: String, onDismiss: () -> Unit) {
+private fun ImageViewerScreen(b64: String, gifFile: java.io.File?, onDismiss: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val img = rememberB64Image(b64)
@@ -88,7 +88,7 @@ private fun ImageViewerScreen(b64: String, onDismiss: () -> Unit) {
         saving = true
         scope.launch {
             val ok = try {
-                val bytes = Base64.decode(b64, Base64.NO_WRAP)
+                val bytes = gifFile?.readBytes() ?: Base64.decode(b64, Base64.NO_WRAP)
                 ImageUtil.saveToGallery(ctx, bytes, "ChatApp_" + System.currentTimeMillis())
             } catch (e: Exception) {
                 false
@@ -113,8 +113,8 @@ private fun ImageViewerScreen(b64: String, onDismiss: () -> Unit) {
     Box(Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) { detectTapGestures { } }) {
         Box(Modifier.fillMaxSize().layerBackdrop(bd), contentAlignment = Alignment.Center) {
             if (img != null) {
-                AnimatedB64Image(
-                    b64, img,
+                AnimatedBannerImage(
+                    gifFile, img,
                     Modifier.fillMaxSize()
                         .pointerInput(Unit) {
                             detectTapGestures(onDoubleTap = {

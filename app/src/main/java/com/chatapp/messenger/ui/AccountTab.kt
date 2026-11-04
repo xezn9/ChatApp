@@ -1,6 +1,5 @@
 package com.chatapp.messenger.ui
 
-import android.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.chatapp.messenger.ui.theme.AppFont
@@ -53,6 +52,7 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.IntOffset
@@ -223,6 +223,7 @@ fun AccountTab(
     val requests by remember(myUid) { Repo.incomingRequestsFlow(myUid) }.collectAsState(initial = emptyList())
     // ألوان الخلفية: من ألوان البانر تلقائياً، وإذا ما فيه بانر تتغير عشوائياً كل ما تدخل التبويب
     val bannerImg = rememberB64Image(profile.banner)
+    val bannerGif = rememberBannerGif(myUid, profile.bannerGifV)
     val bannerPalette by androidx.compose.runtime.produceState<AccountPalette?>(null, bannerImg) {
         val b = bannerImg
         value = if (b == null) null else kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
@@ -286,7 +287,7 @@ fun AccountTab(
                         }
                 ) {
                     if (bannerImg != null) {
-                        AnimatedB64Image(profile.banner, bannerImg, Modifier.matchParentSize(), ContentScale.Crop)
+                        AnimatedBannerImage(bannerGif, bannerImg, Modifier.matchParentSize(), ContentScale.Crop)
                     } else {
                         Box(
                             Modifier.matchParentSize().background(
@@ -472,6 +473,7 @@ fun AccountTab(
                 initBio = profile.bio,
                 initAvatar = profile.avatar,
                 initBanner = profile.banner,
+                initBannerGifV = profile.bannerGifV,
                 onDismiss = { showEdit = false }
             )
         }
@@ -534,7 +536,7 @@ fun AccountTab(
         AppSettingsScreen(profile = profile, onDismiss = { showSettings = false })
     }
     // عرض البانر / الصورة الشخصية بملء الشاشة مع حفظ بالمعرض
-    ImageViewerHost(viewImage) { viewImage = null }
+    ImageViewerHost(viewImage, gifFile = bannerGif.takeIf { viewImage != null && viewImage == profile.banner }) { viewImage = null }
 }
 
 
@@ -625,17 +627,20 @@ private fun AvatarWithStory(
 
 /** يفتح معرض الصور، يضغط الصورة ويرجعها كنص base64 */
 @Composable
-internal fun rememberImagePicker(maxSide: Int, quality: Int, allowGif: Boolean = false, onPicked: (String) -> Unit): () -> Unit {
+internal fun rememberImagePicker(maxSide: Int, quality: Int, onGif: ((bytes: ByteArray, firstFrameB64: String) -> Unit)? = null, onPicked: (String) -> Unit): () -> Unit {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val cb by rememberUpdatedState(onPicked)
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) scope.launch {
-            // GIF يُحفظ كما هو (بدون ضغط JPEG) حتى تبقى الحركة، بشرط ما يتجاوز الحد
-            if (allowGif && withContext(Dispatchers.IO) { GifUtil.isGifUri(ctx, uri) }) {
+            // GIF يُرفع كما هو (بدون ضغط JPEG) حتى تبقى الحركة. ونطلع منه أول فريم كصورة ثابتة للبروفايل
+            if (onGif != null && withContext(Dispatchers.IO) { GifUtil.isGifUri(ctx, uri) }) {
                 when (val r = GifUtil.readLimited(ctx, uri, GifUtil.MAX_BANNER_BYTES)) {
-                    is GifRead.Ok -> cb(Base64.encodeToString(r.bytes, Base64.NO_WRAP))
-                    is GifRead.TooBig -> AppToast.show("ملف الـ GIF كبير، الحد الأقصى للبانر 500 كيلوبايت", long = true)
+                    is GifRead.Ok -> {
+                        val still = ImageUtil.uriToB64(ctx, uri, maxSide, quality)
+                        if (still != null) onGif(r.bytes, still) else AppToast.show("تعذّر قراءة الصورة")
+                    }
+                    is GifRead.TooBig -> AppToast.show("ملف الـ GIF كبير، الحد الأقصى للبانر 6 ميگا", long = true)
                     else -> AppToast.show("تعذّر قراءة الصورة")
                 }
                 return@launch
@@ -862,6 +867,7 @@ private fun EditProfileDialog(
     initBio: String,
     initAvatar: String,
     initBanner: String,
+    initBannerGifV: Long,
     onDismiss: () -> Unit
 ) {
     val ctx = LocalContext.current
@@ -875,7 +881,30 @@ private fun EditProfileDialog(
     var bannerB64 by remember { mutableStateOf(initBanner) }
     var saving by remember { mutableStateOf(false) }
 
-    val pickBanner = rememberImagePicker(maxSide = 1000, quality = 70, allowGif = true) { bannerB64 = it }
+    // GIF البانر: gifV = النسخة المخزّنة حالياً (0 = ما فيه)، pendingGif = GIF جديد لسا ما انرفع
+    var gifV by remember { mutableLongStateOf(initBannerGifV) }
+    var pendingGif by remember { mutableStateOf<ByteArray?>(null) }
+    var pendingGifFile by remember { mutableStateOf<java.io.File?>(null) }
+    val myUidEdit = remember { Repo.auth.currentUser?.uid ?: "" }
+    val storedGif = rememberBannerGif(myUidEdit, gifV)
+    fun clearGif() { gifV = 0L; pendingGif = null; pendingGifFile = null }
+    val pickBanner = rememberImagePicker(
+        maxSide = 1000, quality = 70,
+        onGif = { bytes, still ->
+            clearGif()
+            bannerB64 = still
+            pendingGif = bytes
+            scope.launch {
+                // ملف مؤقت للمعاينة المتحركة قبل الحفظ
+                pendingGifFile = withContext(Dispatchers.IO) {
+                    runCatching {
+                        java.io.File(ctx.cacheDir, "gif_banners").apply { mkdirs() }
+                            .let { java.io.File(it, "pending_${System.currentTimeMillis()}.gif").also { f -> f.writeBytes(bytes) } }
+                    }.getOrNull()
+                }
+            }
+        }
+    ) { clearGif(); bannerB64 = it }
     var cropSrc by remember { mutableStateOf<String?>(null) }
     // نختار الصورة بدقة أعلى ثم المستخدم يحرّكها ويقص الجزء المطلوب
     val pickAvatar = rememberImagePicker(maxSide = 1000, quality = 85) { cropSrc = it }
@@ -906,7 +935,11 @@ private fun EditProfileDialog(
                                 saving = true
                                 scope.launch {
                                     try {
-                                        Repo.saveProfileInfo(name.trim(), username.trim(), bio.trim(), avatarB64, bannerB64)
+                                        // GIF جديد: يرتفع أول (RTDB)، وبعدها نحفظ رقم نسخته بالبروفايل
+                                        var finalV = gifV
+                                        pendingGif?.let { finalV = Repo.uploadBannerGif(it) }
+                                        Repo.saveProfileInfo(name.trim(), username.trim(), bio.trim(), avatarB64, bannerB64, finalV)
+                                        if (finalV == 0L && initBannerGifV > 0L) Repo.deleteBannerGif()
                                         onDismiss()
                                     } catch (e: Exception) {
                                         saving = false
@@ -942,7 +975,7 @@ private fun EditProfileDialog(
                             contentAlignment = Alignment.Center
                         ) {
                             if (banner != null) {
-                                AnimatedB64Image(bannerB64, banner, Modifier.fillMaxSize(), ContentScale.Crop)
+                                AnimatedBannerImage(pendingGifFile ?: storedGif, banner, Modifier.fillMaxSize(), ContentScale.Crop)
                                 Box(
                                     Modifier.matchParentSize().background(
                                         Brush.verticalGradient(0f to Color.Transparent, 0.6f to Color.Transparent, 1f to Color.Black.copy(0.35f))
@@ -961,7 +994,7 @@ private fun EditProfileDialog(
                             ) {
                                 if (bannerB64.isNotEmpty()) {
                                     GlassButton(
-                                        onClick = { bannerB64 = "" }, backdrop = bd, tint = Color(0xFFE5484D),
+                                        onClick = { clearGif(); bannerB64 = "" }, backdrop = bd, tint = Color(0xFFE5484D),
                                         modifier = Modifier.size(40.dp)
                                     ) { Icon(Icons.Filled.Delete, null, tint = Color.White, modifier = Modifier.size(20.dp)) }
                                 }

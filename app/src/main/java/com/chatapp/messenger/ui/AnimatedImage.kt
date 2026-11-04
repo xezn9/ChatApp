@@ -3,7 +3,6 @@ package com.chatapp.messenger.ui
 import android.content.Context
 import android.net.Uri
 import android.os.Build
-import android.util.Base64
 import androidx.compose.foundation.Image
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -35,16 +34,13 @@ sealed class GifRead {
 /** أدوات الـ GIF: كشف النوع، قراءة بحد أقصى للحجم، وتخزين مؤقت للعرض */
 object GifUtil {
     /**
-     * أقصى حجم لـ GIF البانر. البانر يتخزن base64 داخل وثيقة Firestore (حدها 1MB للوثيقة كلها)
-     * و base64 يكبّر الحجم 33%، فنخلّي الحد 500KB حتى ما تتجاوز الوثيقة الحد مع الصورة الشخصية والنبذة.
+     * أقصى حجم لـ GIF البانر. يتخزن بـ Realtime Database (حد الكتابة 10MB)، و base64 يكبّر الحجم 33%،
+     * فـ 6MB خام = 8MB base64 تحت الحد. (قواعد RTDB تحقق نفس الشي: طول النص <= 8,400,000)
      */
-    const val MAX_BANNER_BYTES = 500_000
+    const val MAX_BANNER_BYTES = 6_000_000
 
     /** أقصى حجم لـ GIF خلفية المحادثة (محلي بالجهاز فقط، فالحد أوسع) */
     const val MAX_BG_BYTES = 12_000_000
-
-    /** "GIF8" بصيغة base64 تبدأ دائماً بـ R0lGOD (GIF87a و GIF89a) */
-    fun isGifB64(b64: String): Boolean = b64.startsWith("R0lGOD")
 
     private fun hasGifHeader(h: ByteArray, n: Int): Boolean =
         n >= 4 && h[0] == 'G'.code.toByte() && h[1] == 'I'.code.toByte() &&
@@ -117,21 +113,8 @@ object GifUtil {
         }
     }
 
-    /** ملف مؤقت لـ GIF محفوظ كنص base64 (Coil يقرأ من ملف). يُنشأ مرة وحدة لكل صورة. استدعيها من خيط IO */
-    fun fileForB64(ctx: Context, b64: String): File {
-        val dir = File(ctx.cacheDir, "gif_banners").apply { mkdirs() }
-        val f = File(dir, "b_${b64.length}_${b64.hashCode()}_${b64.takeLast(24).hashCode()}.gif")
-        if (!f.exists() || f.length() == 0L) {
-            val tmp = File(dir, f.name + ".tmp")
-            tmp.writeBytes(Base64.decode(b64, Base64.NO_WRAP))
-            if (!tmp.renameTo(f)) { tmp.delete(); throw java.io.IOException("cache write failed") }
-            trimCache(dir)
-        }
-        return f
-    }
-
     /** يمنع الكاش من التضخم: إذا تجاوز 30MB نحذف الأقدم حتى ينزل لـ 20MB */
-    private fun trimCache(dir: File) {
+    fun trimCache(dir: File) {
         val files = dir.listFiles() ?: return
         var total = files.sumOf { it.length() }
         if (total <= 30_000_000L) return
@@ -211,25 +194,29 @@ fun AnimatedGifImage(
 }
 
 /**
- * يعرض صورة مخزّنة كنص base64: إذا GIF يتحرك بتكرار لا نهائي، وإذا JPEG يعرضها ثابتة مثل قبل.
- * [bitmap] = النسخة الثابتة (أول فريم) من rememberB64Image، تظهر ثواني قليلة لحد ما يجهز الملف المتحرك.
+ * يعرض البانر: إذا فيه ملف GIF [gif] يتحرك بتكرار لا نهائي، وإلا يعرض الصورة الثابتة [bitmap].
+ * (الثابتة تبقى ظاهرة لحد ما ينزل الـ GIF)
  */
 @Composable
-fun AnimatedB64Image(
-    b64: String,
+fun AnimatedBannerImage(
+    gif: File?,
     bitmap: ImageBitmap?,
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop
 ) {
+    if (gif != null) AnimatedGifImage(gif, modifier, contentScale, key = gif.path)
+    else if (bitmap != null) Image(bitmap, null, modifier, contentScale = contentScale)
+}
+
+/** ينزّل (أو يقرأ من الكاش) GIF بانر مستخدم. null = ما فيه GIF أو لسا ينزل */
+@Composable
+fun rememberBannerGif(uid: String, v: Long): File? {
     val ctx = LocalContext.current
-    if (GifUtil.isGifB64(b64)) {
-        val file by produceState<File?>(null, b64) {
-            value = withContext(Dispatchers.IO) { runCatching { GifUtil.fileForB64(ctx, b64) }.getOrNull() }
+    val f by produceState<File?>(null, uid, v) {
+        value = if (v <= 0L || uid.isBlank()) null
+        else withContext(Dispatchers.IO) {
+            runCatching { com.chatapp.messenger.Repo.bannerGifFile(ctx.cacheDir, uid, v) }.getOrNull()
         }
-        val f = file
-        if (f != null) AnimatedGifImage(f, modifier, contentScale, key = b64.length)
-        else if (bitmap != null) Image(bitmap, null, modifier, contentScale = contentScale)
-    } else if (bitmap != null) {
-        Image(bitmap, null, modifier, contentScale = contentScale)
     }
+    return f
 }

@@ -126,6 +126,16 @@
         }
       }
     },
+    "bannerGifs": {
+      "$uid": {
+        ".read": "auth != null && auth.token.email_verified === true && (auth.uid === $uid || !root.child('blocks').child($uid).child(auth.uid).exists())",
+        ".write": "auth != null && auth.token.email_verified === true && auth.uid === $uid",
+        ".validate": "newData.hasChildren(['v', 'data']) && newData.child('v').isNumber() && newData.child('data').isString() && newData.child('data').val().length <= 8400000",
+        "v": { ".validate": "newData.isNumber()" },
+        "data": { ".validate": "newData.isString()" },
+        "$other": { ".validate": false }
+      }
+    },
     "typing": {
       "$chatId": {
         ".read": "auth != null && auth.token.email_verified === true && ($chatId.beginsWith(auth.uid + '_') || $chatId.endsWith('_' + auth.uid))",

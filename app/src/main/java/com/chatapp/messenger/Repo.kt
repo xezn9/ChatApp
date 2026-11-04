@@ -215,6 +215,8 @@ data class Profile(
     val bio: String = "",
     val avatar: String = "",
     val banner: String = "",
+    /** رقم نسخة GIF البانر المخزّن بـ RTDB (0 = ما فيه GIF، البانر صورة ثابتة) */
+    val bannerGifV: Long = 0L,
     val story: Story? = null,
     val status: Status? = null,
     /** شكل فقاعات الرسائل المختار (يطبق على كل محادثات المستخدم ويظهر للطرفين) */
@@ -1301,6 +1303,7 @@ object Repo {
                         bio = d.getString("bio") ?: "",
                         avatar = d.getString("avatar") ?: "",
                         banner = d.getString("banner") ?: "",
+                        bannerGifV = d.getLong("bannerGifV") ?: 0L,
                         story = null,
                         status = status,
                         bubbleStyle = d.getString("bubbleStyle") ?: "glass",
@@ -1407,7 +1410,7 @@ object Repo {
     }
 
     /** حفظ الاسم/اليوزر/النبذة/الصور. الصور نص base64 مضغوط */
-    suspend fun saveProfileInfo(name: String, username: String, bio: String, avatar: String, banner: String) {
+    suspend fun saveProfileInfo(name: String, username: String, bio: String, avatar: String, banner: String, bannerGifV: Long = 0L) {
         val u = auth.currentUser ?: return
         val old = db.collection("profiles").document(u.uid).get().await().getString("username") ?: ""
         val finalUser = username.ifBlank { old }
@@ -1416,7 +1419,7 @@ object Repo {
             if (!claimUsername(u.uid, finalUser, old)) throw Exception("اليوزر محجوز، اختر غيره")
         }
         db.collection("profiles").document(u.uid).set(
-            mapOf("name" to name, "username" to finalUser, "bio" to bio, "avatar" to avatar, "banner" to banner),
+            mapOf("name" to name, "username" to finalUser, "bio" to bio, "avatar" to avatar, "banner" to banner, "bannerGifV" to bannerGifV),
             SetOptions.merge()
         ).await()
         db.collection("users").document(u.uid).set(mapOf("name" to name, "username" to finalUser), SetOptions.merge()).await()
@@ -1424,6 +1427,46 @@ object Repo {
         u.updateProfile(
             com.google.firebase.auth.UserProfileChangeRequest.Builder().setDisplayName(name).build()
         ).await()
+    }
+
+    // ---------- GIF البانر (يتخزن بـ Realtime Database لأن حد الكتابة فيه 10MB، بدل 1MB بـ Firestore) ----------
+
+    /** يرفع GIF البانر ويرجع رقم نسخته (يُحفظ بالبروفايل حتى الأجهزة تعرف متى تنزّل من جديد) */
+    suspend fun uploadBannerGif(bytes: ByteArray): Long {
+        val u = auth.currentUser ?: throw IllegalStateException("لازم تسجّل دخول")
+        val v = System.currentTimeMillis()
+        val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+        withTimeout(120_000) {
+            rtdb.getReference("bannerGifs/${u.uid}").setValue(mapOf("v" to v, "data" to b64)).await()
+        }
+        return v
+    }
+
+    suspend fun deleteBannerGif() {
+        val u = auth.currentUser ?: return
+        runCatching { withTimeout(20_000) { rtdb.getReference("bannerGifs/${u.uid}").removeValue().await() } }
+    }
+
+    /**
+     * ينزّل GIF بانر [uid] مرة وحدة لكل نسخة [v] ويخزنه بالكاش. المرات الجاية يقرأ من الملف بدون إنترنت.
+     * يرجع null إذا ما انقرى (حظر، لا إنترنت...) فيبقى البانر الثابت ظاهر.
+     */
+    suspend fun bannerGifFile(cacheDir: java.io.File, uid: String, v: Long): java.io.File? {
+        val dir = java.io.File(cacheDir, "gif_banners").apply { mkdirs() }
+        val cached = java.io.File(dir, "u_${uid}_$v.gif")
+        if (cached.exists() && cached.length() > 0) return cached
+        val snap = withTimeout(120_000) { rtdb.getReference("bannerGifs/$uid").get().await() }
+        val data = snap.child("data").getValue(String::class.java) ?: return null
+        val real = snap.child("v").getValue(Long::class.java) ?: v
+        val bytes = android.util.Base64.decode(data, android.util.Base64.NO_WRAP)
+        // نحذف النسخ القديمة لهذا المستخدم
+        dir.listFiles { f -> f.name.startsWith("u_${uid}_") }?.forEach { it.delete() }
+        val out = java.io.File(dir, "u_${uid}_$real.gif")
+        val tmp = java.io.File(dir, out.name + ".tmp")
+        tmp.writeBytes(bytes)
+        if (!tmp.renameTo(out)) { tmp.delete(); return null }
+        com.chatapp.messenger.ui.GifUtil.trimCache(dir)
+        return out
     }
 
     /** نشر القصة: تنكتب بوثيقة محمية storyData/<uid> (للأصدقاء فقط) + فهرس عام `stories/<uid>` يحتوي الوقت فقط */
