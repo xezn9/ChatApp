@@ -16,6 +16,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -530,11 +533,11 @@ private fun renderShareImage(
     f
 }.getOrNull()
 
-/* ───────────────────────── الشاشة (Liquid Glass) ───────────────────────── */
+/* ───────────────────────── الشاشة (تصميم جديد: ماسح زجاجي) ───────────────────────── */
 
-private enum class QrSheet { None, Brush, Share }
+private enum class QrSheet { None, Bg, Share }
 
-/** ضغطة بنابض (نفس إحساس GlassButton): يكبر شوي لما تضغط ويرجع بسبرنغ */
+/** ضغطة بنابض (نفس إحساس GlassButton) */
 @Composable
 private fun Modifier.springClickable(pressScale: Float = 1.04f, onClick: () -> Unit): Modifier {
     val src = remember { MutableInteractionSource() }
@@ -556,7 +559,6 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
     val fontFam = QrFont.family ?: FontFamily.Default
     LaunchedEffect(Unit) { QrFont.ensure(ctx) }
 
-    // الثيم: from = القديم، to = الجديد. reveal 0→1 = حركة الانتقال
     var fromIdx by remember { mutableIntStateOf(QrStyle.loadTheme(ctx)) }
     var toIdx by remember { mutableIntStateOf(fromIdx) }
     val reveal = remember { Animatable(1f) }
@@ -569,9 +571,10 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
     var bgKey by remember { mutableStateOf(QrStyle.loadBg(ctx)) }
     var customBgs by remember { mutableStateOf(QrStyle.customBgs(ctx)) }
     var sheet by remember { mutableStateOf(QrSheet.None) }
-    var lastSheet by remember { mutableStateOf(QrSheet.Brush) }
+    var lastSheet by remember { mutableStateOf(QrSheet.Bg) }
     if (sheet != QrSheet.None) lastSheet = sheet
     var busyImage by remember { mutableStateOf(false) }
+    var copied by remember { mutableStateOf(false) }
 
     val bgImage by produceState<ImageBitmap?>(null, bgKey) {
         value = if (!bgKey.startsWith("img:")) null else withContext(Dispatchers.IO) {
@@ -586,7 +589,7 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
         toIdx = i
         QrStyle.saveTheme(ctx, i)
         scope.launch { reveal.snapTo(0f); reveal.animateTo(1f, tween(950, easing = FastOutSlowInEasing)) }
-        scope.launch { pulse.snapTo(0.93f); pulse.animateTo(1f, spring(0.38f, 240f)) }
+        scope.launch { pulse.snapTo(0.94f); pulse.animateTo(1f, spring(0.38f, 240f)) }
     }
     fun pickBg(k: String) { bgKey = k; QrStyle.saveBg(ctx, k) }
 
@@ -603,36 +606,37 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
     BackHandler(onBack = onDismiss)
     BackHandler(enabled = sheet != QrSheet.None) { sheet = QrSheet.None }
 
+    LaunchedEffect(copied) { if (copied) { delay(1600); copied = false } }
+
     val bd = rememberLayerBackdrop()
     val ffrom = themeAt(fromIdx)
     val fto = themeAt(toIdx)
+    val accent by animateColorAsState(fto.qrTop, tween(700), label = "accent")
 
-    // ── أنيميشن الدخول المتتابع (بطاقة ← صورة ← نصوص ← أزرار) ──
-    val enterCard = remember { Animatable(0f) }
-    val enterAvatar = remember { Animatable(0f) }
-    val enterText = remember { Animatable(0f) }
-    val enterActions = remember { Animatable(0f) }
+    // دخول متتابع
+    val eHead = remember { Animatable(0f) }
+    val ePanel = remember { Animatable(0f) }
+    val eStrip = remember { Animatable(0f) }
+    val eDock = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
-        launch { enterCard.animateTo(1f, spring(0.72f, Spring.StiffnessMediumLow)) }
-        launch { delay(120); enterAvatar.animateTo(1f, spring(0.5f, Spring.StiffnessLow)) }
-        launch { delay(220); enterText.animateTo(1f, spring(0.8f, Spring.StiffnessMediumLow)) }
-        launch { delay(320); enterActions.animateTo(1f, spring(0.7f, Spring.StiffnessMediumLow)) }
+        launch { eHead.animateTo(1f, spring(0.75f, Spring.StiffnessMediumLow)) }
+        launch { delay(90); ePanel.animateTo(1f, spring(0.68f, Spring.StiffnessMediumLow)) }
+        launch { delay(200); eStrip.animateTo(1f, spring(0.75f, Spring.StiffnessMediumLow)) }
+        launch { delay(290); eDock.animateTo(1f, spring(0.7f, Spring.StiffnessMediumLow)) }
     }
 
-    // ── حركات مستمرة: لمعة تمر على الزجاج + طفو خفيف + حلقة دوّارة حول الصورة ──
+    // حركات مستمرة
     val infinite = rememberInfiniteTransition(label = "qrIdle")
-    val shimmer by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(4200, easing = LinearEasing), RepeatMode.Restart), label = "shimmer")
-    val floatY by infinite.animateFloat(-1f, 1f, infiniteRepeatable(tween(3200, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "float")
+    val scan by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(2600, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "scan")
+    val breath by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(1500, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "breath")
+    val shimmer by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(4600, easing = LinearEasing), RepeatMode.Restart), label = "shimmer")
     val ringAngle by infinite.animateFloat(0f, 360f, infiniteRepeatable(tween(7000, easing = LinearEasing), RepeatMode.Restart), label = "ring")
 
-    // لمس البطاقة: ضوء يتبع الإصبع + ميلان ثلاثي الأبعاد + تكبير (نفس InteractiveHighlight تبع التابات)
-    val hl = remember(scope) { InteractiveHighlight(animationScope = scope) }
-    val tint by animateColorAsState(fto.qrTop, tween(700), label = "qrTint")
-
-    val cardShape = RoundedCornerShape(38.dp)
+    val panelHl = remember(scope) { InteractiveHighlight(animationScope = scope) }
+    val dockHl = remember(scope) { InteractiveHighlight(animationScope = scope) }
+    val panelShape = RoundedCornerShape(40.dp)
 
     Box(Modifier.fillMaxSize()) {
-        // الخلفية: تدرج + حركة الانتشار + نمط/صورة (هي المصدر الي يكسره الزجاج)
         Canvas(
             Modifier.fillMaxSize().layerBackdrop(bd).onGloballyPositioned {
                 bgPos = it.positionInRoot()
@@ -647,151 +651,25 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
             Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { } }
                 .statusBarsPadding().navigationBarsPadding()
         ) {
-            // لما تنفتح لوحة التخصيص نصغّر المحتوى حتى تبين المعاينة فوقها
-            val contentScale by animateFloatAsState(if (sheet != QrSheet.None) 0.66f else 1f, spring(0.85f, 300f), label = "qrScale")
+            val contentScale by animateFloatAsState(if (sheet != QrSheet.None) 0.62f else 1f, spring(0.85f, 300f), label = "qrScale")
             Column(
                 Modifier.fillMaxSize()
                     .graphicsLayer { scaleX = contentScale; scaleY = contentScale; transformOrigin = TransformOrigin(0.5f, 0f) }
                     .verticalScroll(rememberScrollState())
-                    .padding(top = 68.dp, bottom = 24.dp, start = 26.dp, end = 26.dp),
+                    .padding(top = 70.dp, bottom = 18.dp, start = 18.dp, end = 18.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Box(Modifier.widthIn(max = 380.dp).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
-
-                    // ───── البطاقة الزجاجية ─────
-                    Column(
-                        Modifier
-                            .padding(top = 54.dp)
-                            .fillMaxWidth()
-                            .graphicsLayer {
-                                val e = enterCard.value
-                                val p = hl.pressProgress
-                                val s = (0.80f + 0.20f * e) * pulse.value * (1f + 0.03f * p)
-                                scaleX = s; scaleY = s
-                                alpha = e.coerceIn(0f, 1f)
-                                translationY = floatY * 3.dp.toPx() + (1f - e) * 70.dp.toPx()
-                                cameraDistance = 16f * density
-                                val w = size.width.coerceAtLeast(1f)
-                                val h = size.height.coerceAtLeast(1f)
-                                rotationY = (hl.offset.x / w) * 16f
-                                rotationX = -(hl.offset.y / h) * 16f
-                            }
-                            .then(hl.gestureModifier)
-                            .drawBackdrop(
-                                backdrop = bd,
-                                shape = { cardShape },
-                                effects = {
-                                    vibrancy()
-                                    blur((10f.dp.toPx()) * GlassFx.blurK)
-                                    lens((12f.dp.toPx()) * GlassFx.refractK, (24f.dp.toPx()) * GlassFx.refractK)
-                                },
-                                highlight = { Highlight.Default.copy(alpha = 0.55f + 0.45f * hl.pressProgress) },
-                                shadow = { Shadow(radius = 26.dp, color = Color.Black.copy(alpha = 0.22f)) },
-                                innerShadow = {
-                                    val p = hl.pressProgress
-                                    InnerShadow(radius = 10.dp * (0.5f + 0.5f * p), alpha = 0.30f + 0.30f * p)
-                                },
-                                onDrawSurface = {
-                                    glassSurfaceLayer { drawRect(Color.White.copy(0.13f)) }
-                                    // لمعة قطرية تمر ببطء على الزجاج
-                                    val w = size.width
-                                    val x = -w * 0.6f + (w * 2.2f) * shimmer
-                                    drawRect(
-                                        Brush.linearGradient(
-                                            listOf(Color.Transparent, Color.White.copy(0.26f), Color.Transparent),
-                                            start = Offset(x - w * 0.22f, 0f),
-                                            end = Offset(x + w * 0.22f, size.height * 0.55f)
-                                        )
-                                    )
-                                }
-                            )
-                            .then(hl.modifier)
-                            .padding(start = 20.dp, end = 20.dp, top = 62.dp, bottom = 20.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        // الاسم + اليوزر
-                        Column(
-                            Modifier.graphicsLayer {
-                                alpha = enterText.value.coerceIn(0f, 1f)
-                                translationY = (1f - enterText.value) * 18.dp.toPx()
-                            },
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                name.ifBlank { "حسابي" }, color = Color.White, fontSize = 26.sp,
-                                fontFamily = fontFam, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center
-                            )
-                            if (username.isNotBlank()) {
-                                Text(
-                                    "@$username", color = Color.White, fontSize = 15.sp, fontFamily = fontFam, fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(top = 8.dp).clip(RoundedCornerShape(50))
-                                        .background(Color.White.copy(0.20f))
-                                        .border(0.8.dp, Color.White.copy(0.30f), RoundedCornerShape(50))
-                                        .padding(horizontal = 16.dp, vertical = 5.dp)
-                                )
-                            }
-                        }
-                        Spacer(Modifier.height(18.dp))
-
-                        // لوحة الباركود: بيضاء صلبة حتى يبقى المسح سهل ومضمون فوق الزجاج
-                        Box(
-                            Modifier
-                                .graphicsLayer {
-                                    val e = enterText.value
-                                    scaleX = 0.9f + 0.1f * e; scaleY = 0.9f + 0.1f * e
-                                    alpha = e.coerceIn(0f, 1f)
-                                }
-                                .shadow(18.dp, RoundedCornerShape(28.dp), ambientColor = Color.Black.copy(0.3f), spotColor = Color.Black.copy(0.3f))
-                                .clip(RoundedCornerShape(28.dp)).background(Color.White)
-                                .padding(14.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            val mx = matrix
-                            Box(contentAlignment = Alignment.Center) {
-                                if (mx != null) {
-                                    Canvas(Modifier.size(236.dp).onGloballyPositioned { qrPos = it.positionInRoot() }) {
-                                        val ob = origin - bgPos
-                                        val rMax = maxOf(
-                                            hypot(ob.x, ob.y), hypot(bgSize.width - ob.x, ob.y),
-                                            hypot(ob.x, bgSize.height - ob.y), hypot(bgSize.width - ob.x, bgSize.height - ob.y)
-                                        ).coerceAtLeast(1f)
-                                        drawQr(mx, size.width, ffrom, fto, reveal.value, origin - qrPos, rMax)
-                                    }
-                                    Box(
-                                        Modifier.size(60.dp).clip(RoundedCornerShape(18.dp)).background(Color.White),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Image(
-                                            painter = painterResource(ThemeSettings.icons[ThemeSettings.iconIndex].previewRes),
-                                            contentDescription = null, contentScale = ContentScale.Crop,
-                                            modifier = Modifier.size(52.dp).clip(RoundedCornerShape(14.dp))
-                                        )
-                                    }
-                                } else {
-                                    Spacer(Modifier.size(236.dp))
-                                }
-                            }
-                        }
-
-                        Text(
-                            "امسح الباركود بكاميرا الجوال أو كوكل ليفتح حسابي بالتطبيق",
-                            color = Color.White.copy(0.80f), fontSize = 12.5.sp, fontFamily = fontFam, textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(top = 16.dp, start = 8.dp, end = 8.dp).graphicsLayer {
-                                alpha = enterText.value.coerceIn(0f, 1f)
-                            }
-                        )
-                    }
-
-                    // ───── الصورة الشخصية: كرة زجاجية + حلقة ضوء تدور ─────
+                // ───── 1) رأس أفقي: صورة + اسم ─────
+                Row(
+                    Modifier.widthIn(max = 420.dp).fillMaxWidth().padding(horizontal = 6.dp)
+                        .graphicsLayer {
+                            alpha = eHead.value.coerceIn(0f, 1f)
+                            translationY = (1f - eHead.value) * -40.dp.toPx()
+                        },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Box(
-                        Modifier.size(108.dp)
-                            .graphicsLayer {
-                                val e = enterAvatar.value
-                                val s = 0.3f + 0.7f * e
-                                scaleX = s; scaleY = s
-                                alpha = e.coerceIn(0f, 1f)
-                                translationY = floatY * 3.dp.toPx() + (1f - e) * 40.dp.toPx()
-                            }
+                        Modifier.size(72.dp)
                             .drawBackdrop(
                                 backdrop = bd,
                                 shape = { CircleShape },
@@ -801,8 +679,8 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                                     lens((10f.dp.toPx()) * GlassFx.refractK, (20f.dp.toPx()) * GlassFx.refractK, chromaticAberration = true)
                                 },
                                 highlight = { Highlight.Default },
-                                shadow = { Shadow(radius = 14.dp, color = Color.Black.copy(alpha = 0.25f)) },
-                                innerShadow = { InnerShadow(radius = 6.dp, alpha = 0.35f) },
+                                shadow = { Shadow(radius = 12.dp, color = Color.Black.copy(alpha = 0.25f)) },
+                                innerShadow = { InnerShadow(radius = 5.dp, alpha = 0.35f) },
                                 onDrawSurface = { drawRect(Color.White.copy(0.28f)) }
                             )
                             .drawBehind {
@@ -816,7 +694,7 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                             },
                         contentAlignment = Alignment.Center
                     ) {
-                        Box(Modifier.size(90.dp).clip(CircleShape), contentAlignment = Alignment.Center) {
+                        Box(Modifier.size(62.dp).clip(CircleShape), contentAlignment = Alignment.Center) {
                             val a = avatarImg
                             if (a != null) {
                                 Image(bitmap = a, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
@@ -825,46 +703,222 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                                     Modifier.fillMaxSize().background(Brush.linearGradient(listOf(fto.qrTop, fto.qrBottom))),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text(
-                                        name.trim().take(1).ifBlank { "؟" }, color = Color.White,
-                                        fontSize = 38.sp, fontFamily = fontFam, fontWeight = FontWeight.Bold
-                                    )
+                                    Text(name.trim().take(1).ifBlank { "؟" }, color = Color.White, fontSize = 26.sp, fontFamily = fontFam, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
                     }
-                }
-
-                Spacer(Modifier.height(26.dp))
-                // ───── أزرار زجاجية ─────
-                Row(
-                    Modifier.widthIn(max = 380.dp).fillMaxWidth().graphicsLayer {
-                        val e = enterActions.value
-                        alpha = e.coerceIn(0f, 1f)
-                        translationY = (1f - e) * 40.dp.toPx()
-                    },
-                    horizontalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    GlassButton(
-                        onClick = { sheet = QrSheet.Brush }, backdrop = bd, pressScale = 1.07f,
-                        modifier = Modifier.weight(1f).height(56.dp)
-                    ) {
-                        Icon(AppIcons.PaintBrush, null, tint = Color.White, modifier = Modifier.size(22.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("التصميم", color = Color.White, fontSize = 15.sp, fontFamily = fontFam, fontWeight = FontWeight.Bold)
+                    Column(Modifier.padding(start = 14.dp).weight(1f)) {
+                        Text(
+                            name.ifBlank { "حسابي" }, color = Color.White, fontSize = 24.sp, maxLines = 1,
+                            fontFamily = fontFam, fontWeight = FontWeight.ExtraBold
+                        )
+                        if (username.isNotBlank()) {
+                            Text(
+                                "@$username", color = Color.White.copy(0.9f), fontSize = 14.sp, fontFamily = fontFam, fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(top = 4.dp).clip(RoundedCornerShape(50))
+                                    .background(Color.White.copy(0.20f))
+                                    .border(0.8.dp, Color.White.copy(0.30f), RoundedCornerShape(50))
+                                    .padding(horizontal = 12.dp, vertical = 3.dp)
+                            )
+                        }
                     }
-                    GlassButton(
-                        onClick = { sheet = QrSheet.Share }, backdrop = bd, tint = tint, pressScale = 1.07f,
-                        modifier = Modifier.weight(1f).height(56.dp)
+                }
+                Spacer(Modifier.height(18.dp))
+
+                // ───── 2) لوح الماسح: زجاج مصقّع كبير بعرض الشاشة ─────
+                Column(
+                    Modifier.widthIn(max = 420.dp).fillMaxWidth()
+                        .graphicsLayer {
+                            val e = ePanel.value
+                            val p = panelHl.pressProgress
+                            val s = (0.84f + 0.16f * e) * pulse.value * (1f + 0.025f * p)
+                            scaleX = s; scaleY = s
+                            alpha = e.coerceIn(0f, 1f)
+                            translationY = (1f - e) * 80.dp.toPx()
+                            cameraDistance = 16f * density
+                            val w = size.width.coerceAtLeast(1f)
+                            val h = size.height.coerceAtLeast(1f)
+                            rotationY = (panelHl.offset.x / w) * 14f
+                            rotationX = -(panelHl.offset.y / h) * 14f
+                        }
+                        .then(panelHl.gestureModifier)
+                        .drawBackdrop(
+                            backdrop = bd,
+                            shape = { panelShape },
+                            effects = {
+                                vibrancy()
+                                blur((18f.dp.toPx()) * GlassFx.blurK)
+                                lens((14f.dp.toPx()) * GlassFx.refractK, (28f.dp.toPx()) * GlassFx.refractK)
+                            },
+                            highlight = { Highlight.Default.copy(alpha = 0.6f + 0.4f * panelHl.pressProgress) },
+                            shadow = { Shadow(radius = 28.dp, color = Color.Black.copy(alpha = 0.25f)) },
+                            innerShadow = { InnerShadow(radius = 10.dp, alpha = 0.25f + 0.3f * panelHl.pressProgress) },
+                            onDrawSurface = {
+                                // زجاج مصقّع فاتح حتى يبقى الباركود الغامق واضح ويتمسح
+                                glassSurfaceLayer { drawRect(Color.White.copy(0.80f)) }
+                                val w = size.width
+                                val x = -w * 0.6f + (w * 2.2f) * shimmer
+                                drawRect(
+                                    Brush.linearGradient(
+                                        listOf(Color.Transparent, Color.White.copy(0.55f), Color.Transparent),
+                                        start = Offset(x - w * 0.2f, 0f), end = Offset(x + w * 0.2f, size.height * 0.5f)
+                                    )
+                                )
+                            }
+                        )
+                        .then(panelHl.modifier)
+                        .padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Box(Modifier.fillMaxWidth().aspectRatio(1f), contentAlignment = Alignment.Center) {
+                        val mx = matrix
+                        if (mx != null) {
+                            Canvas(Modifier.fillMaxSize().padding(16.dp).onGloballyPositioned { qrPos = it.positionInRoot() }) {
+                                val ob = origin - bgPos
+                                val rMax = maxOf(
+                                    hypot(ob.x, ob.y), hypot(bgSize.width - ob.x, ob.y),
+                                    hypot(ob.x, bgSize.height - ob.y), hypot(bgSize.width - ob.x, bgSize.height - ob.y)
+                                ).coerceAtLeast(1f)
+                                drawQr(mx, size.width, ffrom, fto, reveal.value, origin - qrPos, rMax)
+                            }
+                            Box(
+                                Modifier.fillMaxWidth(0.21f).aspectRatio(1f).clip(RoundedCornerShape(20.dp)).background(Color.White),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Image(
+                                    painter = painterResource(ThemeSettings.icons[ThemeSettings.iconIndex].previewRes),
+                                    contentDescription = null, contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize(0.88f).clip(RoundedCornerShape(16.dp))
+                                )
+                            }
+                        }
+                        // زوايا الماسح (تتنفس) + خط مسح يطلع وينزل
+                        Canvas(Modifier.fillMaxSize()) {
+                            val inset = (1.dp.toPx()) + breath * 5.dp.toPx()
+                            val len = 34.dp.toPx()
+                            val sw = 4.5f.dp.toPx()
+                            val c = accent
+                            fun corner(x: Float, y: Float, dx: Float, dy: Float) {
+                                drawLine(c, Offset(x, y), Offset(x + dx * len, y), sw, StrokeCap.Round)
+                                drawLine(c, Offset(x, y), Offset(x, y + dy * len), sw, StrokeCap.Round)
+                            }
+                            corner(inset, inset, 1f, 1f)
+                            corner(size.width - inset, inset, -1f, 1f)
+                            corner(inset, size.height - inset, 1f, -1f)
+                            corner(size.width - inset, size.height - inset, -1f, -1f)
+                            val pad = 16.dp.toPx()
+                            val y = pad + (size.height - pad * 2) * scan
+                            val tail = 70.dp.toPx()
+                            val top = (y - tail).coerceAtLeast(pad)
+                            drawRect(
+                                Brush.verticalGradient(listOf(Color.Transparent, c.copy(alpha = 0.28f)), startY = y - tail, endY = y),
+                                topLeft = Offset(pad, top), size = Size(size.width - pad * 2, y - top)
+                            )
+                            drawLine(c.copy(alpha = 0.85f), Offset(pad, y), Offset(size.width - pad, y), 3.dp.toPx(), StrokeCap.Round)
+                        }
+                    }
+                    Text(
+                        "امسح الباركود بكاميرا الجوال أو كوكل ليفتح حسابي بالتطبيق",
+                        color = Color(0xFF1B1F27).copy(0.72f), fontSize = 12.5.sp, fontFamily = fontFam,
+                        textAlign = TextAlign.Center, modifier = Modifier.padding(top = 10.dp)
+                    )
+                }
+                Spacer(Modifier.height(16.dp))
+
+                // ───── 3) شريط الألوان الزجاجي (ثابت، بدون لوحة) ─────
+                val stripState = rememberLazyListState(initialFirstVisibleItemIndex = (toIdx - 2).coerceAtLeast(0))
+                Box(
+                    Modifier.widthIn(max = 420.dp).fillMaxWidth().height(66.dp)
+                        .graphicsLayer {
+                            alpha = eStrip.value.coerceIn(0f, 1f)
+                            translationY = (1f - eStrip.value) * 50.dp.toPx()
+                        }
+                        .drawBackdrop(
+                            backdrop = bd,
+                            shape = { Capsule() },
+                            effects = {
+                                vibrancy()
+                                blur((8f.dp.toPx()) * GlassFx.blurK)
+                                lens((16f.dp.toPx()) * GlassFx.refractK, (24f.dp.toPx()) * GlassFx.refractK)
+                            },
+                            highlight = { Highlight.Default.copy(alpha = 0.7f) },
+                            shadow = { Shadow(radius = 14.dp, color = Color.Black.copy(alpha = 0.18f)) },
+                            onDrawSurface = { glassSurfaceLayer { drawRect(Color.Black.copy(0.20f)) } }
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    LazyRow(
+                        state = stripState,
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(AppIcons.Share, null, tint = Color.White, modifier = Modifier.size(22.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("مشاركة", color = Color.White, fontSize = 15.sp, fontFamily = fontFam, fontWeight = FontWeight.Bold)
+                        items(qrThemeCount) { i ->
+                            val t = themeAt(i)
+                            var center by remember { mutableStateOf(Offset.Zero) }
+                            val sel = i == toIdx
+                            val ring by animateFloatAsState(if (sel) 1f else 0f, spring(0.55f, 420f), label = "sw$i")
+                            Box(
+                                Modifier.size(42.dp)
+                                    .springClickable(1.16f) { pickTheme(i, center) }
+                                    .graphicsLayer { val s = 1f + 0.14f * ring; scaleX = s; scaleY = s }
+                                    .clip(CircleShape)
+                                    .background(Brush.linearGradient(listOf(t.bgTop, t.bgBottom)))
+                                    .border((1f + 2.2f * ring).dp, Color.White.copy(0.35f + 0.65f * ring), CircleShape)
+                                    .onGloballyPositioned { c -> center = c.positionInRoot() + Offset(c.size.width / 2f, c.size.height / 2f) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (sel) Icon(
+                                    Icons.Filled.Check, null, tint = Color.White,
+                                    modifier = Modifier.size(20.dp).graphicsLayer { scaleX = ring; scaleY = ring }
+                                )
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+
+                // ───── 4) دوك زجاجي سفلي: التوهج يمشي مع إصبعك ─────
+                Row(
+                    Modifier.widthIn(max = 420.dp).fillMaxWidth().height(72.dp)
+                        .graphicsLayer {
+                            alpha = eDock.value.coerceIn(0f, 1f)
+                            translationY = (1f - eDock.value) * 70.dp.toPx()
+                            val p = dockHl.pressProgress
+                            val s = 1f + 0.03f * p
+                            scaleX = s; scaleY = s
+                        }
+                        .then(dockHl.gestureModifier)
+                        .drawBackdrop(
+                            backdrop = bd,
+                            shape = { Capsule() },
+                            effects = {
+                                vibrancy()
+                                blur((8f.dp.toPx()) * GlassFx.blurK)
+                                lens((24f.dp.toPx()) * GlassFx.refractK, (24f.dp.toPx()) * GlassFx.refractK)
+                            },
+                            highlight = { Highlight.Default.copy(alpha = 0.6f + 0.4f * dockHl.pressProgress) },
+                            shadow = { Shadow(radius = 18.dp, color = Color.Black.copy(alpha = 0.22f)) },
+                            innerShadow = { InnerShadow(radius = 8.dp * dockHl.pressProgress, alpha = dockHl.pressProgress) },
+                            onDrawSurface = { glassSurfaceLayer { drawRect(Color.White.copy(0.16f)) } }
+                        )
+                        .then(dockHl.modifier)
+                        .padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    DockItem(AppIcons.PaintBrush, "الخلفية", fontFam, Modifier.weight(1f)) { sheet = QrSheet.Bg }
+                    DockItem(AppIcons.Share, "مشاركة", fontFam, Modifier.weight(1f)) { sheet = QrSheet.Share }
+                    DockItem(if (copied) Icons.Filled.Check else AppIcons.CopyIcon, if (copied) "اننسخ" else "نسخ", fontFam, Modifier.weight(1f), highlight = copied) {
+                        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        cm.setPrimaryClip(ClipData.newPlainText("link", link))
+                        copied = true
                     }
                 }
             }
 
-            // ───── اللوحة السفلية الزجاجية (تصميم / مشاركة) ─────
+            // ───── لوحة سفلية زجاجية (خلفية / مشاركة) ─────
             val sheetShape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp)
             AnimatedVisibility(
                 visible = sheet != QrSheet.None,
@@ -895,10 +949,9 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                             .clip(RoundedCornerShape(2.dp)).background(Color.White.copy(0.35f))
                     )
                     Spacer(Modifier.height(12.dp))
-                    if (lastSheet == QrSheet.Brush) {
-                        BrushSheet(
-                            bd = bd, fontFam = fontFam, selectedTheme = toIdx, bgKey = bgKey, customBgs = customBgs,
-                            onTheme = { i, at -> pickTheme(i, at) },
+                    if (lastSheet == QrSheet.Bg) {
+                        BgSheet(
+                            bd = bd, fontFam = fontFam, theme = themeAt(toIdx), bgKey = bgKey, customBgs = customBgs,
                             onBg = { pickBg(it) },
                             onAddBg = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                             onDeleteBg = { f ->
@@ -953,7 +1006,6 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                 }
             }
 
-            // زر الخروج: زجاجي، آخر عنصر (فوق كل شي)
             GlassButton(
                 onClick = onDismiss, backdrop = bd, pressScale = 1.15f,
                 modifier = Modifier.align(Alignment.TopStart).padding(start = 14.dp, top = 10.dp).zIndex(10f).size(48.dp)
@@ -964,129 +1016,67 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
     }
 }
 
-/** تبويب زجاجي: المؤشر ينزلق بنابض وعليه عدسة + لمعة (نفس تابات التطبيق) */
+/** عنصر الدوك: أيقونة + نص تحتها، ضغطة بنابض */
 @Composable
-private fun GlassSegmented(
-    bd: com.kyant.backdrop.Backdrop, labels: List<String>, selected: Int, fontFam: FontFamily,
-    onSelect: (Int) -> Unit, modifier: Modifier = Modifier
+private fun DockItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, fontFam: FontFamily,
+    modifier: Modifier = Modifier, highlight: Boolean = false, onClick: () -> Unit
 ) {
-    val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
-    val pos by animateFloatAsState(selected.toFloat(), spring(0.72f, 420f), label = "seg")
-    Box(
-        modifier.height(42.dp).clip(CircleShape)
-            .background(Color.White.copy(0.10f))
-            .border(0.8.dp, Color.White.copy(0.18f), CircleShape)
-            .padding(3.dp)
+    val pop by animateFloatAsState(if (highlight) 1.18f else 1f, spring(0.4f, 500f), label = "dockPop")
+    Column(
+        modifier.fillMaxHeight().springClickable(1.12f, onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
-        Box(
-            Modifier.align(Alignment.CenterStart).fillMaxWidth(1f / labels.size).fillMaxHeight()
-                .graphicsLayer { translationX = (if (isLtr) 1f else -1f) * pos * size.width }
-                .drawBackdrop(
-                    backdrop = bd,
-                    shape = { Capsule() },
-                    effects = {
-                        lens((6f.dp.toPx()) * GlassFx.refractK, (10f.dp.toPx()) * GlassFx.refractK, chromaticAberration = true)
-                    },
-                    highlight = { Highlight.Default.copy(alpha = 0.9f) },
-                    innerShadow = { InnerShadow(radius = 4.dp, alpha = 0.3f) },
-                    onDrawSurface = { drawRect(Color.White.copy(0.22f)) }
-                )
-        )
-        Row(Modifier.fillMaxSize()) {
-            labels.forEachIndexed { i, l ->
-                Box(
-                    Modifier.weight(1f).fillMaxHeight()
-                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onSelect(i) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        l, color = Color.White.copy(if (i == selected) 1f else 0.62f), fontSize = 14.sp,
-                        fontFamily = fontFam, fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-        }
+        Icon(icon, null, tint = Color.White, modifier = Modifier.size(25.dp).graphicsLayer { scaleX = pop; scaleY = pop })
+        Text(label, color = Color.White, fontSize = 11.5.sp, fontFamily = fontFam, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
     }
 }
 
 @Composable
-private fun BrushSheet(
-    bd: com.kyant.backdrop.Backdrop, fontFam: FontFamily, selectedTheme: Int, bgKey: String, customBgs: List<File>,
-    onTheme: (Int, Offset) -> Unit, onBg: (String) -> Unit, onAddBg: () -> Unit,
-    onDeleteBg: (File) -> Unit, onDone: () -> Unit
+private fun BgSheet(
+    bd: com.kyant.backdrop.Backdrop, fontFam: FontFamily, theme: QrTheme, bgKey: String, customBgs: List<File>,
+    onBg: (String) -> Unit, onAddBg: () -> Unit, onDeleteBg: (File) -> Unit, onDone: () -> Unit
 ) {
-    var tab by remember { mutableIntStateOf(0) }
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-        GlassSegmented(bd, listOf("الألوان", "الخلفية"), tab, fontFam, { tab = it }, Modifier.width(200.dp))
+    Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("الخلفية", color = Color.White, fontSize = 18.sp, fontFamily = fontFam, fontWeight = FontWeight.ExtraBold)
         Spacer(Modifier.weight(1f))
         GlassButton(onClick = onDone, backdrop = bd, pressScale = 1.1f, modifier = Modifier.height(40.dp).width(72.dp)) {
             Text("تم", color = Color.White, fontSize = 14.sp, fontFamily = fontFam, fontWeight = FontWeight.Bold)
         }
     }
     Spacer(Modifier.height(12.dp))
-    if (tab == 0) {
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(52.dp),
-            modifier = Modifier.fillMaxWidth().height(208.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            items(qrThemeCount) { i ->
-                val t = themeAt(i)
-                var center by remember { mutableStateOf(Offset.Zero) }
-                val sel = i == selectedTheme
-                val ring by animateFloatAsState(if (sel) 1f else 0f, spring(0.6f, 400f), label = "ring$i")
-                Box(
-                    Modifier.size(48.dp)
-                        .springClickable(1.14f) { onTheme(i, center) }
-                        .graphicsLayer { val s = 1f + 0.08f * ring; scaleX = s; scaleY = s }
-                        .clip(CircleShape)
-                        .background(Brush.linearGradient(listOf(t.bgTop, t.bgBottom)))
-                        .border((1f + 2f * ring).dp, Color.White.copy(0.3f + 0.7f * ring), CircleShape)
-                        .onGloballyPositioned { c -> center = c.positionInRoot() + Offset(c.size.width / 2f, c.size.height / 2f) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (sel) Icon(
-                        Icons.Filled.Check, null, tint = Color.White,
-                        modifier = Modifier.size(20.dp).graphicsLayer { scaleX = ring; scaleY = ring }
-                    )
+    LazyRow(
+        Modifier.fillMaxWidth().height(190.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Box(
+                Modifier.width(100.dp).fillMaxSize()
+                    .springClickable(1.04f, onAddBg)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(Color.White.copy(0.10f))
+                    .border(1.5.dp, Color.White.copy(0.35f), RoundedCornerShape(22.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(AppIcons.PlusIcon, null, tint = Color.White, modifier = Modifier.size(30.dp))
+                    Text("من عندي", color = Color.White, fontSize = 12.sp, fontFamily = fontFam, modifier = Modifier.padding(top = 6.dp))
                 }
             }
         }
-    } else {
-        val preview = themeAt(selectedTheme)
-        LazyRow(
-            Modifier.fillMaxWidth().height(208.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            item {
-                Box(
-                    Modifier.width(100.dp).fillMaxSize()
-                        .springClickable(1.04f, onAddBg)
-                        .clip(RoundedCornerShape(22.dp))
-                        .background(Color.White.copy(0.10f))
-                        .border(1.5.dp, Color.White.copy(0.35f), RoundedCornerShape(22.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(AppIcons.PlusIcon, null, tint = Color.White, modifier = Modifier.size(30.dp))
-                        Text("من عندي", color = Color.White, fontSize = 12.sp, fontFamily = fontFam, modifier = Modifier.padding(top = 6.dp))
-                    }
-                }
-            }
-            val presets = listOf("grad" to "تدرج", "p1" to "نقاط", "p2" to "حلقات", "p3" to "فقاعات")
-            items(presets.size) { i ->
-                BgTile(presets[i].first, presets[i].second, preview, bgKey == presets[i].first, null, fontFam, { onBg(presets[i].first) }, null)
-            }
-            items(customBgs.size) { i ->
-                val f = customBgs[i]
-                val k = "img:" + f.name
-                BgTile(k, "", preview, bgKey == k, f, fontFam, { onBg(k) }, { onDeleteBg(f) })
-            }
+        val presets = listOf("grad" to "تدرج", "p1" to "نقاط", "p2" to "حلقات", "p3" to "فقاعات")
+        items(presets.size) { i ->
+            BgTile(presets[i].first, presets[i].second, theme, bgKey == presets[i].first, null, fontFam, { onBg(presets[i].first) }, null)
+        }
+        items(customBgs.size) { i ->
+            val f = customBgs[i]
+            val k = "img:" + f.name
+            BgTile(k, "", theme, bgKey == k, f, fontFam, { onBg(k) }, { onDeleteBg(f) })
         }
     }
+    Spacer(Modifier.height(8.dp))
 }
 
 @Composable
@@ -1158,9 +1148,7 @@ private fun ShareRow(
             Modifier.size(42.dp).clip(CircleShape).background(Color.White.copy(0.16f))
                 .border(0.8.dp, Color.White.copy(0.25f), CircleShape),
             contentAlignment = Alignment.Center
-        ) {
-            Icon(icon, null, tint = Color.White, modifier = Modifier.size(22.dp))
-        }
+        ) { Icon(icon, null, tint = Color.White, modifier = Modifier.size(22.dp)) }
         Column(Modifier.padding(start = 14.dp)) {
             Text(title, color = Color.White, fontSize = 15.sp, fontFamily = fontFam, fontWeight = FontWeight.Bold)
             if (sub != null) Text(sub, color = Color.White.copy(0.6f), fontSize = 12.sp, fontFamily = fontFam, modifier = Modifier.padding(top = 2.dp))
