@@ -443,6 +443,29 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
             }
         }
     }
+    /** حفظ الملف بمجلد التنزيلات (ينزّله أول إذا مو موجود عندي) */
+    fun saveFileToDownloads(m: Msg) {
+        if (mediaStatus != null) return
+        val name = m.fileName.ifBlank { "file" }
+        val lf = FileUtil.localFile(ctx, m.mediaId, name)
+        scope.launch {
+            try {
+                if (!lf.exists() || lf.length() == 0L) {
+                    mediaProgress = -1f
+                    mediaStatus = "جاري تحميل الملف..."
+                    Repo.downloadMedia(me, other.uid, m.mediaId, lf) { mediaProgress = it }
+                }
+                if (FileUtil.saveToDownloads(ctx, lf, name)) AppToast.show("انحفظ الملف بمجلد التنزيلات", long = true)
+                else AppToast.show("تعذّر حفظ الملف", long = true)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppToast.show("تعذّر تحميل الملف (يمكن انحذف أو الإنترنت ضعيف)", long = true)
+            } finally {
+                mediaStatus = null
+            }
+        }
+    }
     fun openMedia(m: Msg) {
         if (mediaStatus != null) return
         // رسالة صوتية موجودة محلياً (أو تشتغل هسه): تشغيل/إيقاف مباشر بدون تحميل
@@ -1081,6 +1104,11 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                     add(MsgAction(AppIcons.Reply, "رد", Blue) { menu = null; editing = null; replyTo = mm })
                     if (mt.mine && mm.mediaType.isEmpty()) add(MsgAction(Icons.Filled.Edit, "تعديل", Color(0xFF8A5CFF)) {
                         menu = null; replyTo = null; editing = mm; text = mm.text
+                    })
+                    // حفظ الملف بمجلد التنزيلات
+                    if (mm.mediaType == "file") add(MsgAction(AppIcons.Download, "حفظ", Color(0xFF34C759)) {
+                        menu = null
+                        saveFileToDownloads(mm)
                     })
                     add(MsgAction(AppIcons.Pin, if (mm.pinned) "إلغاء التثبيت" else "تثبيت", Color(0xFFFFC107)) {
                         menu = null

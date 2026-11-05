@@ -157,6 +157,49 @@ object FileUtil {
         else -> "%.1f MB".format(b / (1024.0 * 1024.0))
     }
 
+    /** يحفظ نسخة من الملف بمجلد التنزيلات (Downloads). يرجع true إذا نجح */
+    suspend fun saveToDownloads(ctx: Context, src: File, displayName: String): Boolean =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val name = safeName(displayName)
+                val ext = name.substringAfterLast('.', "").lowercase()
+                val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
+                if (android.os.Build.VERSION.SDK_INT >= 29) {
+                    val values = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.Downloads.DISPLAY_NAME, name)
+                        put(android.provider.MediaStore.Downloads.MIME_TYPE, mime)
+                        put(android.provider.MediaStore.Downloads.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+                        put(android.provider.MediaStore.Downloads.IS_PENDING, 1)
+                    }
+                    val resolver = ctx.contentResolver
+                    val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                        ?: return@withContext false
+                    val ok = resolver.openOutputStream(uri)?.use { o -> src.inputStream().use { it.copyTo(o) }; true } ?: false
+                    if (!ok) { runCatching { resolver.delete(uri, null, null) }; return@withContext false }
+                    values.clear()
+                    values.put(android.provider.MediaStore.Downloads.IS_PENDING, 0)
+                    resolver.update(uri, values, null, null)
+                    true
+                } else {
+                    @Suppress("DEPRECATION")
+                    val dir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                    dir.mkdirs()
+                    var out = File(dir, name)
+                    var n = 1
+                    while (out.exists()) {
+                        val base = name.substringBeforeLast('.', name)
+                        val e = if (name.contains('.')) "." + name.substringAfterLast('.') else ""
+                        out = File(dir, "$base ($n)$e"); n++
+                    }
+                    src.copyTo(out)
+                    android.media.MediaScannerConnection.scanFile(ctx, arrayOf(out.absolutePath), arrayOf(mime), null)
+                    true
+                }
+            } catch (e: Exception) {
+                false
+            }
+        }
+
     /** يفتح الملف ببرنامج مناسب على الجهاز */
     fun open(ctx: Context, f: File, displayName: String) {
         try {

@@ -423,6 +423,29 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
     }
 
     /** فتح صورة/فيديو/ملف: ينزل أول مرة وينحفظ بالكاش */
+    /** حفظ الملف بمجلد التنزيلات (ينزّله أول إذا مو موجود عندي) */
+    fun saveFileToDownloads(m: GroupMsg) {
+        if (mediaStatus != null) return
+        val name = m.fileName.ifBlank { "file" }
+        val lf = FileUtil.localFile(ctx, m.mediaId, name)
+        scope.launch {
+            try {
+                if (!lf.exists() || lf.length() == 0L) {
+                    mediaProgress = -1f
+                    mediaStatus = "جاري تحميل الملف..."
+                    Repo.downloadGroupMedia(groupId, m.mediaId, lf) { mediaProgress = it }
+                }
+                if (FileUtil.saveToDownloads(ctx, lf, name)) AppToast.show("انحفظ الملف بمجلد التنزيلات", long = true)
+                else AppToast.show("تعذّر حفظ الملف", long = true)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppToast.show("تعذّر تحميل الملف (يمكن انحذف أو الإنترنت ضعيف)", long = true)
+            } finally {
+                mediaStatus = null
+            }
+        }
+    }
     fun openMedia(m: GroupMsg) {
         if (mediaStatus != null) return
         if (m.mediaType == "file") {
@@ -988,6 +1011,11 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                             Translator.toggle(scope, mm.id, mm.text)
                         })
                     }
+                    // حفظ الملف بمجلد التنزيلات
+                    if (mm.mediaType == "file") add(MsgAction(AppIcons.Download, "حفظ", Color(0xFF34C759)) {
+                        menu = null
+                        saveFileToDownloads(mm)
+                    })
                     if (a != null && a.canPin) {
                         val isPinned = pin?.id == mm.id
                         add(MsgAction(AppIcons.Pin, if (isPinned) "إلغاء التثبيت" else "تثبيت", Color(0xFFFFC107)) {
