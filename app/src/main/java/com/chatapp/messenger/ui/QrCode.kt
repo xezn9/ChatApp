@@ -16,6 +16,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.BoxWithConstraints
 import kotlin.math.cos
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -355,9 +358,12 @@ private fun DrawScope.drawQrDecor(kind: String, img: ImageBitmap?) {
  * أثناء تبديل اللون (p<1) موجة تطلع من نقطة اللمس: كل مربع ينكمش ويرجع بلونه الجديد.
  * origin وrMax بإحداثيات الباركود نفسه.
  */
+/** ظهور مع ارتداد خفيف (easeOutBack): 0→1 */
+private fun qrBackOut(t: Float): Float { val u = t - 1f; return 1f + 2.70158f * u * u * u + 1.70158f * u * u }
+
 private fun DrawScope.drawQr(
     m: Array<BooleanArray>, side: Float, from: QrTheme, to: QrTheme,
-    p: Float, origin: Offset, rMax: Float
+    p: Float, origin: Offset, rMax: Float, intro: Boolean = false
 ) {
     val n = m.size
     val cell = side / n
@@ -383,7 +389,8 @@ private fun DrawScope.drawQr(
         val cx = (x + 0.5f) * cell
         val cy = (y + 0.5f) * cell
         val t = waveT(cx, cy)
-        val s = 1f - 0.55f * sin(PI.toFloat() * t)
+        if (intro && t <= 0f) continue   // الموجة ما وصلت لهالمربع بعد
+        val s = if (intro) qrBackOut(t) else 1f - 0.55f * sin(PI.toFloat() * t)
         val w = cell * s
         addRound(if (t >= 0.5f) pTo else pFrom, cx - w / 2, cy - w / 2, w, cell * 0.32f * s)
     }
@@ -392,7 +399,8 @@ private fun DrawScope.drawQr(
         val cx = (fx + 3.5f) * cell
         val cy = (fy + 3.5f) * cell
         val t = waveT(cx, cy)
-        val s = 1f - 0.12f * sin(PI.toFloat() * t)
+        if (intro && t <= 0f) continue
+        val s = if (intro) qrBackOut(t) else 1f - 0.12f * sin(PI.toFloat() * t)
         val c = cell * s
         val ox = cx - 3.5f * c
         val oy = cy - 3.5f * c
@@ -636,30 +644,55 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
     val fto = themeAt(toIdx)
     val accent by animateColorAsState(fto.qrTop, tween(700), label = "accent")
 
-    // ── دخول: الكرة تنفخ بنابض مرتد ← القمر يطلع ← النصوص ← الفقاعات وحدة وحدة ──
+    // ───────── تسلسل الدخول ─────────
+    // 1) الباج ينفخ من قطرة صغيرة لباج كامل (مع ارتداد)  2) صورة ← اسم ← يوزر
+    // 3) قطرة تتكوّن تحت الباج وتنزل (تتمدد مثل قطرة ماي)  4) تنفجر لكرة زجاجية بتموّج وتناثر
+    // 5) لوحة الباركود تطلع وبعدها مربعاته تظهر بموجة من النص  6) الفقاعات
+    val eBadge = remember { Animatable(0f) }
+    val eAvatar = remember { Animatable(0f) }
+    val eName = remember { Animatable(0f) }
+    val eUser = remember { Animatable(0f) }
+    val dropForm = remember { Animatable(0f) }
+    val fall = remember { Animatable(0f) }
+    val landed = remember { Animatable(0f) }
+    val ripple = remember { Animatable(0f) }
     val eOrb = remember { Animatable(0f) }
-    val eSat = remember { Animatable(0f) }
-    val eText = remember { Animatable(0f) }
+    val ePlate = remember { Animatable(0f) }
+    val qrWave = remember { Animatable(0f) }
+    val eHint = remember { Animatable(0f) }
     val eBtn = remember { List(3) { Animatable(0f) } }
     LaunchedEffect(Unit) {
-        launch { eOrb.animateTo(1f, spring(0.5f, Spring.StiffnessLow)) }
-        launch { delay(380); eSat.animateTo(1f, spring(0.7f, Spring.StiffnessVeryLow)) }
-        launch { delay(260); eText.animateTo(1f, spring(0.8f, Spring.StiffnessMediumLow)) }
-        eBtn.forEachIndexed { i, a -> launch { delay(420L + i * 90L); a.animateTo(1f, spring(0.45f, Spring.StiffnessLow)) } }
+        launch { eBadge.animateTo(1f, spring(0.52f, 170f)) }
+        launch { delay(260); eAvatar.animateTo(1f, spring(0.45f, Spring.StiffnessLow)) }
+        launch { delay(380); eName.animateTo(1f, spring(0.8f, Spring.StiffnessMediumLow)) }
+        launch { delay(470); eUser.animateTo(1f, spring(0.8f, Spring.StiffnessMediumLow)) }
+        delay(1050)
+        dropForm.animateTo(1f, spring(0.55f, 420f))
+        delay(60)
+        fall.animateTo(1f, tween(520, easing = CubicBezierEasing(0.55f, 0f, 1f, 0.45f)))
+        // لحظة الاصطدام
+        launch { landed.animateTo(1f, tween(110)) }
+        launch { ripple.animateTo(1f, tween(1100, easing = FastOutSlowInEasing)) }
+        launch { eOrb.animateTo(1f, spring(0.36f, Spring.StiffnessLow)) }
+        launch { delay(170); ePlate.animateTo(1f, spring(0.55f, Spring.StiffnessLow)) }
+        launch { delay(380); qrWave.animateTo(1f, tween(1400, easing = FastOutSlowInEasing)) }
+        launch { delay(650); eHint.animateTo(1f, spring(0.8f, Spring.StiffnessMediumLow)) }
+        eBtn.forEachIndexed { i, a -> launch { delay(700L + i * 100L); a.animateTo(1f, spring(0.45f, Spring.StiffnessLow)) } }
     }
 
     // ── حركات مستمرة ──
     val inf = rememberInfiniteTransition(label = "orb")
     val morph by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(3800, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "morph")
-    val orbit by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(24000, easing = LinearEasing), RepeatMode.Restart), label = "orbit")
     val drift by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(16000, easing = LinearEasing), RepeatMode.Restart), label = "drift")
     val bob by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(3000, easing = LinearEasing), RepeatMode.Restart), label = "bob")
     val glint by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(5200, easing = LinearEasing), RepeatMode.Restart), label = "glint")
+    val ringAngle by inf.animateFloat(0f, 360f, infiniteRepeatable(tween(7000, easing = LinearEasing), RepeatMode.Restart), label = "ring")
 
     val hl = remember(scope) { InteractiveHighlight(animationScope = scope) }
+    val badgeHl = remember(scope) { InteractiveHighlight(animationScope = scope) }
 
     Box(Modifier.fillMaxSize()) {
-        // الخلفية + كتل ضوء عايمة (حتى تنكسر داخل الكرة وتبين العدسة)
+        // الخلفية + كتل ضوء عايمة
         Canvas(
             Modifier.fillMaxSize().layerBackdrop(bd).onGloballyPositioned {
                 bgPos = it.positionInRoot()
@@ -690,14 +723,188 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                     .padding(top = 64.dp, bottom = 20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // ───── الكرة + القمر الدايخ حولها ─────
-                BoxWithConstraints(Modifier.fillMaxWidth()) {
-                    val d = minOf(300.dp, maxWidth - 72.dp)
-                    val orbitR = d / 2 + 10.dp
-                    val plate = d * 0.64f
-                    Box(Modifier.fillMaxWidth().height(d + 72.dp), contentAlignment = Alignment.Center) {
+                // ───── الباج: صورة + اسم + يوزر بكبسولة زجاجية وحدها ─────
+                Box(
+                    Modifier
+                        .graphicsLayer {
+                            val e = eBadge.value
+                            val p = badgeHl.pressProgress
+                            val sq = sin(PI.toFloat() * e.coerceIn(0f, 1f))
+                            val s = (0.45f + 0.55f * e.coerceIn(0f, 1.15f)) * (1f + 0.035f * p)
+                            scaleX = s * (1f + 0.07f * sq)
+                            scaleY = s * (1f - 0.10f * sq)
+                            alpha = (e * 4f).coerceIn(0f, 1f)
+                            translationY = (1f - e) * -56.dp.toPx()
+                        }
+                        .then(badgeHl.gestureModifier)
+                        .drawBackdrop(
+                            backdrop = bd,
+                            shape = { Capsule() },
+                            effects = {
+                                vibrancy()
+                                blur((6f.dp.toPx()) * GlassFx.blurK)
+                                lens((12f.dp.toPx()) * GlassFx.refractK, (24f.dp.toPx()) * GlassFx.refractK, chromaticAberration = true)
+                            },
+                            highlight = { Highlight.Default.copy(alpha = 0.7f + 0.3f * badgeHl.pressProgress) },
+                            shadow = { Shadow(radius = 18.dp, color = Color.Black.copy(alpha = 0.22f)) },
+                            innerShadow = { InnerShadow(radius = 8.dp, alpha = 0.25f + 0.3f * badgeHl.pressProgress) },
+                            onDrawSurface = {
+                                glassSurfaceLayer { drawRect(Color.White.copy(0.16f)) }
+                                val w = size.width
+                                val x = -w * 0.5f + w * 2f * glint
+                                drawRect(
+                                    Brush.linearGradient(
+                                        listOf(Color.Transparent, Color.White.copy(0.30f), Color.Transparent),
+                                        start = Offset(x - w * 0.15f, 0f), end = Offset(x + w * 0.15f, size.height)
+                                    )
+                                )
+                            }
+                        )
+                        .clip(RoundedCornerShape(50))
+                        .then(badgeHl.modifier)
+                        // العرض ينتفخ من دائرة (قطرة) لباج كامل، ويتجاوز شوي ثم يستقر (سائل)
+                        .layout { measurable, constraints ->
+                            val p = measurable.measure(constraints.copy(minWidth = 0, minHeight = 0))
+                            val e = eBadge.value
+                            val w = (p.height + (p.width - p.height) * e).toInt().coerceAtLeast(p.height / 2)
+                            layout(w, p.height) { p.place((w - p.width) / 2, 0) }
+                        }
+                ) {
+                    Row(
+                        Modifier.padding(start = 8.dp, end = 24.dp, top = 8.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            Modifier.size(56.dp)
+                                .graphicsLayer {
+                                    val s = eAvatar.value
+                                    scaleX = s; scaleY = s
+                                    rotationZ = (1f - s.coerceIn(0f, 1f)) * -120f
+                                    alpha = s.coerceIn(0f, 1f)
+                                }
+                                .drawBackdrop(
+                                    backdrop = bd,
+                                    shape = { CircleShape },
+                                    effects = {
+                                        vibrancy()
+                                        blur((3f.dp.toPx()) * GlassFx.blurK)
+                                        lens((8f.dp.toPx()) * GlassFx.refractK, (16f.dp.toPx()) * GlassFx.refractK, chromaticAberration = true)
+                                    },
+                                    highlight = { Highlight.Default },
+                                    innerShadow = { InnerShadow(radius = 5.dp, alpha = 0.35f) },
+                                    onDrawSurface = { drawRect(Color.White.copy(0.28f)) }
+                                )
+                                .drawBehind {
+                                    rotate(ringAngle) {
+                                        drawCircle(
+                                            Brush.sweepGradient(listOf(Color.White.copy(0.95f), Color.White.copy(0.04f), Color.White.copy(0.95f))),
+                                            radius = size.minDimension / 2f - 1.5.dp.toPx(),
+                                            style = Stroke(width = 3.dp.toPx())
+                                        )
+                                    }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(Modifier.size(47.dp).clip(CircleShape), contentAlignment = Alignment.Center) {
+                                val a = avatarImg
+                                if (a != null) {
+                                    Image(bitmap = a, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                                } else {
+                                    Box(
+                                        Modifier.fillMaxSize().background(Brush.linearGradient(listOf(fto.qrTop, fto.qrBottom))),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(name.trim().take(1).ifBlank { "؟" }, color = Color.White, fontSize = 22.sp, fontFamily = fontFam, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                        Column(Modifier.padding(start = 12.dp)) {
+                            Text(
+                                name.ifBlank { "حسابي" }, color = Color.White, fontSize = 21.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                fontFamily = fontFam, fontWeight = FontWeight.ExtraBold,
+                                modifier = Modifier.widthIn(max = 190.dp).graphicsLayer {
+                                    alpha = eName.value.coerceIn(0f, 1f)
+                                    translationY = (1f - eName.value) * 14.dp.toPx()
+                                }
+                            )
+                            if (username.isNotBlank()) {
+                                Text(
+                                    "@$username", color = Color.White.copy(0.88f), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    fontFamily = fontFam, fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(top = 1.dp).widthIn(max = 190.dp).graphicsLayer {
+                                        alpha = eUser.value.coerceIn(0f, 1f)
+                                        translationY = (1f - eUser.value) * 14.dp.toPx()
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
 
-                        // الكرة الزجاجية: شكلها يتنفس بين دائرة وسكوير ناعم، وتنضغط وتميل مع إصبعك
+                // ───── منطقة القطرة + الكرة ─────
+                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    val d = minOf(300.dp, maxWidth - 56.dp)
+                    val areaH = d + 44.dp
+                    val plate = d * 0.64f
+                    Box(Modifier.fillMaxWidth().height(areaH), contentAlignment = Alignment.Center) {
+
+                        // موجات + رذاذ لحظة الاصطدام
+                        Canvas(Modifier.fillMaxSize()) {
+                            val r = ripple.value
+                            if (r > 0f && r < 1f) {
+                                val c = Offset(size.width / 2f, size.height / 2f)
+                                val base = d.toPx() / 2f
+                                for (k in 0..1) {
+                                    val rk = ((r - k * 0.18f) / (1f - k * 0.18f)).coerceIn(0f, 1f)
+                                    if (rk > 0f) drawCircle(
+                                        Color.White.copy(alpha = 0.55f * (1f - rk)),
+                                        radius = base + 90.dp.toPx() * rk, center = c,
+                                        style = Stroke(width = (4f * (1f - rk) + 1f).dp.toPx())
+                                    )
+                                }
+                                val ease = 1f - (1f - r) * (1f - r)
+                                for (k in 0 until 10) {
+                                    val ang = k * (2f * PI.toFloat() / 10f) + 0.3f
+                                    val rr = base * 0.85f + 120.dp.toPx() * ease
+                                    val pos = Offset(c.x + cos(ang) * rr, c.y + sin(ang) * rr * 0.92f)
+                                    drawCircle(
+                                        Color.White.copy(0.9f * (1f - r)),
+                                        radius = ((3.5f + (k % 3)).dp.toPx()) * (1f - r) + 0.5f, center = pos
+                                    )
+                                }
+                            }
+                        }
+
+                        // القطرة الزجاجية: تتكوّن تحت الباج، تتمدد بالسقوط، وتختفي لحظة الاصطدام
+                        Box(
+                            Modifier.size(24.dp)
+                                .graphicsLayer {
+                                    val form = dropForm.value
+                                    val f = fall.value
+                                    val travel = (areaH / 2 + 10.dp).toPx()
+                                    translationY = -travel * (1f - f)
+                                    scaleX = form * (1f - 0.38f * f)
+                                    scaleY = form * (1f + 1.4f * f)
+                                    alpha = if (form < 0.01f) 0f else (1f - landed.value).coerceIn(0f, 1f)
+                                }
+                                .drawBackdrop(
+                                    backdrop = bd,
+                                    shape = { CircleShape },
+                                    effects = {
+                                        vibrancy()
+                                        blur((1f.dp.toPx()) * GlassFx.blurK)
+                                        lens((6f.dp.toPx()) * GlassFx.refractK, (12f.dp.toPx()) * GlassFx.refractK, chromaticAberration = true)
+                                    },
+                                    highlight = { Highlight.Default },
+                                    shadow = { Shadow(radius = 8.dp, color = Color.Black.copy(alpha = 0.22f)) },
+                                    innerShadow = { InnerShadow(radius = 4.dp, alpha = 0.4f) },
+                                    onDrawSurface = { drawRect(Color.White.copy(0.34f)) }
+                                )
+                        )
+
+                        // الكرة الزجاجية: تنفجر من القطرة بارتداد جيلي، وشكلها يتنفس، وتميل مع إصبعك
                         Box(
                             Modifier.size(d)
                                 .graphicsLayer {
@@ -707,10 +914,12 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                                     val h = size.height.coerceAtLeast(1f)
                                     val dx = hl.offset.x / w
                                     val dy = hl.offset.y / h
-                                    val base = (0.2f + 0.8f * e) * pulse.value * (1f + 0.05f * p)
-                                    scaleX = base * (1f + 0.07f * kotlin.math.abs(dx) - 0.03f * kotlin.math.abs(dy))
-                                    scaleY = base * (1f - 0.04f * kotlin.math.abs(dx) + 0.07f * kotlin.math.abs(dy))
-                                    alpha = e.coerceIn(0f, 1f)
+                                    val base = (0.08f + 0.92f * e) * pulse.value * (1f + 0.05f * p)
+                                    // ارتداد جيلي: لما يتجاوز النابض 1 تنضغط عمودياً وتتمدد أفقياً والعكس
+                                    val jelly = ((e - 1f) * 1.3f).coerceIn(-0.25f, 0.25f)
+                                    scaleX = base * (1f + jelly + 0.07f * kotlin.math.abs(dx) - 0.03f * kotlin.math.abs(dy))
+                                    scaleY = base * (1f - jelly - 0.04f * kotlin.math.abs(dx) + 0.07f * kotlin.math.abs(dy))
+                                    alpha = (e * 6f).coerceIn(0f, 1f)
                                     cameraDistance = 18f * density
                                     rotationY = dx * 22f
                                     rotationX = -dy * 22f
@@ -731,7 +940,6 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                                         glassSurfaceLayer { drawRect(Color.White.copy(0.10f)) }
                                         val w = size.width
                                         val h = size.height
-                                        // لمعة ثابتة أعلى اليسار + ظل خفيف أسفل اليمين
                                         drawCircle(
                                             Brush.radialGradient(listOf(Color.White.copy(0.45f), Color.Transparent), center = Offset(w * 0.28f, h * 0.22f), radius = w * 0.38f),
                                             radius = w * 0.38f, center = Offset(w * 0.28f, h * 0.22f)
@@ -740,7 +948,6 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                                             Brush.radialGradient(listOf(Color.Black.copy(0.16f), Color.Transparent), center = Offset(w * 0.78f, h * 0.84f), radius = w * 0.40f),
                                             radius = w * 0.40f, center = Offset(w * 0.78f, h * 0.84f)
                                         )
-                                        // لمعة قطرية تمر على الزجاج
                                         val x = -w * 0.5f + w * 2f * glint
                                         drawRect(
                                             Brush.linearGradient(
@@ -753,15 +960,16 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                                 .then(hl.modifier),
                             contentAlignment = Alignment.Center
                         ) {
-                            // لوحة الباركود: بيضاء، تعوم داخل الكرة بـ parallax عكس الميلان
+                            // لوحة الباركود: تطلع بارتداد، ومربعاتها تظهر بموجة سائلة من النص
                             Box(
                                 Modifier.size(plate)
                                     .graphicsLayer {
                                         translationX = -hl.offset.x * 0.10f
                                         translationY = -hl.offset.y * 0.10f
-                                        val e = eText.value
-                                        scaleX = 0.8f + 0.2f * e; scaleY = 0.8f + 0.2f * e
-                                        alpha = e.coerceIn(0f, 1f)
+                                        val e = ePlate.value
+                                        val s = 0.3f + 0.7f * e
+                                        scaleX = s; scaleY = s
+                                        alpha = (e * 3f).coerceIn(0f, 1f)
                                     }
                                     .shadow(16.dp, RoundedCornerShape(26.dp), ambientColor = Color.Black.copy(0.35f), spotColor = Color.Black.copy(0.35f))
                                     .clip(RoundedCornerShape(26.dp)).background(Color.White),
@@ -770,15 +978,28 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                                 val mx = matrix
                                 if (mx != null) {
                                     Canvas(Modifier.fillMaxSize().padding(11.dp).onGloballyPositioned { qrPos = it.positionInRoot() }) {
-                                        val ob = origin - bgPos
-                                        val rMax = maxOf(
-                                            hypot(ob.x, ob.y), hypot(bgSize.width - ob.x, ob.y),
-                                            hypot(ob.x, bgSize.height - ob.y), hypot(bgSize.width - ob.x, bgSize.height - ob.y)
-                                        ).coerceAtLeast(1f)
-                                        drawQr(mx, size.width, ffrom, fto, reveal.value, origin - qrPos, rMax)
+                                        val intro = qrWave.value < 1f
+                                        if (intro) {
+                                            drawQr(
+                                                mx, size.width, fto, fto, qrWave.value,
+                                                Offset(size.width / 2f, size.height / 2f), hypot(size.width, size.height) / 2f, true
+                                            )
+                                        } else {
+                                            val ob = origin - bgPos
+                                            val rMax = maxOf(
+                                                hypot(ob.x, ob.y), hypot(bgSize.width - ob.x, ob.y),
+                                                hypot(ob.x, bgSize.height - ob.y), hypot(bgSize.width - ob.x, bgSize.height - ob.y)
+                                            ).coerceAtLeast(1f)
+                                            drawQr(mx, size.width, ffrom, fto, reveal.value, origin - qrPos, rMax)
+                                        }
                                     }
                                     Box(
-                                        Modifier.fillMaxWidth(0.22f).aspectRatio(1f).clip(RoundedCornerShape(14.dp)).background(Color.White),
+                                        Modifier.fillMaxWidth(0.22f).aspectRatio(1f)
+                                            .graphicsLayer {
+                                                val s = qrWave.value.coerceIn(0f, 1f)
+                                                scaleX = s; scaleY = s; alpha = s
+                                            }
+                                            .clip(RoundedCornerShape(14.dp)).background(Color.White),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Image(
@@ -790,80 +1011,19 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                                 }
                             }
                         }
-
-                        // القمر: كرة زجاجية صغيرة بصورتك تدور حول الكرة الكبيرة وتكبر وتصغر (عمق)
-                        Box(
-                            Modifier.size(46.dp)
-                                .graphicsLayer {
-                                    val a = orbit * 2f * PI.toFloat() - (PI.toFloat() / 2f)
-                                    val r = orbitR.toPx() * eSat.value
-                                    translationX = cos(a) * r
-                                    translationY = sin(a) * r
-                                    val depth = 1f + 0.22f * sin(a)
-                                    val s = depth * (0.3f + 0.7f * eSat.value)
-                                    scaleX = s; scaleY = s
-                                    alpha = eSat.value.coerceIn(0f, 1f)
-                                }
-                                .drawBackdrop(
-                                    backdrop = bd,
-                                    shape = { CircleShape },
-                                    effects = {
-                                        vibrancy()
-                                        blur((2f.dp.toPx()) * GlassFx.blurK)
-                                        lens((8f.dp.toPx()) * GlassFx.refractK, (16f.dp.toPx()) * GlassFx.refractK, chromaticAberration = true)
-                                    },
-                                    highlight = { Highlight.Default },
-                                    shadow = { Shadow(radius = 10.dp, color = Color.Black.copy(alpha = 0.25f)) },
-                                    innerShadow = { InnerShadow(radius = 4.dp, alpha = 0.35f) },
-                                    onDrawSurface = { drawRect(Color.White.copy(0.30f)) }
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Box(Modifier.size(36.dp).clip(CircleShape), contentAlignment = Alignment.Center) {
-                                val a = avatarImg
-                                if (a != null) {
-                                    Image(bitmap = a, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                                } else {
-                                    Box(
-                                        Modifier.fillMaxSize().background(Brush.linearGradient(listOf(fto.qrTop, fto.qrBottom))),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(name.trim().take(1).ifBlank { "؟" }, color = Color.White, fontSize = 16.sp, fontFamily = fontFam, fontWeight = FontWeight.Bold)
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
 
-                // ───── الاسم ─────
-                Column(
-                    Modifier.padding(horizontal = 24.dp).graphicsLayer {
-                        alpha = eText.value.coerceIn(0f, 1f)
-                        translationY = (1f - eText.value) * 24.dp.toPx()
-                    },
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        name.ifBlank { "حسابي" }, color = Color.White, fontSize = 28.sp, maxLines = 1,
-                        fontFamily = fontFam, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center
-                    )
-                    if (username.isNotBlank()) {
-                        Text(
-                            "@$username", color = Color.White, fontSize = 15.sp, fontFamily = fontFam, fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(top = 8.dp).clip(RoundedCornerShape(50))
-                                .background(Color.White.copy(0.20f))
-                                .border(0.8.dp, Color.White.copy(0.32f), RoundedCornerShape(50))
-                                .padding(horizontal = 16.dp, vertical = 5.dp)
-                        )
+                Text(
+                    "امسح الباركود بكاميرا الجوال أو كوكل ليفتح حسابي بالتطبيق",
+                    color = Color.White.copy(0.75f), fontSize = 12.5.sp, fontFamily = fontFam,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 6.dp).graphicsLayer {
+                        alpha = eHint.value.coerceIn(0f, 1f)
+                        translationY = (1f - eHint.value) * 16.dp.toPx()
                     }
-                    Text(
-                        "امسح الباركود بكاميرا الجوال أو كوكل ليفتح حسابي بالتطبيق",
-                        color = Color.White.copy(0.72f), fontSize = 12.5.sp, fontFamily = fontFam,
-                        textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp)
-                    )
-                }
-                Spacer(Modifier.height(22.dp))
+                )
+                Spacer(Modifier.height(16.dp))
 
                 // ───── فقاعات زجاجية تطفو ─────
                 Row(horizontalArrangement = Arrangement.spacedBy(30.dp), verticalAlignment = Alignment.Top) {
