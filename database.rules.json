@@ -359,7 +359,7 @@
       "$uid": {
         ".read": "auth != null && auth.token.email_verified === true && auth.uid === $uid",
         "$gid": {
-          ".write": "auth != null && auth.token.email_verified === true && ((newData.val() === true && $uid === auth.uid && root.child('groups').child($gid).child('settings').child('publicJoin').val() === true && !root.child('groups').child($gid).child('banned').child($uid).exists()) || ((newData.val() === true && !root.child('groups').child($gid).child('banned').child($uid).exists() && (root.child('groups').child($gid).child('meta').child('owner').val() === auth.uid || root.child('groups').child($gid).child('admins').child(auth.uid).child('inviteUsers').val() === true || (root.child('groups').child($gid).child('members').child(auth.uid).exists() && root.child('groups').child($gid).child('settings').child('inviteUsers').val() === true))) || (!newData.exists() && ($uid === auth.uid || (root.child('groups').child($gid).child('meta').child('owner').val() === auth.uid || root.child('groups').child($gid).child('admins').child(auth.uid).child('banUsers').val() === true))))",
+          ".write": "auth != null && auth.token.email_verified === true && ((newData.val() === true && $uid === auth.uid && root.child('groups').child($gid).child('settings').child('publicJoin').val() === true && !root.child('groups').child($gid).child('banned').child($uid).exists()) || ((newData.val() === true && !root.child('groups').child($gid).child('banned').child($uid).exists() && (root.child('groups').child($gid).child('meta').child('owner').val() === auth.uid || root.child('groups').child($gid).child('admins').child(auth.uid).child('inviteUsers').val() === true || (root.child('groups').child($gid).child('members').child(auth.uid).exists() && root.child('groups').child($gid).child('settings').child('inviteUsers').val() === true))) || (!newData.exists() && ($uid === auth.uid || (root.child('groups').child($gid).child('meta').child('owner').val() === auth.uid || root.child('groups').child($gid).child('admins').child(auth.uid).child('banUsers').val() === true)))))",
           ".validate": "!newData.exists() || newData.val() === true"
         }
       }
@@ -471,6 +471,15 @@
               ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 301"
             },
             "wave": {
+              ".validate": "newData.isString() && newData.val().length <= 100"
+            },
+            "replyId": {
+              ".validate": "newData.isString() && newData.val().length <= 100"
+            },
+            "replyText": {
+              ".validate": "newData.isString() && newData.val().length <= 300"
+            },
+            "replyFrom": {
               ".validate": "newData.isString() && newData.val().length <= 100"
             },
             "$other": {

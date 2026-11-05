@@ -1197,7 +1197,7 @@ private class MenuTarget(val msg: Msg, val mine: Boolean, val bounds: Rect)
 
 /** شريط فوق مربع الكتابة: رد على رسالة أو تعديل رسالة */
 @Composable
-private fun ComposerStrip(
+internal fun ComposerStrip(
     backdrop: Backdrop,
     dark: Boolean,
     fg: Color,
@@ -1242,6 +1242,38 @@ private fun ComposerStrip(
                 Modifier.size(36.dp).clip(CircleShape).clickable(onClick = onClose),
                 contentAlignment = Alignment.Center
             ) { Icon(Icons.Filled.Close, null, tint = fg.copy(alpha = 0.7f), modifier = Modifier.size(18.dp)) }
+        }
+    }
+}
+
+/** مربع اقتباس الرد داخل الفقاعة (يستخدمه محادثة المجموعات أيضاً): ضغطة = قفز للأصلية، ضغطة مطولة = قائمة الرسالة */
+@Composable
+internal fun ReplyQuoteBlock(
+    msgId: String,
+    replyId: String,
+    replyName: String,
+    replyText: String,
+    textColor: Color,
+    onJump: (String) -> Unit,
+    onLongPress: () -> Unit
+) {
+    Row(
+        Modifier.padding(bottom = 6.dp)
+            .height(IntrinsicSize.Min)
+            .clip(RoundedCornerShape(10.dp))
+            .background(textColor.copy(alpha = 0.12f))
+            .pointerInput(msgId) {
+                detectTapGestures(onTap = { onJump(replyId) }, onLongPress = { onLongPress() })
+            }
+    ) {
+        Box(Modifier.width(3.dp).fillMaxHeight().background(textColor.copy(alpha = 0.7f)))
+        Column(Modifier.padding(horizontal = 8.dp, vertical = 5.dp)) {
+            Text(replyName, color = textColor.copy(alpha = 0.95f), fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(
+                replyText,
+                color = textColor.copy(alpha = 0.8f), fontSize = 13.sp,
+                maxLines = 2, overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }

@@ -4,4 +4,6 @@
     <cache-path name="updates" path="updates/" />
     <!-- الملفات المستلمة من المحادثة تنفتح من هنا -->
     <cache-path name="chat_files" path="chat_media/files/" />
+    <!-- صورة الباركود الي تنشارك -->
+    <cache-path name="qr_share" path="qr_share/" />
 </paths>

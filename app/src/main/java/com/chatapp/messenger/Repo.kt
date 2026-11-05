@@ -91,7 +91,9 @@ data class GroupMsg(
     val mediaType: String = "", val mediaId: String = "", val mediaDur: Int = 0, val wave: String = "",
     /** صور/فيديو/ملفات بالمجموعة: صورة مصغّرة + الأبعاد + اسم الملف وحجمه */
     val thumb: String = "", val mediaW: Int = 0, val mediaH: Int = 0,
-    val fileName: String = "", val fileSize: Long = 0L
+    val fileName: String = "", val fileSize: Long = 0L,
+    /** رد على رسالة: معرّفها + نص مقتبس + صاحبها (نفس المحادثة الخاصة) */
+    val replyId: String = "", val replyText: String = "", val replyFrom: String = ""
 )
 
 /** كل بيانات المجموعة بنفس اللحظة (للأعضاء فقط) */
@@ -543,8 +545,17 @@ object Repo {
             mediaType = str("mediaType"), mediaId = str("mediaId"),
             mediaDur = num("mediaDur").toInt(), wave = str("wave"),
             thumb = str("thumb"), mediaW = num("mediaW").toInt(), mediaH = num("mediaH").toInt(),
-            fileName = str("fileName"), fileSize = num("fileSize")
+            fileName = str("fileName"), fileSize = num("fileSize"),
+            replyId = str("replyId"), replyText = str("replyText"), replyFrom = str("replyFrom")
         )
+    }
+
+    /** يضيف حقول الرد لرسالة مجموعة (إذا كانت ردّاً) */
+    private fun putGroupReply(msg: MutableMap<String, Any>, replyId: String, replyText: String, replyFrom: String) {
+        if (replyId.isEmpty()) return
+        msg["replyId"] = replyId.take(100)
+        msg["replyText"] = replyText.take(100)
+        msg["replyFrom"] = replyFrom.take(100)
     }
 
     /**
@@ -615,29 +626,39 @@ object Repo {
     }
 
     /** يرسل رسالة للمجموعة (بدون انتظار، إذا فشلت تنادى onFail) */
-    fun sendGroupMessage(gid: String, text: String, onFail: (Exception) -> Unit) {
+    fun sendGroupMessage(
+        gid: String, text: String, onFail: (Exception) -> Unit,
+        replyId: String = "", replyText: String = "", replyFrom: String = ""
+    ) {
         val me = auth.currentUser?.uid ?: return
         val t = text.trim().take(2000)
         if (t.isEmpty()) return
         val key = rtdb.getReference("groupChats/$gid/messages").push().key ?: return
+        val msg = hashMapOf<String, Any>(
+            "from" to me, "text" to t, "createdAt" to ServerValue.TIMESTAMP
+        )
+        putGroupReply(msg, replyId, replyText, replyFrom)
         val updates = hashMapOf<String, Any>(
-            "groupChats/$gid/messages/$key" to hashMapOf<String, Any>(
-                "from" to me, "text" to t, "createdAt" to ServerValue.TIMESTAMP
-            ),
+            "groupChats/$gid/messages/$key" to msg,
             "groupChats/$gid/lastSent/$me" to ServerValue.TIMESTAMP
         )
         rtdb.reference.updateChildren(updates).addOnFailureListener { e -> onFail(e) }
     }
 
     /** رسالة صوتية بالمجموعة (بعد ما انرفع الملف بنوع "audio" لـ groupMedia/<gid>) */
-    fun sendGroupVoice(gid: String, mediaId: String, durSec: Int, wave: String, onFail: (Exception) -> Unit) {
+    fun sendGroupVoice(
+        gid: String, mediaId: String, durSec: Int, wave: String, onFail: (Exception) -> Unit,
+        replyId: String = "", replyText: String = "", replyFrom: String = ""
+    ) {
         val me = auth.currentUser?.uid ?: return
         val key = rtdb.getReference("groupChats/$gid/messages").push().key ?: return
+        val msg = hashMapOf<String, Any>(
+            "from" to me, "text" to "🎤 رسالة صوتية", "createdAt" to ServerValue.TIMESTAMP,
+            "mediaType" to "audio", "mediaId" to mediaId, "mediaDur" to durSec, "wave" to wave
+        )
+        putGroupReply(msg, replyId, replyText, replyFrom)
         val updates = hashMapOf<String, Any>(
-            "groupChats/$gid/messages/$key" to hashMapOf<String, Any>(
-                "from" to me, "text" to "🎤 رسالة صوتية", "createdAt" to ServerValue.TIMESTAMP,
-                "mediaType" to "audio", "mediaId" to mediaId, "mediaDur" to durSec, "wave" to wave
-            ),
+            "groupChats/$gid/messages/$key" to msg,
             "groupChats/$gid/lastSent/$me" to ServerValue.TIMESTAMP
         )
         rtdb.reference.updateChildren(updates).addOnFailureListener { e -> onFail(e) }
@@ -646,7 +667,8 @@ object Repo {
     /** صورة/فيديو بالمجموعة (بعد ما انرفع الملف لـ groupMedia/<gid>) */
     fun sendGroupMedia(
         gid: String, type: String, mediaId: String, thumb: String, w: Int, h: Int, durSec: Int,
-        onFail: (Exception) -> Unit
+        onFail: (Exception) -> Unit,
+        replyId: String = "", replyText: String = "", replyFrom: String = ""
     ) {
         val me = auth.currentUser?.uid ?: return
         val key = rtdb.getReference("groupChats/$gid/messages").push().key ?: return
@@ -656,6 +678,7 @@ object Repo {
             "mediaType" to type, "mediaId" to mediaId, "thumb" to thumb, "mediaW" to w, "mediaH" to h
         )
         if (type == "video") msg["mediaDur"] = durSec
+        putGroupReply(msg, replyId, replyText, replyFrom)
         val updates = hashMapOf<String, Any>(
             "groupChats/$gid/messages/$key" to msg,
             "groupChats/$gid/lastSent/$me" to ServerValue.TIMESTAMP
@@ -664,15 +687,20 @@ object Repo {
     }
 
     /** ملف بالمجموعة (بعد ما انرفع بنوع "file") */
-    fun sendGroupFile(gid: String, mediaId: String, name: String, size: Long, onFail: (Exception) -> Unit) {
+    fun sendGroupFile(
+        gid: String, mediaId: String, name: String, size: Long, onFail: (Exception) -> Unit,
+        replyId: String = "", replyText: String = "", replyFrom: String = ""
+    ) {
         val me = auth.currentUser?.uid ?: return
         val key = rtdb.getReference("groupChats/$gid/messages").push().key ?: return
+        val msg = hashMapOf<String, Any>(
+            "from" to me, "text" to "📎 ملف", "createdAt" to ServerValue.TIMESTAMP,
+            "mediaType" to "file", "mediaId" to mediaId,
+            "fileName" to name.take(120), "fileSize" to size
+        )
+        putGroupReply(msg, replyId, replyText, replyFrom)
         val updates = hashMapOf<String, Any>(
-            "groupChats/$gid/messages/$key" to hashMapOf<String, Any>(
-                "from" to me, "text" to "📎 ملف", "createdAt" to ServerValue.TIMESTAMP,
-                "mediaType" to "file", "mediaId" to mediaId,
-                "fileName" to name.take(120), "fileSize" to size
-            ),
+            "groupChats/$gid/messages/$key" to msg,
             "groupChats/$gid/lastSent/$me" to ServerValue.TIMESTAMP
         )
         rtdb.reference.updateChildren(updates).addOnFailureListener { e -> onFail(e) }

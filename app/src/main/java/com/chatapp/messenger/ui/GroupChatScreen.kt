@@ -22,6 +22,11 @@ import androidx.compose.material.icons.filled.Add
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
@@ -231,6 +236,8 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
     var showSettings by remember { mutableStateOf(false) }
     var rootSize by remember { mutableStateOf(IntSize.Zero) }
     var flashId by remember { mutableStateOf<String?>(null) }
+    // الرسالة الي أرد عليها (سحب رسالة أو "رد" من قائمة الضغطة المطولة)
+    var replyTo by remember(groupId) { mutableStateOf<GroupMsg?>(null) }
 
     // ---- مؤشر الكتابة ----
     val typingPath = remember(groupId) { "groupTyping/$groupId" }
@@ -274,7 +281,7 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
     val contentBackdrop = rememberLayerBackdrop() // الخلفية + الرسائل (الأشرطة تستخدمها)
 
     // ملفات المرسلين (اسم + صورة + شكل الفقاعة)
-    val senderIds = remember(messages) { (messages.map { it.from } + me).distinct() }
+    val senderIds = remember(messages) { (messages.map { it.from } + messages.map { it.replyFrom }.filter { it.isNotEmpty() && it != "story" && it != "status" } + me).distinct() }
     val profiles = rememberProfiles(senderIds)
     val avatars = rememberSenderAvatars(profiles, senderIds)
     val myStyleId = profiles[me]?.bubbleStyle ?: "glass"
@@ -318,14 +325,18 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
         }
         text = ""
         lastSentAt = now
+        val rep = replyTo
+        replyTo = null
         scope.launch {
             fly.animateTo(1f, tween(170))
             fly.snapTo(-1f)
             fly.animateTo(0f, spring(0.6f, 500f))
         }
-        Repo.sendGroupMessage(groupId, t) {
-            AppToast.show("ما انرسلت الرسالة: ممنوع عليك الإرسال هسه")
-        }
+        Repo.sendGroupMessage(
+            groupId, t,
+            onFail = { AppToast.show("ما انرسلت الرسالة: ممنوع عليك الإرسال هسه") },
+            replyId = rep?.id ?: "", replyText = rep?.text?.take(100) ?: "", replyFrom = rep?.from ?: ""
+        )
     }
 
     // ---- رسالة صوتية: ضغطة مطولة على المايك = تسجيل، وبعدها تسمعها أو تحذفها أو ترسلها ----
@@ -381,6 +392,11 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
             return
         }
         pending = null
+        val rep = replyTo
+        replyTo = null
+        val rId = rep?.id ?: ""
+        val rText = rep?.text?.take(100) ?: ""
+        val rFrom = rep?.from ?: ""
         scope.launch {
             var prepared: MediaUtil.Prepared? = null
             val onFail: (Exception) -> Unit = { AppToast.show("ما انرسلت الرسالة: ممنوع عليك الإرسال هسه") }
@@ -392,7 +408,7 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                     val id = Repo.uploadGroupMedia(groupId, me, f, "file") { mediaProgress = it }
                     runCatching { f.copyTo(FileUtil.localFile(ctx, id, item.name), overwrite = true) }
                     lastSentAt = System.currentTimeMillis()
-                    Repo.sendGroupFile(groupId, id, item.name, item.size, onFail)
+                    Repo.sendGroupFile(groupId, id, item.name, item.size, onFail, rId, rText, rFrom)
                 } else {
                     val isVideo = item.kind == "video"
                     mediaProgress = -1f
@@ -405,7 +421,7 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                     val id = Repo.uploadGroupMedia(groupId, me, p.file, p.type) { mediaProgress = it }
                     runCatching { p.file.copyTo(MediaUtil.mediaFile(ctx, id, p.type), overwrite = true) }
                     lastSentAt = System.currentTimeMillis()
-                    Repo.sendGroupMedia(groupId, p.type, id, p.thumb, p.w, p.h, p.durSec, onFail)
+                    Repo.sendGroupMedia(groupId, p.type, id, p.thumb, p.w, p.h, p.durSec, onFail, rId, rText, rFrom)
                 }
                 listState.scrollToItem(0)
             } catch (e: CancellationException) {
@@ -553,6 +569,7 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
             return
         }
         VoicePlayer.stop()
+        val rep = replyTo
         scope.launch {
             try {
                 mediaProgress = 0f
@@ -561,9 +578,12 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                 // نسخة محلية عند المرسل حتى تشتغل فوراً بدون تنزيل
                 runCatching { d.file.copyTo(MediaUtil.mediaFile(ctx, id, "audio"), overwrite = true) }
                 lastSentAt = System.currentTimeMillis()
-                Repo.sendGroupVoice(groupId, id, ((d.durMs + 500) / 1000).toInt().coerceAtLeast(1), d.wave) {
-                    AppToast.show("ما انرسلت الرسالة: ممنوع عليك الإرسال هسه")
-                }
+                Repo.sendGroupVoice(
+                    groupId, id, ((d.durMs + 500) / 1000).toInt().coerceAtLeast(1), d.wave,
+                    onFail = { AppToast.show("ما انرسلت الرسالة: ممنوع عليك الإرسال هسه") },
+                    replyId = rep?.id ?: "", replyText = rep?.text?.take(100) ?: "", replyFrom = rep?.from ?: ""
+                )
+                replyTo = null
                 d.file.delete()
                 voiceDraft = null
                 voiceMode = 0
@@ -637,6 +657,25 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
     }
 
     BackHandler(enabled = menu != null) { menu = null }
+    BackHandler(enabled = replyTo != null && menu == null) { replyTo = null }
+
+    fun replyNameOf(uid: String): String =
+        if (uid == me) "أنت" else profiles[uid]?.name?.takeIf { it.isNotBlank() } ?: "عضو"
+
+    /** ينزل للرسالة الأصلية ويومّضها (إذا قديمة جداً أو انحذفت ما تنلقى) */
+    fun jumpToMessage(id: String) {
+        val idx = rev.indexOfFirst { it.id == id }
+        if (idx < 0) {
+            AppToast.show("الرسالة الأصلية قديمة أو انحذفت")
+            return
+        }
+        scope.launch {
+            listState.animateScrollToItem(idx)
+            flashId = id
+            delay(900)
+            flashId = null
+        }
+    }
 
     // الرسالة المثبتة (تتحول لـ Msg حتى نستعمل نفس شريط المحادثة العادية)
     val pin = g?.pinned
@@ -719,9 +758,13 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                             },
                             onToggleVoice = { toggleVoice(m) },
                             onOpenMedia = { openMedia(m) },
+                            replyName = replyNameOf(m.replyFrom),
+                            canReply = access?.canSend == true,
+                            onReply = { replyTo = m },
+                            onJump = { jumpToMessage(it) },
                             onLongPress = { rect ->
                                 val a = access
-                                if (a != null && (a.canPin || mine || a.canDelete)) {
+                                if (a != null && (a.canSend || a.canPin || mine || a.canDelete)) {
                                     menu = GroupMenuTarget(m, mine, rect)
                                 }
                             }
@@ -830,6 +873,24 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                     if (access.canSend) {
                         val slow = g?.settings?.slowMode ?: 0
                         val rtlNow = LocalLayoutDirection.current == LayoutDirection.Rtl
+                        // شريط "رد على ..." فوق مربع الكتابة
+                        val stripLast = remember { arrayOfNulls<GroupMsg>(1) }
+                        replyTo?.let { stripLast[0] = it }
+                        AnimatedVisibility(
+                            visible = replyTo != null,
+                            enter = expandVertically(spring(0.85f, 420f)) + fadeIn(tween(200)),
+                            exit = shrinkVertically(tween(180)) + fadeOut(tween(120))
+                        ) {
+                            stripLast[0]?.let { rm ->
+                                ComposerStrip(
+                                    backdrop = contentBackdrop, dark = dark, fg = fg,
+                                    isEdit = false,
+                                    title = "رد على " + replyNameOf(rm.from),
+                                    preview = rm.text.take(70),
+                                    onClose = { replyTo = null }
+                                )
+                            }
+                        }
                         Row(
                             Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.Bottom,
@@ -1004,6 +1065,12 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                 val mm = mt.msg
                 val a = access
                 val actions = buildList<MsgAction> {
+                    if (a != null && a.canSend) {
+                        add(MsgAction(AppIcons.Reply, "رد", AccentBlue) {
+                            menu = null
+                            replyTo = mm
+                        })
+                    }
                     if (mm.mediaType.isEmpty() && Translator.looksEnglish(mm.text) && mm.id !in Translator.loading) {
                         val shown = Translator.results.containsKey(mm.id)
                         add(MsgAction(AppIcons.Translate, if (shown) "إخفاء الترجمة" else "ترجمة", Color(0xFF00BFA5)) {
@@ -1089,10 +1156,48 @@ private fun GroupMessageRow(
     onAvatarClick: () -> Unit = {},
     onToggleVoice: () -> Unit = {},
     onOpenMedia: () -> Unit = {},
+    replyName: String = "",
+    canReply: Boolean = false,
+    onReply: () -> Unit = {},
+    onJump: (String) -> Unit = {},
     onLongPress: (Rect) -> Unit = {}
 ) {
     val haptic = LocalHapticFeedback.current
     val boundsHolder = remember { arrayOf(Rect.Zero) }
+    val density = LocalDensity.current
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val rowScope = rememberCoroutineScope()
+
+    // سحب الرسالة للرد (نفس المحادثة الخاصة)
+    val maxSwipe = with(density) { 64.dp.toPx() }
+    var swipeX by remember { mutableFloatStateOf(0f) }
+    var armed by remember { mutableStateOf(false) }
+    val onReplyState = rememberUpdatedState(onReply)
+    fun springBack() {
+        rowScope.launch { animate(swipeX, 0f, animationSpec = spring(0.6f, 500f)) { v, _ -> swipeX = v } }
+    }
+    val swipeMod = if (canReply) {
+        Modifier.pointerInput(m.id) {
+            detectHorizontalDragGestures(
+                onDragStart = { armed = false },
+                onDragEnd = {
+                    val fire = abs(swipeX) >= maxSwipe * 0.9f
+                    armed = false
+                    springBack()
+                    if (fire) onReplyState.value()
+                },
+                onDragCancel = { armed = false; springBack() },
+                onHorizontalDrag = { change, dx ->
+                    change.consume()
+                    val next = (swipeX + dx * 0.7f).coerceIn(-maxSwipe, maxSwipe)
+                    val nowArmed = abs(next) >= maxSwipe * 0.9f
+                    if (nowArmed && !armed) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    armed = nowArmed
+                    swipeX = next
+                }
+            )
+        }
+    } else Modifier
     fun fireLongPress() {
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         onLongPress(boundsHolder[0])
@@ -1131,8 +1236,29 @@ private fun GroupMessageRow(
                 color = fg.copy(alpha = 0.6f)
             )
         }
+        Box(Modifier.fillMaxWidth()) {
+        // أيقونة الرد تنكشف خلف الرسالة أثناء السحب
+        if (swipeX != 0f) {
+            val sp = (abs(swipeX) / maxSwipe).coerceIn(0f, 1f)
+            val onStart = (swipeX > 0f) != rtl
+            Box(
+                Modifier.align(if (onStart) Alignment.CenterStart else Alignment.CenterEnd)
+                    .padding(horizontal = 8.dp)
+                    .size(34.dp)
+                    .graphicsLayer {
+                        alpha = sp
+                        val sc = 0.5f + 0.5f * sp
+                        scaleX = sc; scaleY = sc
+                    }
+                    .clip(CircleShape)
+                    .background(fg.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(AppIcons.Reply, null, tint = if (armed) AccentBlue else fg.copy(alpha = 0.8f), modifier = Modifier.size(18.dp))
+            }
+        }
         Row(
-            Modifier.fillMaxWidth(),
+            Modifier.fillMaxWidth().then(swipeMod).graphicsLayer { translationX = swipeX },
             horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start,
             verticalAlignment = Alignment.Bottom
         ) {
@@ -1149,6 +1275,14 @@ private fun GroupMessageRow(
                         detectTapGestures(onLongPress = { fireLongPress() })
                     }
             ) { textColor ->
+              Column {
+                // اقتباس الرد (إذا هذي الرسالة ردّ على رسالة ثانية)
+                if (m.replyId.isNotEmpty()) {
+                    ReplyQuoteBlock(
+                        msgId = m.id, replyId = m.replyId, replyName = replyName, replyText = m.replyText,
+                        textColor = textColor, onJump = onJump, onLongPress = { fireLongPress() }
+                    )
+                }
                 // الاسم ما يظهر بالفقاعة: بس صورة المرسل جنبها (ضغطة عليها تفتح حسابه)
                 if (m.mediaType == "audio") {
                     VoiceBubble(
@@ -1171,11 +1305,13 @@ private fun GroupMessageRow(
                         TranslationBlock(m.id, textColor)
                     }
                 }
+              }
             }
             if (mine) {
                 Spacer(Modifier.width(8.dp))
                 SenderAvatar(avatar, onClick = null)
             }
+        }
         }
     }
 }
