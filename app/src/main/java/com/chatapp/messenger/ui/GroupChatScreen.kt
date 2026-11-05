@@ -9,6 +9,13 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.foundation.layout.height
+import androidx.core.app.NotificationManagerCompat
+import com.chatapp.messenger.AppState
+import com.chatapp.messenger.GroupReads
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.platform.LocalFocusManager
@@ -644,9 +651,60 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
         }
     }
 
+    // ---------------- علامة الرسائل غير المقروءة ----------------
+    // الي صار بالمجموعة وانت مو موجود: كل رسالة من غيري وقتها أحدث من "مؤشر القراءة" تنعلّم بنقطة،
+    // وفوق أولها فاصل "رسائل جديدة". النقطة تروح لما الرسالة تظهر بالشاشة (ثابتة نص ثانية).
+    var readCursor by remember(groupId) { mutableStateOf(Long.MAX_VALUE) }   // MAX = لسه ما انحدد
+    var unreadEntry by remember(groupId) { mutableStateOf<UnreadEntry?>(null) }
+    val revNow = rememberUpdatedState(rev)
+
+    // إشعار هذي المجموعة ينشال أول ما أفتحها
+    LaunchedEffect(groupId) { NotificationManagerCompat.from(ctx).cancel(("g:" + groupId).hashCode()) }
+
+    // أول ما تنحمل الرسائل: نحدد الغير مقروء وننزل لأول وحدة منها
+    LaunchedEffect(groupId, stable.isNotEmpty()) {
+        if (unreadEntry != null || stable.isEmpty()) return@LaunchedEffect
+        val saved = GroupReads.get(ctx, me, groupId)
+        val cursor = if (saved < 0) stable.maxOf { it.createdAt }.coerceAtLeast(0L) else saved
+        // أول مرة أفتح المجموعة بهذا الجهاز: كل التاريخ القديم يعتبر مقروء
+        val unread = if (saved < 0) emptyList<com.chatapp.messenger.GroupMsg>() else stable.filter { it.from != me && it.createdAt > cursor }
+        if (saved < 0) GroupReads.set(ctx, me, groupId, cursor)
+        readCursor = cursor
+        unreadEntry = UnreadEntry(unread.firstOrNull()?.key, unread.size)
+        val first = unread.firstOrNull() ?: return@LaunchedEffect
+        val idx = revNow.value.indexOfFirst { it.key == first.key }
+        if (idx > 0) {
+            androidx.compose.runtime.withFrameNanos { }
+            // أول رسالة غير مقروءة تطلع بأعلى الشاشة والباقي تحتها (القائمة مقلوبة، فالإزاحة سالبة)
+            listState.scrollToItem(idx, -(listState.layoutInfo.viewportSize.height * 0.65f).toInt())
+        }
+    }
+
+    // الرسالة تنحسب مقروءة لما تظهر بالشاشة نص ثانية والتطبيق مفتوح
+    LaunchedEffect(groupId, unreadEntry != null) {
+        if (unreadEntry == null) return@LaunchedEffect
+        snapshotFlow {
+            if (!AppState.foreground) 0L else {
+                val list = revNow.value
+                var mx = 0L
+                for (v in listState.layoutInfo.visibleItemsInfo) {
+                    val t = list.getOrNull(v.index)?.createdAt ?: continue
+                    if (t > mx) mx = t
+                }
+                mx
+            }
+        }.distinctUntilChanged().collectLatest { seen ->
+            if (seen <= readCursor) return@collectLatest
+            delay(500)
+            readCursor = seen
+            GroupReads.set(ctx, me, groupId, seen)
+        }
+    }
+
     // رسالة جديدة (مني: دائماً، من غيري: إذا كنت أقرأ آخر المحادثة) → انزل لها
     val newest = stable.lastOrNull()
     LaunchedEffect(newest?.key) {
+        if (unreadEntry == null) return@LaunchedEffect
         if (newest != null && (newest.from == me || listState.firstVisibleItemIndex <= 1)) {
             listState.scrollToItem(0)
         }
@@ -742,7 +800,10 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                             m.createdAt - older.createdAt < GROUP_AVATAR_GAP_MS
                         val fresh = remember(m.key) { m.createdAt >= openedAt - 1500L && animatedGroupMsgs.add(groupId + "/" + m.key) }
                         val prof = profiles[m.from]
+                        Column {
+                        if (unreadEntry?.firstKey == m.key) UnreadDivider(unreadEntry?.count ?: 0)
                         GroupMessageRow(
+                            unread = !mine && m.createdAt > readCursor,
                             m = m, mine = mine,
                             avatar = avatars[m.from],
                             showAvatar = showAvatar, tight = tight,
@@ -769,6 +830,7 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                                 }
                             }
                         )
+                        }
                     }
                 }
 
@@ -1153,6 +1215,7 @@ private fun GroupMessageRow(
     modifier: Modifier = Modifier,
     animateIn: Boolean = false,
     flash: Boolean = false,
+    unread: Boolean = false,
     onAvatarClick: () -> Unit = {},
     onToggleVoice: () -> Unit = {},
     onOpenMedia: () -> Unit = {},
@@ -1237,6 +1300,15 @@ private fun GroupMessageRow(
             )
         }
         Box(Modifier.fillMaxWidth()) {
+        // نقطة "غير مقروءة": تظهر بطرف الصف وتروح بحركة لما الرسالة تنقرا
+        androidx.compose.animation.AnimatedVisibility(
+            visible = unread,
+            modifier = Modifier.align(Alignment.CenterEnd).padding(horizontal = 4.dp),
+            enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn(),
+            exit = androidx.compose.animation.fadeOut(tween(350)) + androidx.compose.animation.scaleOut(tween(350))
+        ) {
+            Box(Modifier.size(10.dp).clip(CircleShape).background(AccentBlue))
+        }
         // أيقونة الرد تنكشف خلف الرسالة أثناء السحب
         if (swipeX != 0f) {
             val sp = (abs(swipeX) / maxSwipe).coerceIn(0f, 1f)
@@ -1313,6 +1385,27 @@ private fun GroupMessageRow(
             }
         }
         }
+    }
+}
+
+/** أول رسالة غير مقروءة (مفتاحها) وعدد الغير مقروء وقت فتح المجموعة */
+private class UnreadEntry(val firstKey: String?, val count: Int)
+
+/** فاصل "رسائل جديدة" فوق أول رسالة غير مقروءة */
+@Composable
+private fun UnreadDivider(count: Int) {
+    val line = AccentBlue.copy(alpha = 0.45f)
+    Row(
+        Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(Modifier.weight(1f).height(1.dp).background(line))
+        Text(
+            if (count > 0) "رسائل جديدة · $count" else "رسائل جديدة",
+            color = AccentBlue, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 10.dp)
+        )
+        Box(Modifier.weight(1f).height(1.dp).background(line))
     }
 }
 

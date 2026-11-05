@@ -242,6 +242,8 @@ class MessageListenerService : Service() {
                     val t = (last.children.firstOrNull()?.child("createdAt")?.value as? Number)?.toLong() ?: 0L
                     prefs.edit().putLong(key, t).apply()
                 }
+                // أول مرة نشوف المجموعة: الرسائل الجاية بعدها تظهر "غير مقروءة" لما أفتح المجموعة
+                GroupReads.seed(applicationContext, me, gid, prefs.getLong(key, 0L))
                 if (myUid != me || gid !in groupBusy) return@launch
                 val q = msgs.orderByChild("createdAt").startAt((prefs.getLong(key, 0L) + 1).toDouble()).limitToLast(10)
                 val l = object : ChildEventListener {
