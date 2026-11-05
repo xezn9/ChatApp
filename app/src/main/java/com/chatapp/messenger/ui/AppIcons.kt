@@ -89,6 +89,11 @@ object AppIcons {
         )
     }
 
+    /** باركود QR */
+    val QrCode: ImageVector by lazy {
+        icon("QrCode", "M3,11h8V3H3V11zM5,5h4v4H5V5zM3,21h8v-8H3V21zM5,15h4v4H5V15zM13,3v8h8V3H13zM19,9h-4V5h4V9zM19,19h2v2h-2zM13,13h2v2h-2zM15,15h2v2h-2zM13,17h2v2h-2zM15,19h2v2h-2zM17,17h2v2h-2zM17,13h2v2h-2zM19,15h2v2h-2z")
+    }
+
     /** تنزيل */
     val Download: ImageVector by lazy {
         icon("Download", "M19,9h-4V3H9v6H5l7,7 7,-7zM5,18v2h14v-2H5z")

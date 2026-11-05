@@ -22,6 +22,10 @@ const seen = new Map(); // منع تكرار الإشعار لنفس الرسا�
 export default {
   async fetch(req, env) {
     if (req.method === 'OPTIONS') return new Response(null, { status: 204 });
+    if (req.method === 'GET') {
+      const m = new URL(req.url).pathname.match(/^\/u\/([A-Za-z0-9_-]{1,128})\/?$/);
+      if (m) return profilePage(m[1]);
+    }
     if (req.method !== 'POST') return json({ ok: true, service: 'push-relay' });
     try {
       return await handle(req, env);
@@ -264,4 +268,29 @@ function pemToBuf(pem) {
   const buf = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
   return buf.buffer;
+}
+
+// ----------------------------------------------------------------------------
+// صفحة رابط الحساب (الباركود): GET /u/<uid>
+// تفتح التطبيق مباشرة على حساب المستخدم، وإذا التطبيق مو منصّب تعرض رسالة.
+// ----------------------------------------------------------------------------
+const APP_PACKAGE = 'com.e4classb.android';
+
+function profilePage(uid) {
+  const deep = `chatapp://user/${uid}`;
+  const intent = `intent://user/${uid}#Intent;scheme=chatapp;package=${APP_PACKAGE};end`;
+  const html = `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>فتح الحساب</title>
+<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0f1424;color:#fff;font-family:system-ui,sans-serif;text-align:center}
+.c{padding:28px;max-width:360px}a{display:inline-block;margin-top:18px;padding:14px 30px;border-radius:999px;background:#e91e8c;color:#fff;text-decoration:none;font-weight:700}
+p{color:#b0b3b8;line-height:1.7}</style></head><body><div class="c">
+<h2>جاري فتح الحساب بالتطبيق...</h2>
+<p>إذا ما انفتح التطبيق تلقائياً اضغط الزر. وإذا ما عندك التطبيق نصّبه أول وبعدها امسح الباركود مرة ثانية.</p>
+<a href="${intent}">فتح بالتطبيق</a></div>
+<script>
+var ua = navigator.userAgent || '';
+if (/Android/i.test(ua)) { location.replace(${JSON.stringify(intent)}); }
+else { setTimeout(function(){ location.href = ${JSON.stringify(deep)}; }, 100); }
+</script></body></html>`;
+  return new Response(html, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=3600' } });
 }

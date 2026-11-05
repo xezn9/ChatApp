@@ -44,6 +44,19 @@ class MainActivity : ComponentActivity() {
 
     /** ضغطة على إشعار رسالة = افتح محادثة المرسل */
     private fun handleIntent(i: Intent?) {
+        // رابط حساب من باركود: chatapp://user/<uid> أو https://.../u/<uid>
+        i?.data?.let { d ->
+            val seg = d.pathSegments
+            val uid = when {
+                d.scheme == "chatapp" && d.host == "user" -> seg.firstOrNull()
+                seg.size >= 2 && seg[0] == "u" -> seg[1]
+                else -> null
+            }
+            if (uid != null && Regex("^[A-Za-z0-9_-]{1,128}$").matches(uid)) {
+                Nav.openProfileUid = uid
+                i.data = null
+            }
+        }
         i?.getStringExtra(ChatMessagingService.EXTRA_OPEN_CHAT)?.let {
             Nav.openChatUid = it
             i.removeExtra(ChatMessagingService.EXTRA_OPEN_CHAT)

@@ -17,8 +17,8 @@ android {
         minSdk = 24
         targetSdk = 34
         // ارفع versionCode (رقم صحيح أكبر) مع كل نسخة جديدة تنشرها، حتى يظهر التحديث للمستخدمين
-        versionCode = 27
-        versionName = "2.16"
+        versionCode = 24
+        versionName = "2.13"
     }
 
     // مفتاح توقيع ثابت: كل نسخة تبنيها (من أي جهاز أو GitHub Actions) تنوقّع بنفس المفتاح،
@@ -92,6 +92,8 @@ dependencies {
     // عرض صور GIF المتحركة (البانر وخلفية المحادثات)
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("io.coil-kt:coil-gif:2.7.0")
+    // توليد باركود QR للحساب
+    implementation("com.google.zxing:core:3.5.3")
 }
 
 // حل خطأ checkDebugAarMetadata: تخطّي فحص بيانات مكتبات AAR (الفحص بس تحقق من متطلبات compileSdk/AGP ولا يؤثر على البناء)

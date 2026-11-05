@@ -212,6 +212,7 @@ fun AccountTab(
     var showViewer by remember { mutableStateOf(false) }
     var showStatusEditor by remember { mutableStateOf(false) }
     var showFriends by remember { mutableStateOf(false) }
+    var showQr by remember { mutableStateOf(false) }
     // إعدادات التطبيق: تنبعث من زر القائمة (الثلاث خطوط)
     var showSettings by remember { mutableStateOf(false) }
     var menuBounds by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
@@ -253,7 +254,7 @@ fun AccountTab(
         )
 
     // نخبر الشاشة الرئيسية حتى تخفي الشريط السفلي أثناء التعديل
-    val overlay = showSettings || showEdit || showStoryEditor || showViewer || showStatusEditor || showFriends || viewImage != null
+    val overlay = showSettings || showEdit || showStoryEditor || showViewer || showStatusEditor || showFriends || showQr || viewImage != null
     LaunchedEffect(overlay) { onOverlayChange(overlay) }
     DisposableEffect(Unit) { onDispose { onOverlayChange(false) } }
 
@@ -415,6 +416,16 @@ fun AccountTab(
                             )
                             Spacer(Modifier.height(18.dp))
                         }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        // زر باركود الحساب
+                        GlassButton(
+                            onClick = { showQr = true },
+                            backdrop = glass,
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Icon(AppIcons.QrCode, null, tint = Color.White, modifier = Modifier.size(24.dp))
+                        }
+                        Spacer(Modifier.width(10.dp))
                         Box(Modifier.onGloballyPositioned { friendsCenter = it.boundsInRoot().center }) {
                             GlassButton(
                                 onClick = { showFriends = true },
@@ -441,6 +452,7 @@ fun AccountTab(
                                     Text("${requests.size}", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
+                        }
                         }
                     }
                 }
@@ -533,6 +545,14 @@ fun AccountTab(
             onDismiss = { showFriends = false },
             onOpenProfile = onOpenProfile
         )
+    }
+    // باركود حسابي
+    androidx.compose.animation.AnimatedVisibility(
+        visible = showQr,
+        enter = androidx.compose.animation.fadeIn(tween(220)) + androidx.compose.animation.scaleIn(spring(0.85f, 320f), initialScale = 0.92f),
+        exit = androidx.compose.animation.fadeOut(tween(180)) + androidx.compose.animation.scaleOut(tween(200), targetScale = 0.95f)
+    ) {
+        QrCodeScreen(name = name, username = profile.username, onDismiss = { showQr = false })
     }
     // إعدادات التطبيق: الشاشة تتمدد من زر القائمة نفسه (حجمه وشكله) لين تغطي الشاشة كلها
     LiquidRevealOverlay(visible = showSettings, origin = menuBounds) {

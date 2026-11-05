@@ -223,6 +223,15 @@ private fun MainContent() {
             Nav.openChatUid = null
         }
     }
+    // رابط/باركود حساب = افتح بروفايل صاحبه فوراً
+    val pendingProfile = Nav.openProfileUid
+    LaunchedEffect(pendingProfile) {
+        if (pendingProfile != null) {
+            groupOpen = false
+            viewProfile = UserItem(pendingProfile, "", "", "")
+            Nav.openProfileUid = null
+        }
+    }
     BackHandler(enabled = groupOpen) { groupOpen = false }
     BackHandler(enabled = stickerOpen) { stickerOpen = false }
     BackHandler(enabled = supportThread != null) { supportThread = null }
