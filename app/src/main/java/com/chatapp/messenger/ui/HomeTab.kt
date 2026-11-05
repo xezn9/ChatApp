@@ -72,6 +72,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import com.chatapp.messenger.GroupItem
+import com.chatapp.messenger.GroupPreview
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -127,6 +131,20 @@ fun HomeTab(
     // لكل واجهة بحثها المستقل (حتى ما يتلخبط البحث أثناء حركة التبديل)
     var queryChats by remember { mutableStateOf("") }
     var queryGroups by remember { mutableStateOf("") }
+    // نتيجة البحث عن مجموعة (باليوزر) من كل المجموعات، مو بس مجموعاتي
+    var remoteGroup by remember { mutableStateOf<GroupPreview?>(null) }
+    var remoteSearching by remember { mutableStateOf(false) }
+    var joiningId by remember { mutableStateOf<String?>(null) }
+    val homeScope = rememberCoroutineScope()
+    LaunchedEffect(queryGroups) {
+        val h = queryGroups.trim().removePrefix("@").lowercase()
+        remoteGroup = null
+        if (!Repo.isValidUsername(h)) { remoteSearching = false; return@LaunchedEffect }
+        remoteSearching = true
+        kotlinx.coroutines.delay(400)
+        remoteGroup = try { Repo.findGroupByHandle(h) } catch (e: CancellationException) { throw e } catch (e: Exception) { null }
+        remoteSearching = false
+    }
     // قصص كل المستخدمين (مع قصتي أولاً)
     val stories by remember { Repo.activeStoriesFlow() }.collectAsState(initial = emptyList())
     var viewIndex by remember { mutableStateOf<Int?>(null) }
@@ -274,15 +292,46 @@ fun HomeTab(
                     }
                 }
                 // واجهة المجموعات: مجموعاتي الحقيقية (من قاعدة البيانات)
-                mode == 1 -> if (shownGroups.isEmpty()) {
-                    CenterText(
-                        if (q.isEmpty()) "ما عندك مجموعات بعد.\nاضغط زر إنشاء مجموعة حتى تبدأ أول مجموعة."
-                        else "ما لقيت مجموعة بهذا الاسم"
-                    )
-                } else {
-                    LazyColumn(contentPadding = PaddingValues(bottom = 130.dp)) {
-                        items(shownGroups, key = { it.id }) { g ->
-                            GroupRow(g, onClick = { onOpenGroup(g) })
+                mode == 1 -> {
+                    // المجموعة الي لقيتها باليوزر (إذا مو من مجموعاتي أصلاً)
+                    val remote = remoteGroup?.takeIf { r -> groups.none { it.id == r.id } }
+                    if (shownGroups.isEmpty() && remote == null) {
+                        CenterText(
+                            when {
+                                q.isEmpty() -> "ما عندك مجموعات بعد.\nاضغط زر إنشاء مجموعة حتى تبدأ أول مجموعة."
+                                remoteSearching -> "جاري البحث..."
+                                else -> "ما لقيت مجموعة بهذا الاسم أو اليوزر"
+                            }
+                        )
+                    } else {
+                        LazyColumn(contentPadding = PaddingValues(bottom = 130.dp)) {
+                            items(shownGroups, key = { it.id }) { g ->
+                                GroupRow(g, onClick = { onOpenGroup(g) })
+                            }
+                            if (remote != null) {
+                                item(key = "remote_" + remote.id) {
+                                    RemoteGroupRow(
+                                        r = remote,
+                                        joining = joiningId == remote.id,
+                                        onJoin = {
+                                            joiningId = remote.id
+                                            homeScope.launch {
+                                                try {
+                                                    Repo.joinGroup(remote.id)
+                                                    AppToast.show("انضممت للمجموعة")
+                                                    onOpenGroup(GroupItem(remote.id, remote.name, remote.handle, remote.bio, remote.avatar, "", 1, 0L))
+                                                } catch (e: CancellationException) {
+                                                    throw e
+                                                } catch (e: Exception) {
+                                                    AppToast.show(e.message?.takeIf { it.isNotBlank() } ?: "ما قدرت أنضم، جرّب مرة ثانية")
+                                                } finally {
+                                                    joiningId = null
+                                                }
+                                            }
+                                        }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -525,6 +574,42 @@ private fun UserRow(
 }
 
 /** صف مجموعة: صورة المجموعة + الاسم + آخر رسالة (أو @المعرّف وعدد الأعضاء) */
+/** نتيجة بحث عن مجموعة مو أنا عضو فيها: زر انضمام إذا مشاركة، وإلا "تحتاج دعوة" */
+@Composable
+private fun RemoteGroupRow(r: GroupPreview, joining: Boolean, onJoin: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        GroupAvatar(r.avatar, 52.dp)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(r.name, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                "@" + r.handle + if (r.bio.isNotBlank()) " · " + r.bio else "",
+                fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        if (r.publicJoin) {
+            Text(
+                if (joining) "..." else "انضمام",
+                color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clip(CircleShape)
+                    .background(Color(0xFF2F80FF))
+                    .clickable(enabled = !joining, onClick = onJoin)
+                    .padding(horizontal = 18.dp, vertical = 8.dp)
+            )
+        } else {
+            Text(
+                "خاصة · تحتاج دعوة", fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f)
+            )
+        }
+    }
+}
+
 @Composable
 private fun GroupRow(g: GroupItem, onClick: () -> Unit) {
     val last by remember(g.id) { Repo.groupLastMessageFlow(g.id) }.collectAsState(initial = null)

@@ -68,7 +68,15 @@ data class GroupSettings(
     val pinMessages: Boolean = false,
     val changeInfo: Boolean = false,
     /** الوضع البطيء: أقل فاصل (بالثواني) بين رسالتين للعضو العادي، 0 = مطفي */
-    val slowMode: Int = 0
+    val slowMode: Int = 0,
+    /** مشاركة المجموعة: أي شخص يلگاها بالبحث (باليوزر) أو من رابط المشاركة ينضم الها بدون دعوة */
+    val publicJoin: Boolean = false
+)
+
+/** معاينة مجموعة (من نتائج البحث باليوزر) قبل الانضمام الها */
+data class GroupPreview(
+    val id: String, val name: String, val handle: String, val bio: String,
+    val avatar: String, val publicJoin: Boolean
 )
 
 /** تقييد (كتم) عضو: until = وقت انتهاء التقييد بالميلي ثانية، 0 = دائم */
@@ -454,7 +462,8 @@ object Repo {
             if (h.isNotEmpty()) updates["groupHandles/$h"] = id
             updates["groups/$id/settings"] = hashMapOf<String, Any>(
                 "sendMessages" to true, "inviteUsers" to false,
-                "pinMessages" to false, "changeInfo" to false, "slowMode" to 0
+                "pinMessages" to false, "changeInfo" to false, "slowMode" to 0,
+                "publicJoin" to false
             )
             withTimeout(20_000) { rtdb.reference.updateChildren(updates).await() }
         } catch (e: Exception) {
@@ -491,7 +500,8 @@ object Repo {
             inviteUsers = st.flag("inviteUsers"),
             pinMessages = st.flag("pinMessages"),
             changeInfo = st.flag("changeInfo"),
-            slowMode = st.num("slowMode").toInt()
+            slowMode = st.num("slowMode").toInt(),
+            publicJoin = st.flag("publicJoin")
         )
         val restricted = s.child("restricted").children.mapNotNull { r ->
             val uid = r.key ?: return@mapNotNull null
@@ -699,10 +709,41 @@ object Repo {
                     "inviteUsers" to st.inviteUsers,
                     "pinMessages" to st.pinMessages,
                     "changeInfo" to st.changeInfo,
-                    "slowMode" to st.slowMode
+                    "slowMode" to st.slowMode,
+                    "publicJoin" to st.publicJoin
                 )
             )
         )
+
+    /** يدوّر على مجموعة باليوزر (بدون @). يرجع null إذا ما انوجدت. المعرّف فريد فالبحث بالضبط */
+    suspend fun findGroupByHandle(handle: String): GroupPreview? {
+        val h = handle.trim().removePrefix("@").lowercase()
+        if (!isValidUsername(h)) return null
+        val gid = withTimeout(15_000) { rtdb.getReference("groupHandles/$h").get().await() }.value as? String
+            ?: return null
+        val m = withTimeout(15_000) { rtdb.getReference("groups/$gid/meta").get().await() }
+        if (!m.exists()) return null
+        val pj = runCatching {
+            withTimeout(15_000) { rtdb.getReference("groups/$gid/settings/publicJoin").get().await() }.value == true
+        }.getOrDefault(false)
+        return GroupPreview(gid, m.str("name"), m.str("handle"), m.str("bio"), m.str("avatar"), pj)
+    }
+
+    /** انضمام ذاتي لمجموعة مشاركة (publicJoin). القواعد ترفض إذا المجموعة غير مشاركة أو إذا أنا محظور منها */
+    suspend fun joinGroup(gid: String) {
+        val me = auth.currentUser?.uid ?: throw IllegalStateException("لازم تسجّل دخول أول")
+        val updates = HashMap<String, Any?>()
+        updates["groups/$gid/members/$me"] = true
+        updates["userGroups/$me/$gid"] = true
+        try {
+            withTimeout(20_000) { rtdb.reference.updateChildren(updates).await() }
+        } catch (e: com.google.firebase.database.DatabaseException) {
+            throw Exception("ما تگدر تنضم لهذي المجموعة")
+        } catch (e: Exception) {
+            if (e.message?.contains("ermission", true) == true) throw Exception("ما تگدر تنضم لهذي المجموعة (خاصة أو محظور منها)")
+            throw e
+        }
+    }
 
     suspend fun addGroupMembers(gid: String, uids: Collection<String>) {
         if (uids.isEmpty()) return

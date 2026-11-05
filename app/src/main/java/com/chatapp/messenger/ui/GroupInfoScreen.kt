@@ -35,6 +35,9 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.ui.platform.LocalContext
+import android.content.Intent
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -102,6 +105,7 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
     val fg = glassFg(dark)
     val backdrop = rememberLayerBackdrop()
     val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
 
     val a = remember(g, me) { if (g != null) GroupAccess(g, me) else null }
     val names = rememberNames(remember(g) { if (g != null) (g.members + g.banned).distinct() else emptyList() })
@@ -226,6 +230,26 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
                                 if (a.canInvite) {
                                     InfoAction(backdrop, dark, AppIcons.GroupAdd, "إضافة أعضاء", "من أصدقائك", Color(0xFFFFA62B)) { showAdd = true }
                                 }
+                                // مشاركة المجموعة: تطلع نافذة المشاركة بيوزر المجموعة (أي شخص يبحث عنه ينضم إذا المجموعة مشاركة)
+                                if (g.item.handle.isNotBlank() && (g.settings.publicJoin || a.canBan)) {
+                                    InfoAction(
+                                        backdrop, dark, Icons.Filled.Share, "مشاركة المجموعة",
+                                        if (g.settings.publicJoin) "أي شخص ينضم الها باليوزر @${g.item.handle}" else "فعّل \"مشاركة المجموعة\" من الصلاحيات أول",
+                                        Color(0xFF34C759)
+                                    ) {
+                                        if (g.settings.publicJoin) {
+                                            val text = "انضم لمجموعة «${g.item.name}» على ChatApp\n" +
+                                                "ابحث عنها بقسم المجموعات باليوزر: @${g.item.handle}"
+                                            val send = Intent(Intent.ACTION_SEND).apply {
+                                                type = "text/plain"
+                                                putExtra(Intent.EXTRA_TEXT, text)
+                                            }
+                                            ctx.startActivity(Intent.createChooser(send, "مشاركة المجموعة").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                        } else {
+                                            AppToast.show("فعّل \"مشاركة المجموعة\" من صلاحيات الأعضاء أول")
+                                        }
+                                    }
+                                }
                                 if (a.canBan) {
                                     InfoAction(backdrop, dark, Icons.Filled.Settings, "صلاحيات الأعضاء", "الإرسال، الدعوة، التثبيت، الوضع البطيء", Color(0xFF8A5CFF)) { showSettings = true }
                                     InfoAction(backdrop, dark, AppIcons.Block, "المحظورون", "${g.banned.size} محظور", DangerColor) { showBanned = true }
@@ -317,7 +341,7 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
 
             if (showSettings) {
                 SettingsDialog(
-                    current = g.settings, backdrop = backdrop, dark = dark,
+                    current = g.settings, hasHandle = g.item.handle.isNotBlank(), backdrop = backdrop, dark = dark,
                     onDismiss = { showSettings = false },
                     onSave = { s ->
                         showSettings = false
@@ -656,7 +680,7 @@ private fun AddMembersDialog(g: GroupFull, backdrop: Backdrop, dark: Boolean, on
 }
 
 @Composable
-private fun SettingsDialog(current: GroupSettings, backdrop: Backdrop, dark: Boolean, onDismiss: () -> Unit, onSave: (GroupSettings) -> Unit) {
+private fun SettingsDialog(current: GroupSettings, hasHandle: Boolean, backdrop: Backdrop, dark: Boolean, onDismiss: () -> Unit, onSave: (GroupSettings) -> Unit) {
     val fg = glassFg(dark)
     var s by remember { mutableStateOf(current) }
     val slowOptions = listOf(0 to "مطفي", 10 to "10 ث", 30 to "30 ث", 60 to "دقيقة", 300 to "5 د", 900 to "15 د", 3600 to "ساعة")
@@ -669,6 +693,13 @@ private fun SettingsDialog(current: GroupSettings, backdrop: Backdrop, dark: Boo
         Column {
             Text("شنو يقدر يسوي الأعضاء العاديين (المشرفون لهم صلاحياتهم الخاصة):", color = fg.copy(alpha = 0.8f), fontSize = 13.sp)
             Spacer(Modifier.height(8.dp))
+            SwitchRow("مشاركة المجموعة (أي شخص ينضم)", s.publicJoin, backdrop, dark) { s = s.copy(publicJoin = it) }
+            Text(
+                if (hasHandle) "إذا شغّلتها، أي شخص يبحث عن يوزر المجموعة بقسم المجموعات يلگاها وينضم الها بدون دعوة، وتگدر تشاركها بزر المشاركة."
+                else "هذي المجموعة بدون يوزر، فما راح تطلع بالبحث. المشاركة تشتغل بس للمجموعات الي الها يوزر.",
+                color = fg.copy(alpha = 0.6f), fontSize = 12.sp
+            )
+            Spacer(Modifier.height(6.dp))
             SwitchRow("إرسال الرسائل", s.sendMessages, backdrop, dark) { s = s.copy(sendMessages = it) }
             SwitchRow("إضافة أعضاء", s.inviteUsers, backdrop, dark) { s = s.copy(inviteUsers = it) }
             SwitchRow("تثبيت الرسائل", s.pinMessages, backdrop, dark) { s = s.copy(pinMessages = it) }
