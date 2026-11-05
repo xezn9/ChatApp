@@ -552,7 +552,7 @@ fun AccountTab(
         enter = androidx.compose.animation.fadeIn(tween(220)) + androidx.compose.animation.scaleIn(spring(0.85f, 320f), initialScale = 0.92f),
         exit = androidx.compose.animation.fadeOut(tween(180)) + androidx.compose.animation.scaleOut(tween(200), targetScale = 0.95f)
     ) {
-        QrCodeScreen(name = name, username = profile.username, onDismiss = { showQr = false })
+        QrCodeScreen(name = name, username = profile.username, avatar = profile.avatar, onDismiss = { showQr = false })
     }
     // إعدادات التطبيق: الشاشة تتمدد من زر القائمة نفسه (حجمه وشكله) لين تغطي الشاشة كلها
     LiquidRevealOverlay(visible = showSettings, origin = menuBounds) {
