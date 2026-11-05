@@ -49,6 +49,9 @@ async function handle(req, env) {
   if (body.action === 'call' || body.action === 'call_cancel') {
     return handleCall(body, sender, sa, project, rtdbUrl);
   }
+  if (body.action === 'gmsg') {
+    return handleGroup(body, sender, sa, project, rtdbUrl);
+  }
   const to = String(body.to || '');
   const msgId = String(body.msgId || '');
   if (!ID_RE.test(to) || !ID_RE.test(msgId) || to === sender) return json({ ok: false, error: 'bad request' }, 400);
@@ -91,6 +94,70 @@ async function handle(req, env) {
     text: msg.text.slice(0, 200), chatId: cid
   }, '120s');
   return json({ ok: true, sent });
+}
+
+// ---------------------------------------------------------------- رسائل المجموعات
+
+// حد Cloudflare المجاني: 50 طلب خارجي لكل استدعاء. فنرسل لـ 10 أعضاء بكل استدعاء،
+// والتطبيق يكرر الطلب (offset) لين يخلص الأعضاء.
+const GROUP_CHUNK = 10;
+const GROUP_MAX_MEMBERS = 300; // المجموعات الأكبر: الإشعار لأول 300 عضو فقط
+
+async function handleGroup(body, sender, sa, project, rtdbUrl) {
+  const gid = String(body.gid || '');
+  const msgId = String(body.msgId || '');
+  const offset = Math.max(0, parseInt(body.offset, 10) || 0);
+  if (!ID_RE.test(gid) || !ID_RE.test(msgId)) return json({ ok: false, error: 'bad request' }, 400);
+
+  // 1) الرسالة موجودة فعلاً ومرسلها هو صاحب التوكن
+  const rtTok = await accessToken(sa, SCOPES.rtdb);
+  const msg = await rtdbGet(rtdbUrl, `groupChats/${gid}/messages/${msgId}`, rtTok);
+  if (!msg || msg.from !== sender || typeof msg.text !== 'string') {
+    return json({ ok: false, error: 'message not found' }, 403);
+  }
+  if (Math.abs(Date.now() - Number(msg.createdAt || 0)) > 3 * 60 * 1000) {
+    return json({ ok: true, skipped: 'old' });
+  }
+
+  // 2) المرسل عضو بالمجموعة (shallow: نجيب بس معرّفات الأعضاء)
+  const members = await rtdbGet(rtdbUrl, `groups/${gid}/members`, rtTok, 'shallow=true');
+  if (!members || members[sender] !== true) return json({ ok: false, error: 'not a member' }, 403);
+
+  const ids = Object.keys(members).filter((u) => u !== sender && ID_RE.test(u)).sort().slice(0, GROUP_MAX_MEMBERS);
+  const batch = ids.slice(offset, offset + GROUP_CHUNK);
+  const nextOffset = offset + GROUP_CHUNK < ids.length ? offset + GROUP_CHUNK : null;
+  const reply = (extra) => json(nextOffset === null ? { ok: true, ...extra } : { ok: true, next: nextOffset, ...extra });
+  if (batch.length === 0) return reply({ skipped: 'no recipients' });
+
+  const dedupe = `g/${sender}/${msgId}/${offset}`;
+  if (seen.has(dedupe)) return reply({ skipped: 'duplicate' });
+  seen.set(dedupe, Date.now());
+  if (seen.size > 2000) for (const k of [...seen.keys()].slice(0, 1000)) seen.delete(k);
+
+  // 3) اسم المجموعة + اسم المرسل
+  const fsTok = await accessToken(sa, SCOPES.fs);
+  const fsBase = `https://firestore.googleapis.com/v1/projects/${project}/databases/(default)/documents`;
+  const [groupName, senderName] = await Promise.all([
+    rtdbGet(rtdbUrl, `groups/${gid}/meta/name`, rtTok).catch(() => null),
+    fetch(`${fsBase}/profiles/${sender}`, { headers: { Authorization: 'Bearer ' + fsTok } })
+      .then(async (r) => (r.ok ? ((await r.json()).fields?.name?.stringValue || '') : ''))
+      .catch(() => '')
+  ]);
+  await accessToken(sa, SCOPES.fcm); // نسخّن التوكن مرة وحدة قبل الإرسال المتوازي
+
+  // 4) لكل عضو: توكنات أجهزته ثم الإرسال (data فقط، التطبيق يبني الإشعار)
+  const counts = await Promise.all(batch.map(async (uid) => {
+    try {
+      const tokens = await listTokens(fsBase, uid, fsTok);
+      if (tokens.length === 0) return 0;
+      return await deliver(sa, project, fsBase, fsTok, uid, tokens, {
+        type: 'gmsg', gid, msgId, from: sender, to: uid,
+        fromName: senderName, groupName: typeof groupName === 'string' ? groupName : '',
+        text: msg.text.slice(0, 200), createdAt: String(msg.createdAt || '')
+      }, '120s');
+    } catch (_) { return 0; }
+  }));
+  return reply({ sent: counts.reduce((a, b) => a + b, 0), recipients: batch.length });
 }
 
 // ---------------------------------------------------------------- المكالمات الصوتية
@@ -173,8 +240,8 @@ async function listTokens(fsBase, uid, tok) {
   return (j.documents || []).map((d) => decodeURIComponent(d.name.split('/').pop()));
 }
 
-async function rtdbGet(base, path, tok) {
-  const r = await fetch(`${base}/${path}.json?access_token=${encodeURIComponent(tok)}`);
+async function rtdbGet(base, path, tok, query = '') {
+  const r = await fetch(`${base}/${path}.json?access_token=${encodeURIComponent(tok)}${query ? '&' + query : ''}`);
   if (!r.ok) return null;
   return await r.json();
 }

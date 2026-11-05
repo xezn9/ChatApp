@@ -22,6 +22,7 @@ import com.google.android.gms.tasks.Tasks
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import kotlinx.coroutines.runBlocking
 import java.util.concurrent.TimeUnit
 
 /**
@@ -39,6 +40,10 @@ class ChatMessagingService : FirebaseMessagingService() {
 
     override fun onMessageReceived(message: RemoteMessage) {
         val d = message.data
+        if (d["type"] == "gmsg") {
+            onGroupMessage(d)
+            return
+        }
         if (d["type"] != "msg") return
         val me = Repo.auth.currentUser?.uid ?: return       // بدون حساب = بدون إشعارات
         if (d["to"] != me) return                           // الإشعار لحساب ثاني
@@ -101,6 +106,28 @@ class ChatMessagingService : FirebaseMessagingService() {
             .build()
         @Suppress("MissingPermission")
         NotificationManagerCompat.from(this).notify(id, n)
+    }
+
+    /** رسالة بمجموعة: عنوان الإشعار اسم المجموعة، وضغطة عليه تفتح المجموعة */
+    private fun onGroupMessage(d: Map<String, String>) {
+        val me = Repo.auth.currentUser?.uid ?: return       // بدون حساب = بدون إشعارات
+        if (d["to"] != me) return                           // الإشعار لحساب ثاني
+        if (AppState.foreground) return                     // التطبيق مفتوح
+        val gid = d["gid"] ?: return
+        val from = d["from"] ?: return
+        if (from == me) return
+        val text = d["text"] ?: return
+
+        // نفس الرسالة ممكن توصل من الخدمة الاحتياطية بعد: الي يسبق يطلع الإشعار
+        val msgId = d["msgId"].orEmpty()
+        if (msgId.isNotEmpty() && !ChatNotifier.claim("g:$gid:$msgId")) return
+        d["createdAt"]?.toLongOrNull()?.let { ChatNotifier.advanceGroupCursor(applicationContext, gid, it) }
+
+        runBlocking {
+            ChatNotifier.showGroup(
+                applicationContext, gid, d["groupName"].orEmpty(), from, d["fromName"].orEmpty(), text
+            )
+        }
     }
 
     /** قص الصورة على شكل دائرة */

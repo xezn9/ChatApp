@@ -642,7 +642,9 @@ object Repo {
             "groupChats/$gid/messages/$key" to msg,
             "groupChats/$gid/lastSent/$me" to ServerValue.TIMESTAMP
         )
-        rtdb.reference.updateChildren(updates).addOnFailureListener { e -> onFail(e) }
+        rtdb.reference.updateChildren(updates)
+            .addOnSuccessListener { Push.notifyGroup(gid, key) }   // إشعار لباقي الأعضاء (حتى لو تطبيقهم مطفي)
+            .addOnFailureListener { e -> onFail(e) }
     }
 
     /** رسالة صوتية بالمجموعة (بعد ما انرفع الملف بنوع "audio" لـ groupMedia/<gid>) */
@@ -661,7 +663,9 @@ object Repo {
             "groupChats/$gid/messages/$key" to msg,
             "groupChats/$gid/lastSent/$me" to ServerValue.TIMESTAMP
         )
-        rtdb.reference.updateChildren(updates).addOnFailureListener { e -> onFail(e) }
+        rtdb.reference.updateChildren(updates)
+            .addOnSuccessListener { Push.notifyGroup(gid, key) }   // إشعار لباقي الأعضاء (حتى لو تطبيقهم مطفي)
+            .addOnFailureListener { e -> onFail(e) }
     }
 
     /** صورة/فيديو بالمجموعة (بعد ما انرفع الملف لـ groupMedia/<gid>) */
@@ -683,7 +687,9 @@ object Repo {
             "groupChats/$gid/messages/$key" to msg,
             "groupChats/$gid/lastSent/$me" to ServerValue.TIMESTAMP
         )
-        rtdb.reference.updateChildren(updates).addOnFailureListener { e -> onFail(e) }
+        rtdb.reference.updateChildren(updates)
+            .addOnSuccessListener { Push.notifyGroup(gid, key) }   // إشعار لباقي الأعضاء (حتى لو تطبيقهم مطفي)
+            .addOnFailureListener { e -> onFail(e) }
     }
 
     /** ملف بالمجموعة (بعد ما انرفع بنوع "file") */
@@ -703,7 +709,9 @@ object Repo {
             "groupChats/$gid/messages/$key" to msg,
             "groupChats/$gid/lastSent/$me" to ServerValue.TIMESTAMP
         )
-        rtdb.reference.updateChildren(updates).addOnFailureListener { e -> onFail(e) }
+        rtdb.reference.updateChildren(updates)
+            .addOnSuccessListener { Push.notifyGroup(gid, key) }   // إشعار لباقي الأعضاء (حتى لو تطبيقهم مطفي)
+            .addOnFailureListener { e -> onFail(e) }
     }
 
     suspend fun deleteGroupMessage(gid: String, mid: String, mediaId: String = "") {

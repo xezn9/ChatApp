@@ -208,7 +208,7 @@ private fun MainContent() {
             Repo.setPresence(false)
         }
     }
-    // ضغطة على إشعار = افتح محادثة المرسل
+    // ضغطة على إشعار = افتح محادثة المرسل (أو المجموعة)
     val pendingChat = Nav.openChatUid
     LaunchedEffect(pendingChat) {
         if (pendingChat != null) {
@@ -217,6 +217,12 @@ private fun MainContent() {
             if (pendingChat.startsWith("support:")) {
                 chatWith = null
                 supportThread = pendingChat.removePrefix("support:")
+            } else if (pendingChat.startsWith("group:")) {
+                // ضغطة على إشعار مجموعة = افتح المجموعة
+                chatWith = null
+                supportThread = null
+                groupInfoOpen = false
+                openGroupId = pendingChat.removePrefix("group:")
             } else {
                 chatWith = UserItem(pendingChat, "", "", "")
             }

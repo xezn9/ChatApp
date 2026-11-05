@@ -17,9 +17,11 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.database.ChildEventListener
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.DatabaseReference
+import com.google.firebase.database.Query
 import com.google.firebase.database.ValueEventListener
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -189,8 +191,101 @@ class MessageListenerService : Service() {
         androidx.core.app.NotificationManagerCompat.from(this).notify(id, n)
     }
 
+    // ------------------------------------------------------------ رسائل المجموعات
+    // نسمع لقائمة مجموعاتي (userGroups/<me>)، ولكل مجموعة نسمع للرسائل الأحدث من آخر مؤشر معالج.
+    // الإشعار نفسه عبر ChatNotifier.showGroup (نفس الي تستخدمه FCM، مع منع التكرار).
+    private var groupsRef: DatabaseReference? = null
+    private var groupsListener: ValueEventListener? = null
+    private val groupBusy = ConcurrentHashMap.newKeySet<String>()
+    private val groupQueries = ConcurrentHashMap<String, Pair<Query, ChildEventListener>>()
+
+    private fun stopGroupListening() {
+        groupsListener?.let { groupsRef?.removeEventListener(it) }
+        groupsListener = null
+        groupsRef = null
+        groupQueries.values.forEach { (q, l) -> q.removeEventListener(l) }
+        groupQueries.clear()
+        groupBusy.clear()
+    }
+
+    private fun startGroupListening(me: String) {
+        stopGroupListening()
+        val ref = Repo.rtdb.getReference("userGroups/$me")
+        val l = object : ValueEventListener {
+            override fun onDataChange(snap: DataSnapshot) {
+                val ids = snap.children.mapNotNull { it.key }.take(MAX_GROUPS).toSet()
+                groupBusy.filter { it !in ids }.forEach { detachGroup(it) }
+                ids.filter { it !in groupBusy }.forEach { attachGroup(me, it) }
+            }
+
+            override fun onCancelled(e: DatabaseError) {}
+        }
+        groupsRef = ref
+        groupsListener = l
+        ref.addValueEventListener(l)
+    }
+
+    private fun detachGroup(gid: String) {
+        groupQueries.remove(gid)?.let { (q, l) -> q.removeEventListener(l) }
+        groupBusy.remove(gid)
+    }
+
+    private fun attachGroup(me: String, gid: String) {
+        if (!groupBusy.add(gid)) return
+        scope.launch {
+            try {
+                val key = "g_$gid"
+                val msgs = Repo.rtdb.getReference("groupChats/$gid/messages")
+                if (!prefs.contains(key)) {
+                    // أول مرة نشوف المجموعة على هذا الجهاز: ما نطلع إشعار للتاريخ القديم
+                    val last = msgs.orderByChild("createdAt").limitToLast(1).get().await()
+                    val t = (last.children.firstOrNull()?.child("createdAt")?.value as? Number)?.toLong() ?: 0L
+                    prefs.edit().putLong(key, t).apply()
+                }
+                if (myUid != me || gid !in groupBusy) return@launch
+                val q = msgs.orderByChild("createdAt").startAt((prefs.getLong(key, 0L) + 1).toDouble()).limitToLast(10)
+                val l = object : ChildEventListener {
+                    override fun onChildAdded(s: DataSnapshot, previous: String?) = onGroupMessage(me, gid, s)
+                    override fun onChildChanged(s: DataSnapshot, previous: String?) {}
+                    override fun onChildRemoved(s: DataSnapshot) {}
+                    override fun onChildMoved(s: DataSnapshot, previous: String?) {}
+                    override fun onCancelled(e: DatabaseError) {
+                        groupQueries.remove(gid)
+                        groupBusy.remove(gid)
+                    }
+                }
+                groupQueries[gid] = q to l
+                q.addChildEventListener(l)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                groupBusy.remove(gid)
+                // فشل (نت ضعيف مثلاً): نعيد المحاولة بعد نص دقيقة
+                delay(30_000)
+                if (myUid == me) attachGroup(me, gid)
+            }
+        }
+    }
+
+    private fun onGroupMessage(me: String, gid: String, s: DataSnapshot) {
+        val t = (s.child("createdAt").value as? Number)?.toLong() ?: return
+        if (!ChatNotifier.advanceGroupCursor(applicationContext, gid, t)) return   // معالجة قبل
+        val from = s.child("from").value as? String ?: return
+        if (from == me || s.child("deleted").value == true) return
+        val text = s.child("text").value as? String ?: return
+        if (text.isBlank() || AppState.foreground) return          // التطبيق مفتوح: الرسالة تبين بالمحادثة
+        val mid = s.key ?: return
+        if (!ChatNotifier.claim("g:$gid:$mid")) return             // FCM سبقنا
+        scope.launch {
+            try {
+                ChatNotifier.showGroup(applicationContext, gid, "", from, "", text)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
     private fun stopListening() {
         stopSupportListening()
+        stopGroupListening()
         listener?.let { listenRef?.removeEventListener(it) }
         listener = null
         listenRef = null
@@ -204,6 +299,7 @@ class MessageListenerService : Service() {
         initialDone = false
 
         startSupportListening(me)
+        startGroupListening(me)
         val ref = Repo.rtdb.getReference("userChats/$me")
         val l = object : ValueEventListener {
             override fun onDataChange(snap: DataSnapshot) {
@@ -282,6 +378,7 @@ class MessageListenerService : Service() {
 
     companion object {
         private const val NOTIF_ID = 7001
+        private const val MAX_GROUPS = 100
 
         fun start(ctx: Context) {
             try {

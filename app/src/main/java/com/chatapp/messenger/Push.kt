@@ -23,6 +23,58 @@ object Push {
     fun notify(to: String, msgId: String) =
         enqueue(JSONObject().put("to", to).put("msgId", msgId))
 
+    private const val DONE = -1
+    private const val FAILED = -2
+    private const val MAX_GROUP_ROUNDS = 30
+
+    /**
+     * إشعار رسالة مجموعة. الـ Worker يرسل لعدد محدود من الأعضاء بكل طلب (حد Cloudflare المجاني)،
+     * ويرجع "next" إذا بعد فيه أعضاء، فنكرر الطلب لين يخلصون.
+     */
+    fun notifyGroup(gid: String, msgId: String) {
+        if (PUSH_URL.isBlank()) return
+        scope.launch {
+            var offset = 0
+            repeat(MAX_GROUP_ROUNDS) {
+                var next = FAILED
+                for (attempt in 0..1) {
+                    next = runCatching { postGroup(gid, msgId, offset) }.getOrDefault(FAILED)
+                    if (next != FAILED) break
+                    if (attempt == 0) kotlinx.coroutines.delay(2000)
+                }
+                if (next < 0) return@launch      // خلصوا، أو فشل نهائي
+                offset = next
+            }
+        }
+    }
+
+    /** يرجع الـ offset التالي، أو DONE إذا خلصوا/رفض نهائي، أو FAILED للمحاولة مرة ثانية */
+    private suspend fun postGroup(gid: String, msgId: String, offset: Int): Int {
+        val user = FirebaseAuth.getInstance().currentUser ?: return DONE
+        val token = user.getIdToken(false).await().token ?: return FAILED
+        val c = URL(PUSH_URL).openConnection() as HttpURLConnection
+        try {
+            c.requestMethod = "POST"
+            c.connectTimeout = 8000
+            c.readTimeout = 15000
+            c.doOutput = true
+            c.setRequestProperty("Authorization", "Bearer $token")
+            c.setRequestProperty("Content-Type", "application/json")
+            val body = JSONObject().put("action", "gmsg").put("gid", gid)
+                .put("msgId", msgId).put("offset", offset).toString()
+            c.outputStream.use { it.write(body.toByteArray()) }
+            val code = c.responseCode
+            if (code in 200..299) {
+                val txt = c.inputStream.bufferedReader().use { it.readText() }
+                val next = JSONObject(txt).optInt("next", DONE)
+                return if (next >= 0) next else DONE
+            }
+            return if (code in 400..499 && code != 401) DONE else FAILED
+        } finally {
+            c.disconnect()
+        }
+    }
+
     private fun enqueue(body: JSONObject) {
         if (PUSH_URL.isBlank()) return
         scope.launch {
