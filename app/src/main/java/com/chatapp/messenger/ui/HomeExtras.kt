@@ -73,6 +73,14 @@ import com.chatapp.messenger.ui.glass.GlassButton
 import com.chatapp.messenger.ui.theme.AppFont
 import com.chatapp.messenger.ui.theme.isAppDark
 import com.kyant.backdrop.Backdrop
+import androidx.compose.foundation.layout.heightIn
+import com.chatapp.messenger.ui.theme.GlassFx
+import com.chatapp.messenger.ui.theme.glassSurfaceLayer
+import com.kyant.backdrop.effects.vibrancy
+import com.kyant.backdrop.effects.lens
+import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.drawBackdrop
+import androidx.compose.ui.graphics.Brush
 import kotlinx.coroutines.launch
 
 /** نص مقدمة الدردشة الافتراضي */
@@ -91,15 +99,23 @@ internal fun agoText(at: Long): String {
 }
 
 // ============================================================================
-//  قائمة الضغط المطوّل على محادثة: كتم / تحديد / حذف
+//  قائمة الضغط المطوّل على محادثة (Liquid Glass صافي: انكسار + ضبابية خفيفة + شفافية)
 // ============================================================================
 @Composable
 internal fun ChatActionSheet(
     backdrop: Backdrop,
     title: String,
+    pinned: Boolean,
+    starred: Boolean,
     muted: Boolean,
+    restricted: Boolean,
+    blocked: Boolean,
+    onPin: () -> Unit,
+    onStar: () -> Unit,
     onMute: () -> Unit,
+    onRestrict: () -> Unit,
     onSelect: () -> Unit,
+    onBlock: () -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -107,43 +123,84 @@ internal fun ChatActionSheet(
     val fg = glassFg(dark)
     val enter = remember { Animatable(0f) }
     LaunchedEffect(Unit) { enter.animateTo(1f, spring(dampingRatio = 0.75f, stiffness = 420f)) }
-    val shape = RoundedCornerShape(28.dp)
+    val shape = RoundedCornerShape(32.dp)
+    val danger = Color(0xFFFF5A5F)
     BackHandler(onBack = onDismiss)
     Box(
         Modifier.fillMaxSize()
             .graphicsLayer { alpha = enter.value.coerceIn(0f, 1f) }
-            .background(Color.Black.copy(alpha = 0.40f))
+            .background(Color.Black.copy(alpha = 0.22f))
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
         contentAlignment = Alignment.Center
     ) {
         Column(
-            Modifier.padding(32.dp).widthIn(max = 340.dp).fillMaxWidth()
+            Modifier.padding(horizontal = 32.dp, vertical = 24.dp).widthIn(max = 340.dp).fillMaxWidth()
                 .graphicsLayer {
                     val s = 0.82f + 0.18f * enter.value
                     scaleX = s; scaleY = s
                 }
-                .glassSurface(backdrop, dark, shape, blurDp = 16f)
+                .drawBackdrop(
+                    backdrop = backdrop,
+                    shape = { shape },
+                    effects = {
+                        vibrancy()
+                        // ضبابية خفيفة + انكسار واضح عند الحواف
+                        blur((4f.dp.toPx()) * GlassFx.blurK)
+                        lens((16f.dp.toPx()) * GlassFx.refractK, (32f.dp.toPx()) * GlassFx.refractK)
+                    },
+                    onDrawSurface = {
+                        glassSurfaceLayer {
+                            drawRect(if (dark) Color.White.copy(0.07f) else Color.White.copy(0.28f))
+                            drawRect(
+                                Brush.verticalGradient(
+                                    listOf(Color.White.copy(0.10f), Color.Transparent), endY = size.height * 0.45f
+                                )
+                            )
+                        }
+                    }
+                )
+                .border(0.8.dp, glassBorderBrush(0.60f), shape)
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                 .padding(vertical = 10.dp)
         ) {
             Text(
                 title, color = fg.copy(0.7f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-                maxLines = 1, modifier = Modifier.padding(horizontal = 22.dp, vertical = 10.dp)
+                maxLines = 1, modifier = Modifier.padding(horizontal = 22.dp, vertical = 8.dp)
             )
-            SheetRow(if (muted) "🔔" else "🔕", if (muted) "إلغاء الكتم" else "كتم الإشعارات", fg) { onMute() }
-            SheetRow("☑️", "تحديد", fg) { onSelect() }
-            SheetRow("🗑️", "حذف المحادثة", Color(0xFFFF5A5F)) { onDelete() }
+            Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState())) {
+                SheetRow(AppIcons.Pin, if (pinned) "إلغاء التثبيت" else "تثبيت", fg) { onPin() }
+                SheetRow(if (starred) AppIcons.StarFilled else AppIcons.StarOutline,
+                    if (starred) "إزالة النجمة" else "تمييز بنجمة", fg,
+                    iconTint = if (starred) Color(0xFFFFC107) else null) { onStar() }
+                SheetRow(if (muted) AppIcons.Bell else AppIcons.BellOff, if (muted) "إلغاء الكتم" else "كتم الإشعارات", fg) { onMute() }
+                SheetRow(AppIcons.Restrict, if (restricted) "إلغاء التقييد" else "تقييد", fg) { onRestrict() }
+                SheetRow(AppIcons.CheckBox, "تحديد", fg) { onSelect() }
+                SheetDivider(fg)
+                SheetRow(AppIcons.Block, if (blocked) "إلغاء الحظر" else "حظر", danger) { onBlock() }
+                SheetRow(AppIcons.Trash, "حذف المحادثة", danger) { onDelete() }
+            }
         }
     }
 }
 
 @Composable
-private fun SheetRow(icon: String, label: String, color: Color, onClick: () -> Unit) {
+private fun SheetDivider(fg: Color) {
+    Box(Modifier.padding(horizontal = 22.dp, vertical = 4.dp).fillMaxWidth().height(0.7.dp).background(fg.copy(0.14f)))
+}
+
+@Composable
+private fun SheetRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    color: Color,
+    iconTint: Color? = null,
+    onClick: () -> Unit
+) {
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 22.dp, vertical = 14.dp),
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 22.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(icon, fontSize = 20.sp)
+        Icon(icon, null, tint = iconTint ?: color, modifier = Modifier.size(24.dp))
         Spacer(Modifier.width(14.dp))
         Text(label, color = color, fontSize = 17.sp, fontWeight = FontWeight.Medium)
     }

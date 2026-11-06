@@ -70,6 +70,8 @@ object ChatNotifier {
     suspend fun show(ctx: Context, from: String, text: String) {
         // محادثة مكتومة: بدون إشعار
         if (MuteStore.isMuted(ctx, from)) return
+        // محادثة مقيّدة: بدون إشعار
+        if (RestrictStore.store.has(ctx, from)) return
         if (Build.VERSION.SDK_INT >= 33 &&
             ctx.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) return

@@ -95,6 +95,8 @@ import com.chatapp.messenger.Profile
 import com.chatapp.messenger.Repo
 import com.chatapp.messenger.UserItem
 import com.chatapp.messenger.MuteStore
+import com.chatapp.messenger.StarStore
+import com.chatapp.messenger.RestrictStore
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.Arrangement
@@ -169,6 +171,16 @@ fun HomeTab(
     var selecting by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
     var actionTarget by remember { mutableStateOf<ChatTarget?>(null) }
+    var blockTarget by remember { mutableStateOf<ChatTarget?>(null) }
+    LaunchedEffect(Unit) { StarStore.store.init(ctx); RestrictStore.store.init(ctx) }
+    val starredAll by StarStore.store.flags.collectAsState()
+    val restrictedAll by RestrictStore.store.flags.collectAsState()
+    val myStarred = remember(starredAll, myUid) {
+        starredAll.filter { it.startsWith("$myUid:") }.map { it.removePrefix("$myUid:") }.toSet()
+    }
+    val myRestricted = remember(restrictedAll, myUid) {
+        restrictedAll.filter { it.startsWith("$myUid:") }.map { it.removePrefix("$myUid:") }.toSet()
+    }
     var bulkDelete by remember { mutableStateOf(false) }
     var showIntro by remember { mutableStateOf(false) }
     var showActivity by remember { mutableStateOf(false) }
@@ -374,6 +386,8 @@ fun HomeTab(
                                 unread = c.unread,
                                 showPresence = true,
                                 muted = c.uid in myMuted,
+                                starred = c.uid in myStarred,
+                                restricted = c.uid in myRestricted,
                                 selectMode = selecting,
                                 selected = c.uid in selectedIds,
                                 // ضغطة مطولة = قائمة (كتم / تحديد / حذف)
@@ -459,19 +473,68 @@ fun HomeTab(
 
     // قائمة الضغط المطوّل على محادثة
     actionTarget?.let { t ->
+        val isBlocked by remember(t.uid) { Repo.blockedFlow(myUid, t.uid) }.collectAsState(initial = false)
         ChatActionSheet(
             backdrop = bd,
             title = t.name,
+            pinned = t.uid in pinned,
+            starred = t.uid in myStarred,
             muted = t.uid in myMuted,
+            restricted = t.uid in myRestricted,
+            blocked = isBlocked,
+            onPin = {
+                val now = t.uid !in pinned
+                Repo.setPinned(t.uid, now)
+                AppToast.show(if (now) "تم تثبيت ${t.name}" else "تم إلغاء تثبيت ${t.name}")
+                actionTarget = null
+            },
+            onStar = {
+                val now = t.uid !in myStarred
+                StarStore.store.set(ctx, t.uid, now)
+                AppToast.show(if (now) "تم تمييز ${t.name} بنجمة" else "تمت إزالة النجمة عن ${t.name}")
+                actionTarget = null
+            },
             onMute = {
                 val nowMuted = t.uid !in myMuted
                 MuteStore.setMuted(ctx, t.uid, nowMuted)
                 AppToast.show(if (nowMuted) "تم كتم ${t.name}" else "تم إلغاء كتم ${t.name}")
                 actionTarget = null
             },
+            onRestrict = {
+                val now = t.uid !in myRestricted
+                RestrictStore.store.set(ctx, t.uid, now)
+                AppToast.show(if (now) "تم تقييد ${t.name}" else "تم إلغاء تقييد ${t.name}")
+                actionTarget = null
+            },
             onSelect = { selecting = true; selectedIds = setOf(t.uid); actionTarget = null },
+            onBlock = {
+                if (isBlocked) {
+                    Repo.setBlocked(t.uid, false)
+                    AppToast.show("تم إلغاء حظر ${t.name}")
+                } else {
+                    blockTarget = t
+                }
+                actionTarget = null
+            },
             onDelete = { actionTarget = null; onRequestDeleteChat(t.uid, t.name, t.lastAt) },
             onDismiss = { actionTarget = null }
+        )
+    }
+    // تأكيد حظر شخص
+    blockTarget?.let { t ->
+        GlassConfirmDialog(
+            backdrop = bd,
+            dark = isAppDark(),
+            title = "حظر ${t.name}",
+            message = "ما راح يقدر يراسلك طول ما هو محظور. تقدر تلغي الحظر بأي وقت.",
+            confirmText = "حظر",
+            icon = AppIcons.Block,
+            onConfirm = {
+                Repo.setBlocked(t.uid, true)
+                AppToast.show("تم حظر ${t.name}")
+                blockTarget = null
+            },
+            onDismiss = { blockTarget = null }
         )
     }
     // تأكيد حذف عدة محادثات (من عندي فقط)
@@ -651,6 +714,8 @@ private fun UserRow(
     unread: Int = 0,
     showPresence: Boolean = false,
     muted: Boolean = false,
+    starred: Boolean = false,
+    restricted: Boolean = false,
     selectMode: Boolean = false,
     selected: Boolean = false,
     onLongClick: ((Profile) -> Unit)? = null
@@ -711,11 +776,11 @@ private fun UserRow(
                     overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false)
                 )
                 BadgeAfterName(prof, 18.dp)
-                if (muted) Text("🔕", fontSize = 12.sp, modifier = Modifier.padding(start = 6.dp))
-                if (pinned) {
-                    Spacer(Modifier.width(6.dp))
-                    Icon(Icons.Filled.Star, null, tint = Color(0xFFFFC107), modifier = Modifier.size(15.dp))
-                }
+                val dim = MaterialTheme.colorScheme.onBackground.copy(0.55f)
+                if (muted) Icon(AppIcons.BellOff, null, tint = dim, modifier = Modifier.padding(start = 6.dp).size(14.dp))
+                if (restricted) Icon(AppIcons.Restrict, null, tint = dim, modifier = Modifier.padding(start = 6.dp).size(14.dp))
+                if (starred) Icon(AppIcons.StarFilled, null, tint = Color(0xFFFFC107), modifier = Modifier.padding(start = 6.dp).size(15.dp))
+                if (pinned) Icon(AppIcons.Pin, null, tint = dim, modifier = Modifier.padding(start = 6.dp).size(14.dp))
             }
             Text(
                 secondary(prof), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
