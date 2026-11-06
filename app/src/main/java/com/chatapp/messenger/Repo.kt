@@ -216,7 +216,7 @@ data class StoryView(val uid: String, val liked: Boolean, val at: Long)
 /** قصة فعّالة لمستخدم (تظهر بقائمة القصص عند الكل) */
 data class ActiveStory(val uid: String, val profile: Profile)
 
-/** علاقتي بشخص: لا شي / أرسلت له طلب / أرسل لي طلب / أصدقاء */
+/** علاقتي بشخص: لا شي / أنا أتابعه فقط / هو يتابعني فقط / أصدقاء (متابعة متبادلة) */
 enum class Relation { NONE, SENT, RECEIVED, FRIENDS }
 
 data class Profile(
@@ -1739,8 +1739,9 @@ object Repo {
         send(me, owner, text, replyId = "story", replyText = "القصة", replyFrom = owner)
     }
 
-    // ---------- الأصدقاء ----------
-    // friendRequests/<from>_<to> = طلب صداقة، friendships/<uidA>_<uidB> (مرتبين) = صداقة قائمة
+    // ---------- المتابعة والأصدقاء ----------
+    // follows/<from>_<to> = "from" يتابع "to" (فوري، بدون طلب).
+    // المتابعين = يتابعوني وأنا ما أتابعهم | أتابعه = أتابعهم وما يتابعوني | الأصدقاء = متابعة متبادلة
 
     private fun docExistsFlow(col: String, id: String): Flow<Boolean> = callbackFlow {
         val reg = db.collection(col).document(id).addSnapshotListener { d, err ->
@@ -1749,23 +1750,16 @@ object Repo {
         awaitClose { reg.remove() }
     }
 
-    /** هل [other] صديقي؟ */
-    fun isFriendFlow(other: String): Flow<Boolean> {
-        val me = auth.currentUser?.uid ?: return flowOf(false)
-        return docExistsFlow("friendships", chatId(me, other))
-    }
-
-    /** أصدقائي (الأحدث صداقة أولاً) */
-    fun friendsFlow(me: String): Flow<List<String>> = callbackFlow {
+    /** معرّفات الطرف الثاني من استعلام متابعة، الأحدث أولاً */
+    private fun followsQueryFlow(field: String, other: String, me: String): Flow<List<String>> = callbackFlow {
         if (me.isBlank()) { close(); return@callbackFlow }
-        val reg = db.collection("friendships").whereArrayContains("users", me)
+        val reg = db.collection("follows").whereEqualTo(field, me)
             .addSnapshotListener { snap, _ ->
                 if (snap != null) {
                     trySend(
                         snap.documents.mapNotNull { d ->
-                            val other = (d.get("users") as? List<*>)?.firstOrNull { it != me } as? String
-                                ?: return@mapNotNull null
-                            other to (d.getTimestamp("at", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                            val uid = d.getString(other) ?: return@mapNotNull null
+                            uid to (d.getTimestamp("at", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
                                 ?.toDate()?.time ?: 0L)
                         }.sortedByDescending { it.second }.map { it.first }
                     )
@@ -1774,75 +1768,85 @@ object Repo {
         awaitClose { reg.remove() }
     }
 
+    /** كل من أتابعهم (الأحدث أولاً) */
+    fun followingFlow(me: String): Flow<List<String>> = followsQueryFlow("from", "to", me)
+
+    /** كل من يتابعني (الأحدث أولاً) */
+    fun followersFlow(me: String): Flow<List<String>> = followsQueryFlow("to", "from", me)
+
+    /** الأصدقاء = أتابعهم ويتابعوني (متابعة متبادلة) */
+    fun friendsFlow(me: String): Flow<List<String>> =
+        combine(followingFlow(me), followersFlow(me)) { ing, ers ->
+            val s = ers.toSet()
+            ing.filter { it in s }
+        }
+
     fun friendIdsFlow(): Flow<Set<String>> {
         val me = auth.currentUser?.uid ?: return flowOf(emptySet())
         return friendsFlow(me).map { it.toSet() }
     }
 
-    /** طلبات الصداقة الواردة لي (معرّفات المرسلين) */
-    fun incomingRequestsFlow(me: String): Flow<List<String>> = callbackFlow {
-        if (me.isBlank()) { close(); return@callbackFlow }
-        val reg = db.collection("friendRequests").whereEqualTo("to", me)
-            .addSnapshotListener { snap, _ ->
-                if (snap != null) trySend(snap.documents.mapNotNull { it.getString("from") })
-            }
-        awaitClose { reg.remove() }
+    /** هل [other] صديقي (متابعة متبادلة)؟ */
+    fun isFriendFlow(other: String): Flow<Boolean> {
+        val me = auth.currentUser?.uid ?: return flowOf(false)
+        return combine(
+            docExistsFlow("follows", "${me}_$other"),
+            docExistsFlow("follows", "${other}_$me")
+        ) { a, b -> a && b }
     }
 
-    /** علاقتي بهذا الشخص (تتحدث مباشرة) */
+    /**
+     * علاقتي بهذا الشخص (تتحدث مباشرة):
+     * NONE = ولا واحد يتابع الثاني | SENT = أنا أتابعه فقط | RECEIVED = هو يتابعني فقط | FRIENDS = متبادل
+     */
     fun relationFlow(other: String): Flow<Relation> {
         val me = auth.currentUser?.uid ?: return flowOf(Relation.NONE)
         return combine(
-            docExistsFlow("friendships", chatId(me, other)),
-            docExistsFlow("friendRequests", "${me}_$other"),
-            docExistsFlow("friendRequests", "${other}_$me")
-        ) { friend, sent, received ->
+            docExistsFlow("follows", "${me}_$other"),
+            docExistsFlow("follows", "${other}_$me")
+        ) { iFollow, heFollows ->
             when {
-                friend -> Relation.FRIENDS
-                received -> Relation.RECEIVED
-                sent -> Relation.SENT
+                iFollow && heFollows -> Relation.FRIENDS
+                iFollow -> Relation.SENT
+                heFollows -> Relation.RECEIVED
                 else -> Relation.NONE
             }
         }
     }
 
-    suspend fun sendFriendRequest(other: String) {
+    /** متابعة شخص (زر "إضافة صديق" = اختصار لهذي) */
+    suspend fun follow(other: String) {
         val me = auth.currentUser?.uid ?: return
-        db.collection("friendRequests").document("${me}_$other").set(
-            mapOf("from" to me, "to" to other, "createdAt" to FieldValue.serverTimestamp())
+        if (me == other) return
+        db.collection("follows").document("${me}_$other").set(
+            mapOf("from" to me, "to" to other, "at" to FieldValue.serverTimestamp())
         ).await()
     }
 
-    /** إلغاء طلب أرسلته أنا */
-    suspend fun cancelFriendRequest(other: String) {
+    /** إلغاء متابعتي لشخص (إذا كنا أصدقاء نرجع هو يتابعني فقط) */
+    suspend fun unfollow(other: String) {
         val me = auth.currentUser?.uid ?: return
-        db.collection("friendRequests").document("${me}_$other").delete().await()
+        db.collection("follows").document("${me}_$other").delete().await()
     }
 
-    /** رفض طلب وارد لي */
-    suspend fun declineFriendRequest(from: String) {
+    /**
+     * ترحيل الصداقات القديمة (friendships) لمتابعة متبادلة، مرة وحدة لكل صداقة.
+     * القواعد تسمح لأي طرف يكتب وثيقتي المتابعة إذا الصداقة القديمة موجودة.
+     */
+    suspend fun migrateLegacyFriendships() {
         val me = auth.currentUser?.uid ?: return
-        db.collection("friendRequests").document("${from}_$me").delete().await()
-    }
-
-    /** قبول طلب وارد: تنخلق الصداقة (للطرفين) والطلب ينحذف */
-    suspend fun acceptFriendRequest(from: String) {
-        val me = auth.currentUser?.uid ?: return
-        db.batch()
-            .set(
-                db.collection("friendships").document(chatId(me, from)),
-                mapOf("users" to listOf(me, from), "at" to FieldValue.serverTimestamp())
-            )
-            .delete(db.collection("friendRequests").document("${from}_$me"))
-            .commit().await()
-        // لو كنت أنا مرسل له طلب بنفس الوقت ننظفه
-        runCatching { db.collection("friendRequests").document("${me}_$from").delete().await() }
-    }
-
-    /** إلغاء الصداقة (من الطرفين) */
-    suspend fun removeFriend(other: String) {
-        val me = auth.currentUser?.uid ?: return
-        db.collection("friendships").document(chatId(me, other)).delete().await()
+        val snap = db.collection("friendships").whereArrayContains("users", me).get().await()
+        for (d in snap.documents) {
+            val other = (d.get("users") as? List<*>)?.firstOrNull { it != me } as? String ?: continue
+            val at = d.get("at") ?: FieldValue.serverTimestamp()
+            runCatching {
+                db.batch()
+                    .set(db.collection("follows").document("${me}_$other"), mapOf("from" to me, "to" to other, "at" to at))
+                    .set(db.collection("follows").document("${other}_$me"), mapOf("from" to other, "to" to me, "at" to at))
+                    .delete(d.reference)
+                    .commit().await()
+            }
+        }
     }
 
     // ---------- شكل الفقاعات (يتخزن بملفي الشخصي حتى يشوفه الطرف الثاني) ----------
@@ -2041,6 +2045,8 @@ object Repo {
         runCatching { deleteAllDocs(db.collection("friendships").whereArrayContains("users", uid)) }
         runCatching { deleteAllDocs(db.collection("friendRequests").whereEqualTo("from", uid)) }
         runCatching { deleteAllDocs(db.collection("friendRequests").whereEqualTo("to", uid)) }
+        runCatching { deleteAllDocs(db.collection("follows").whereEqualTo("from", uid)) }
+        runCatching { deleteAllDocs(db.collection("follows").whereEqualTo("to", uid)) }
         runCatching { deleteAllDocs(db.collection("blocks").document(uid).collection("users")) }
 
         // القصة ومشاهداتها

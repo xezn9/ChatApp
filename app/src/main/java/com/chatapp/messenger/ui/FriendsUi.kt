@@ -56,26 +56,60 @@ import com.chatapp.messenger.ui.glass.GlassButton
 import com.kyant.backdrop.Backdrop
 import kotlinx.coroutines.launch
 
+/** تبويبات شاشة المتابعة */
+internal enum class FollowTab { FOLLOWERS, FOLLOWING, FRIENDS }
+
 /**
- * شاشة الأصدقاء: طلبات الصداقة الواردة (قبول/رفض) + قائمة أصدقائي.
- * ضغطة على صديق تفتح ملفه الشخصي، وزر "إلغاء" يلغي الصداقة.
- * تنفتح من زر الأصدقاء بحركة انبعاث (OriginOverlay).
+ * شاشة المتابعة: ثلاث قوائم
+ * - المتابعين: يتابعوني وأنا ما أتابعهم (زر "متابعة" يرجّع المتابعة فيصيرون أصدقاء)
+ * - أتابعه: أتابعهم وما يتابعوني (زر "إلغاء" يلغي متابعتي)
+ * - الأصدقاء: متابعة متبادلة
+ * ضغطة على أي حساب تفتح ملفه الشخصي. تنفتح بحركة انبعاث (OriginOverlay).
  */
 @Composable
 internal fun FriendsScreen(
+    initialTab: FollowTab = FollowTab.FRIENDS,
     onDismiss: () -> Unit,
     onOpenProfile: (UserItem) -> Unit
 ) {
-    val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val myUid = remember { Repo.auth.currentUser?.uid ?: "" }
-    val friends by remember(myUid) { Repo.friendsFlow(myUid) }.collectAsState(initial = emptyList())
-    val requests by remember(myUid) { Repo.incomingRequestsFlow(myUid) }.collectAsState(initial = emptyList())
+    val following by remember(myUid) { Repo.followingFlow(myUid) }.collectAsState(initial = emptyList())
+    val followers by remember(myUid) { Repo.followersFlow(myUid) }.collectAsState(initial = emptyList())
     val fg = MaterialTheme.colorScheme.onBackground
-    var removeTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var tab by remember { mutableStateOf(initialTab) }
+    var unfollowTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
     var busyUid by remember { mutableStateOf<String?>(null) }
 
-    BackHandler { if (removeTarget != null) removeTarget = null else onDismiss() }
+    val followingSet = following.toSet()
+    val followersSet = followers.toSet()
+    val onlyFollowers = followers.filter { it !in followingSet }
+    val onlyFollowing = following.filter { it !in followersSet }
+    val friends = following.filter { it in followersSet }
+    val list = when (tab) {
+        FollowTab.FOLLOWERS -> onlyFollowers
+        FollowTab.FOLLOWING -> onlyFollowing
+        FollowTab.FRIENDS -> friends
+    }
+
+    fun doFollow(uid: String) {
+        if (busyUid != null) return
+        busyUid = uid
+        scope.launch {
+            try { Repo.follow(uid) } catch (e: Exception) { AppToast.show("فشلت المتابعة: ${e.message}", long = true) }
+            busyUid = null
+        }
+    }
+    fun doUnfollow(uid: String) {
+        if (busyUid != null) return
+        busyUid = uid
+        scope.launch {
+            try { Repo.unfollow(uid) } catch (e: Exception) { AppToast.show("فشل الإلغاء: ${e.message}", long = true) }
+            busyUid = null
+        }
+    }
+
+    BackHandler { if (unfollowTarget != null) unfollowTarget = null else onDismiss() }
 
     Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { } }) {
         LiquidScene(banner = null) { bd ->
@@ -88,18 +122,54 @@ internal fun FriendsScreen(
                             Icon(Icons.Filled.Close, null, modifier = Modifier.size(24.dp))
                         }
                         Text(
-                            "الأصدقاء", fontSize = 22.sp, fontWeight = FontWeight.Bold,
+                            when (tab) {
+                                FollowTab.FOLLOWERS -> "المتابعين"
+                                FollowTab.FOLLOWING -> "أتابعهُ"
+                                FollowTab.FRIENDS -> "الأصدقاء"
+                            },
+                            fontSize = 22.sp, fontWeight = FontWeight.Bold,
                             modifier = Modifier.weight(1f).padding(horizontal = 14.dp)
                         )
-                        Text("${friends.size}", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
+                        Text("${list.size}", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
                         Spacer(Modifier.width(6.dp))
                     }
                 }
 
-                if (friends.isEmpty() && requests.isEmpty()) {
+                // شريط التبويبات: المتابعين | أتابعهُ | الأصدقاء (بالعربي من اليمين لليسار)
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf(
+                        Triple(FollowTab.FRIENDS, "الأصدقاء", friends.size),
+                        Triple(FollowTab.FOLLOWING, "أتابعهُ", onlyFollowing.size),
+                        Triple(FollowTab.FOLLOWERS, "المتابعين", onlyFollowers.size)
+                    ).forEach { (t, label, n) ->
+                        val sel = tab == t
+                        GlassButton(
+                            onClick = { tab = t }, backdrop = bd, pressScale = 1.04f,
+                            tint = if (sel) AccentBlue else Color.Unspecified,
+                            modifier = Modifier.weight(1f).height(42.dp)
+                        ) {
+                            Spacer(Modifier.weight(1f))
+                            Text(label, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "  $n", color = if (sel) Color.White else Color(0xFF7FD4FF),
+                                fontSize = 14.sp, fontWeight = FontWeight.Bold
+                            )
+                            Spacer(Modifier.weight(1f))
+                        }
+                    }
+                }
+
+                if (list.isEmpty()) {
                     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
                         Text(
-                            "ما عندك أصدقاء بعد.\nافتح ملف أي شخص واضغط \"إضافة صديق\".",
+                            when (tab) {
+                                FollowTab.FOLLOWERS -> "ما عندك متابعين جدد.\nمن يتابعك وأنت ما تتابعه يطلع هنا."
+                                FollowTab.FOLLOWING -> "ما تتابع أحد لحد الآن.\nافتح ملف أي شخص واضغط \"إضافة صديق\"."
+                                FollowTab.FRIENDS -> "ما عندك أصدقاء بعد.\nالصديق هو من تتابعه ويتابعك."
+                            },
                             textAlign = TextAlign.Center, color = fg.copy(0.7f), fontSize = 16.sp
                         )
                     }
@@ -108,73 +178,32 @@ internal fun FriendsScreen(
                         contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        if (requests.isNotEmpty()) {
-                            item(key = "hdr_req") {
-                                Text(
-                                    "طلبات الصداقة (${requests.size})", fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-                                    color = fg.copy(0.7f), modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
-                                )
-                            }
-                            items(requests, key = { "req_$it" }) { uid ->
-                                FriendRow(
-                                    uid = uid, backdrop = bd, onClick = { onOpenProfile(it) },
-                                    trailing = { _ ->
-                                        GlassButton(
-                                            onClick = {
-                                                if (busyUid == null) {
-                                                    busyUid = uid
-                                                    scope.launch {
-                                                        try { Repo.acceptFriendRequest(uid) }
-                                                        catch (e: Exception) {
-                                                            AppToast.show("فشل القبول: ${e.message}", long = true)
-                                                        }
-                                                        busyUid = null
-                                                    }
-                                                }
-                                            },
-                                            backdrop = bd, tint = AccentBlue, pressScale = 1.06f,
-                                            modifier = Modifier.height(40.dp)
-                                        ) { Text("قبول", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 16.dp)) }
-                                        Spacer(Modifier.width(8.dp))
-                                        GlassButton(
-                                            onClick = {
-                                                if (busyUid == null) {
-                                                    busyUid = uid
-                                                    scope.launch {
-                                                        try { Repo.declineFriendRequest(uid) }
-                                                        catch (e: Exception) {
-                                                            AppToast.show("فشل الرفض: ${e.message}", long = true)
-                                                        }
-                                                        busyUid = null
-                                                    }
-                                                }
-                                            },
-                                            backdrop = bd, pressScale = 1.06f,
-                                            modifier = Modifier.height(40.dp)
-                                        ) { Text("رفض", color = fg, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 16.dp)) }
-                                    }
-                                )
-                            }
-                            item(key = "hdr_friends") {
-                                Text(
-                                    "أصدقائي (${friends.size})", fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-                                    color = fg.copy(0.7f), modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
-                                )
-                            }
-                        }
-                        items(friends, key = { "fr_$it" }) { uid ->
+                        items(list, key = { "${tab.name}_$it" }) { uid ->
                             FriendRow(
                                 uid = uid, backdrop = bd, onClick = { onOpenProfile(it) },
                                 trailing = { name ->
-                                    GlassButton(
-                                        onClick = { removeTarget = uid to name },
-                                        backdrop = bd, tint = Color(0xFFFF453A).copy(0.9f), pressScale = 1.06f,
-                                        modifier = Modifier.height(40.dp)
-                                    ) {
-                                        Text(
-                                            "إلغاء", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-                                            modifier = Modifier.padding(horizontal = 16.dp)
-                                        )
+                                    when (tab) {
+                                        FollowTab.FOLLOWERS -> GlassButton(
+                                            onClick = { doFollow(uid) },
+                                            backdrop = bd, tint = AccentBlue, pressScale = 1.06f,
+                                            modifier = Modifier.height(40.dp)
+                                        ) {
+                                            Text("متابعة", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 16.dp))
+                                        }
+                                        FollowTab.FOLLOWING -> GlassButton(
+                                            onClick = { doUnfollow(uid) },
+                                            backdrop = bd, pressScale = 1.06f,
+                                            modifier = Modifier.height(40.dp)
+                                        ) {
+                                            Text("إلغاء", color = fg, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 16.dp))
+                                        }
+                                        FollowTab.FRIENDS -> GlassButton(
+                                            onClick = { unfollowTarget = uid to name },
+                                            backdrop = bd, tint = Color(0xFFFF453A).copy(0.9f), pressScale = 1.06f,
+                                            modifier = Modifier.height(40.dp)
+                                        ) {
+                                            Text("إلغاء", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 16.dp))
+                                        }
                                     }
                                 }
                             )
@@ -183,24 +212,16 @@ internal fun FriendsScreen(
                 }
             }
 
-            removeTarget?.let { (uid, name) ->
+            unfollowTarget?.let { (uid, name) ->
                 GlassConfirmDialog(
                     backdrop = bd,
                     dark = true,
                     title = "إلغاء الصداقة",
-                    message = "راح تلغي صداقتك مع $name، وما يگدر يشوف قصتك ولا تشوف قصته لين ترجعوا أصدقاء. المراسلة تبقى عادية.",
+                    message = "راح تلغي متابعتك لـ $name، فما تبقون أصدقاء (يبقى هو يتابعك). وما تشوف قصته الخاصة بالأصدقاء. المراسلة تبقى عادية.",
                     confirmText = "إلغاء الصداقة",
                     icon = Icons.Filled.Person,
-                    onConfirm = {
-                        removeTarget = null
-                        scope.launch {
-                            try { Repo.removeFriend(uid) }
-                            catch (e: Exception) {
-                                AppToast.show("فشل الإلغاء: ${e.message}", long = true)
-                            }
-                        }
-                    },
-                    onDismiss = { removeTarget = null },
+                    onConfirm = { unfollowTarget = null; doUnfollow(uid) },
+                    onDismiss = { unfollowTarget = null },
                     cancelText = "رجوع"
                 )
             }

@@ -16,11 +16,19 @@ service cloud.firestore {
       return exists(/databases/$(database)/documents/blocks/$(owner)/users/$(request.auth.uid));
     }
 
-    // هل أنا والمستخدم [other] أصدقاء؟ (معرّف الصداقة = المعرّفين مرتبين uidA_uidB)
+    // هل أنا والمستخدم [other] أصدقاء؟ = متابعة متبادلة (follows/<from>_<to>)،
+    // أو صداقة قديمة لسا ما انرحّلت (friendships/<uidA>_<uidB> مرتبين)
     function isFriendWith(other) {
-      return exists(/databases/$(database)/documents/friendships/$(request.auth.uid < other
-        ? request.auth.uid + '_' + other
-        : other + '_' + request.auth.uid));
+      return (exists(/databases/$(database)/documents/follows/$(request.auth.uid + '_' + other))
+          && exists(/databases/$(database)/documents/follows/$(other + '_' + request.auth.uid)))
+        || exists(/databases/$(database)/documents/friendships/$(request.auth.uid < other
+          ? request.auth.uid + '_' + other
+          : other + '_' + request.auth.uid));
+    }
+
+    // هل بين [a] و[b] صداقة قديمة (قبل نظام المتابعة)؟
+    function legacyFriendship(a, b) {
+      return exists(/databases/$(database)/documents/friendships/$(a < b ? a + '_' + b : b + '_' + a));
     }
 
     // الحساب غير محظور من الإدارة (الحظر يكتبه السيرفر فقط بعد التحقق من البلاغ)
@@ -83,6 +91,25 @@ service cloud.firestore {
         && request.resource.data.uid == viewer
         && request.resource.data.liked is bool;
       allow delete: if verified() && (request.auth.uid == uid || request.auth.uid == viewer);
+    }
+
+    // المتابعة: المعرّف from_to. أنا فقط أتابع (أنشئ وثيقتي)، والطرفين يقرؤون، وأنا فقط ألغي متابعتي.
+    // استثناء الترحيل: صداقة قديمة موجودة تسمح لأي طرف يكتب وثيقتي المتابعة مرة وحدة
+    match /follows/{fid} {
+      allow get: if verified() && request.auth.uid in fid.split('_');
+      allow list: if verified()
+        && (resource.data.to == request.auth.uid || resource.data.from == request.auth.uid);
+      allow create: if verified()
+        && fid.split('_').size() == 2
+        && request.resource.data.keys().hasOnly(['from', 'to', 'at'])
+        && fid == request.resource.data.from + '_' + request.resource.data.to
+        && request.resource.data.from != request.resource.data.to
+        && ((request.resource.data.from == request.auth.uid
+              && notBanned()
+              && !blockedBy(request.resource.data.to))
+            || (request.auth.uid in fid.split('_')
+              && legacyFriendship(request.resource.data.from, request.resource.data.to)));
+      allow delete: if verified() && fid.split('_')[0] == request.auth.uid;
     }
 
     // طلبات الصداقة: المعرّف from_to. المرسل ينشئ، والطرفين يقرؤون ويحذفون (إلغاء / رفض / قبول)

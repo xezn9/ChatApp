@@ -91,6 +91,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -223,8 +224,15 @@ fun AccountTab(
     var friendsCenter by remember { mutableStateOf<Offset?>(null) }
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    val friends by remember(myUid) { Repo.friendsFlow(myUid) }.collectAsState(initial = emptyList())
-    val requests by remember(myUid) { Repo.incomingRequestsFlow(myUid) }.collectAsState(initial = emptyList())
+    // المتابعين (يتابعوني وأنا لا) | أتابعهُ (أتابعهم وهم لا) | الأصدقاء (متبادل)
+    val followingIds by remember(myUid) { Repo.followingFlow(myUid) }.collectAsState(initial = emptyList())
+    val followerIds by remember(myUid) { Repo.followersFlow(myUid) }.collectAsState(initial = emptyList())
+    val followerSet = followerIds.toSet()
+    val followingSet = followingIds.toSet()
+    val friendsCount = followingIds.count { it in followerSet }
+    val onlyFollowersCount = followerIds.count { it !in followingSet }
+    val onlyFollowingCount = followingIds.count { it !in followerSet }
+    var followTab by remember { mutableStateOf(FollowTab.FRIENDS) }
     // ألوان الخلفية: من ألوان البانر تلقائياً، وإذا ما فيه بانر تتغير عشوائياً كل ما تدخل التبويب
     val bannerImg = rememberB64Image(profile.banner)
     val bannerGif = rememberBannerGif(myUid, profile.bannerGifV)
@@ -418,42 +426,24 @@ fun AccountTab(
                             )
                             Spacer(Modifier.height(18.dp))
                         }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         // زر باركود الحساب
                         GlassButton(
                             onClick = { showQr = true },
                             backdrop = glass,
-                            modifier = Modifier.size(48.dp)
+                            modifier = Modifier.size(56.dp)
                         ) {
-                            Icon(AppIcons.QrCode, null, tint = Color.White, modifier = Modifier.size(24.dp))
+                            Icon(AppIcons.QrCode, null, tint = Color.White, modifier = Modifier.size(26.dp))
                         }
-                        Spacer(Modifier.width(10.dp))
-                        Box(Modifier.onGloballyPositioned { friendsCenter = it.boundsInRoot().center }) {
-                            GlassButton(
-                                onClick = { showFriends = true },
-                                backdrop = glass,
-                                modifier = Modifier.height(48.dp)
-                            ) {
-                                Icon(Icons.Filled.Person, null, tint = Color.White, modifier = Modifier.padding(start = 18.dp).size(22.dp))
-                                Text(
-                                    "الأصدقاء", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium,
-                                    modifier = Modifier.padding(start = 8.dp)
-                                )
-                                Text(
-                                    "${friends.size}", color = Color(0xFF7FD4FF), fontSize = 16.sp, fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(start = 8.dp, end = 20.dp)
-                                )
-                            }
-                            // نقطة حمراء بعدد طلبات الصداقة الجديدة
-                            if (requests.isNotEmpty()) {
-                                Box(
-                                    Modifier.align(Alignment.TopEnd).offset(x = 6.dp, y = (-6).dp)
-                                        .size(22.dp).clip(CircleShape).background(Color(0xFFFF453A)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text("${requests.size}", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
+                        Spacer(Modifier.width(8.dp))
+                        // ثلاث خانات: الأصدقاء | أتابعهُ | المتابعين (من اليمين لليسار بالعربي)
+                        Row(
+                            Modifier.weight(1f).onGloballyPositioned { friendsCenter = it.boundsInRoot().center },
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            StatButton("الأصدقاء", friendsCount, glass) { followTab = FollowTab.FRIENDS; showFriends = true }
+                            StatButton("أتابعهُ", onlyFollowingCount, glass) { followTab = FollowTab.FOLLOWING; showFriends = true }
+                            StatButton("المتابعين", onlyFollowersCount, glass) { followTab = FollowTab.FOLLOWERS; showFriends = true }
                         }
                         }
                     }
@@ -544,6 +534,7 @@ fun AccountTab(
         origin = originOf(friendsCenter, TransformOrigin(0.85f, 0.55f))
     ) {
         FriendsScreen(
+            initialTab = followTab,
             onDismiss = { showFriends = false },
             onOpenProfile = onOpenProfile
         )
@@ -590,6 +581,22 @@ internal fun OriginOverlay(
                 clip = edge > 0.001f
             }
         ) { content() }
+    }
+}
+
+/** خانة إحصائية (عدد + عنوان) تفتح قائمة المتابعة */
+@Composable
+private fun RowScope.StatButton(label: String, count: Int, backdrop: Backdrop, onClick: () -> Unit) {
+    GlassButton(
+        onClick = onClick,
+        backdrop = backdrop,
+        pressScale = 1.06f,
+        modifier = Modifier.weight(1f).height(56.dp)
+    ) {
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("$count", color = Color(0xFF7FD4FF), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text(label, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+        }
     }
 }
 

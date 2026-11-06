@@ -89,7 +89,7 @@ fun UserProfileScreen(user: UserItem, onBack: () -> Unit, onMessage: () -> Unit)
     // الصورة المعروضة بملء الشاشة (بانر أو صورة شخصية): null = مغلق
     var viewImage by remember { mutableStateOf<String?>(null) }
 
-    // الصداقة: أضيفه / ألغي الطلب / أقبل أو أرفض / ألغي الصداقة
+    // المتابعة: إضافة صديق (= متابعة) / إلغاء المتابعة / إلغاء الصداقة
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val myUid = remember { Repo.auth.currentUser?.uid ?: "" }
@@ -275,35 +275,22 @@ fun UserProfileScreen(user: UserItem, onBack: () -> Unit, onMessage: () -> Unit)
                             }
                             if (!isMe) {
                                 Spacer(Modifier.height(10.dp))
+                                // "إضافة صديق" = اختصار للمتابعة: متابعة فورية بدون طلب.
+                                // لو هو يتابعني من قبل تصير متابعة متبادلة = أصدقاء
                                 when (relation) {
-                                    Relation.NONE -> GlassButton(
-                                        onClick = { relAction { Repo.sendFriendRequest(user.uid) } },
+                                    Relation.NONE, Relation.RECEIVED -> GlassButton(
+                                        onClick = { relAction { Repo.follow(user.uid) } },
                                         backdrop = glass, tint = Color(0xFF2EBD85), enabled = !relBusy,
                                         modifier = Modifier.fillMaxWidth().height(50.dp)
                                     ) {
                                         Text("إضافة صديق", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                                     }
                                     Relation.SENT -> GlassButton(
-                                        onClick = { relAction { Repo.cancelFriendRequest(user.uid) } },
+                                        onClick = { relAction { Repo.unfollow(user.uid) } },
                                         backdrop = glass, enabled = !relBusy,
                                         modifier = Modifier.fillMaxWidth().height(50.dp)
                                     ) {
-                                        Text("تم إرسال الطلب · إلغاء", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                                    }
-                                    Relation.RECEIVED -> Row(
-                                        Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        GlassButton(
-                                            onClick = { relAction { Repo.acceptFriendRequest(user.uid) } },
-                                            backdrop = glass, tint = Color(0xFF2EBD85), enabled = !relBusy,
-                                            modifier = Modifier.weight(1f).height(50.dp)
-                                        ) { Text("قبول الصداقة", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold) }
-                                        GlassButton(
-                                            onClick = { relAction { Repo.declineFriendRequest(user.uid) } },
-                                            backdrop = glass, enabled = !relBusy,
-                                            modifier = Modifier.weight(1f).height(50.dp)
-                                        ) { Text("رفض", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold) }
+                                        Text("تتابعه · إلغاء المتابعة", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                                     }
                                     Relation.FRIENDS -> GlassButton(
                                         onClick = { confirmUnfriend = true },
@@ -326,10 +313,10 @@ fun UserProfileScreen(user: UserItem, onBack: () -> Unit, onMessage: () -> Unit)
                     backdrop = glass,
                     dark = true,
                     title = "إلغاء الصداقة",
-                    message = "راح تلغي صداقتك مع $name، وما يگدر يشوف قصتك ولا تشوف قصته لين ترجعوا أصدقاء.",
+                    message = "راح تلغي متابعتك لـ $name فما تبقون أصدقاء (يبقى هو يتابعك). ما تشوف قصته الخاصة بالأصدقاء ولا يشوف قصتك الخاصة لين ترجعوا أصدقاء.",
                     confirmText = "إلغاء الصداقة",
                     icon = Icons.Filled.Person,
-                    onConfirm = { confirmUnfriend = false; relAction { Repo.removeFriend(user.uid) } },
+                    onConfirm = { confirmUnfriend = false; relAction { Repo.unfollow(user.uid) } },
                     onDismiss = { confirmUnfriend = false },
                     cancelText = "رجوع"
                 )

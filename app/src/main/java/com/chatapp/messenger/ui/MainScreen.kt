@@ -182,6 +182,11 @@ private fun MainContent() {
             Repo.migrateLegacyStory()
         } catch (_: Exception) {
         }
+        // صداقات قديمة (قبل نظام المتابعة) تنتقل لمتابعة متبادلة
+        try {
+            Repo.migrateLegacyFriendships()
+        } catch (_: Exception) {
+        }
     }
     // إشعارات الرسائل: صلاحية أندرويد 13+ وتسجيل توكن الجهاز لهذا الحساب
     LaunchedEffect(myUid) {
