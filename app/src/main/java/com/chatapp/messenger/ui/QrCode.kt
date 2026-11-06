@@ -60,6 +60,15 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.graphics.ClipOp
+import androidx.compose.ui.graphics.ImageShader
+import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.layout.onSizeChanged
+import kotlin.math.roundToInt
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -228,6 +237,33 @@ private object QrStyle {
     fun bgDir(ctx: Context): File = File(ctx.filesDir, "qr_bg").apply { mkdirs() }
     fun customBgs(ctx: Context): List<File> =
         bgDir(ctx).listFiles { f -> f.extension == "jpg" }?.sortedBy { it.lastModified() } ?: emptyList()
+
+    // ───── شكل الباركود: النقاط + الزوايا + صورة الشكل (بعد القص) ─────
+    fun loadDots(ctx: Context): String {
+        val k = sp(ctx).getString("dots", "round") ?: "round"
+        return if (qrDotShapes.any { it.first == k }) k else "round"
+    }
+    fun saveDots(ctx: Context, k: String) { sp(ctx).edit().putString("dots", k).apply() }
+
+    fun loadEye(ctx: Context): String {
+        val k = sp(ctx).getString("eye", "round") ?: "round"
+        return if (qrEyeShapes.any { it.first == k }) k else "round"
+    }
+    fun saveEye(ctx: Context, k: String) { sp(ctx).edit().putString("eye", k).apply() }
+
+    fun shapeDir(ctx: Context): File = File(ctx.filesDir, "qr_shape").apply { mkdirs() }
+    fun customShapes(ctx: Context): List<File> =
+        shapeDir(ctx).listFiles { f -> f.extension == "jpg" }?.sortedBy { it.lastModified() } ?: emptyList()
+
+    /** اسم ملف صورة الشكل المختارة، أو "" إذا ماكو */
+    fun loadShapeImg(ctx: Context): String {
+        val k = sp(ctx).getString("shapeImg", "") ?: ""
+        return if (k.isNotEmpty() && File(shapeDir(ctx), k).exists()) k else ""
+    }
+    fun saveShapeImg(ctx: Context, k: String) { sp(ctx).edit().putString("shapeImg", k).apply() }
+
+    fun loadImgMode(ctx: Context): Int = sp(ctx).getInt("imgMode", 0).coerceIn(0, 1)
+    fun saveImgMode(ctx: Context, m: Int) { sp(ctx).edit().putInt("imgMode", m).apply() }
 }
 
 /* ───────────────────────── خط الأسماء (ينزل مرة وحدة وينحفظ) ───────────────────────── */
@@ -361,9 +397,157 @@ private fun DrawScope.drawQrDecor(kind: String, img: ImageBitmap?) {
 /** ظهور مع ارتداد خفيف (easeOutBack): 0→1 */
 private fun qrBackOut(t: Float): Float { val u = t - 1f; return 1f + 2.70158f * u * u * u + 1.70158f * u * u }
 
+/* ───────────────────────── أشكال الباركود ───────────────────────── */
+
+/**
+ * شكل النقاط + شكل الزوايا + صورة اختيارية.
+ * imgMode 0: النقاط تاخذ ألوان الصورة (غامقة حتى يبقى الباركود ينقرأ)، 1: الصورة باهتة خلف الباركود.
+ */
+private class QrShape(val dots: String = "round", val eye: String = "round", val img: ImageBitmap? = null, val imgMode: Int = 0)
+
+private val qrDotShapes: List<Pair<String, String>> = listOf(
+    "round" to "مدوّر", "square" to "مربع", "circle" to "دوائر", "dots" to "نقاط صغيرة", "liquid" to "سائل",
+    "vbars" to "أعمدة", "hbars" to "خطوط", "diamond" to "معيّن", "hex" to "سداسي", "leaf" to "ورقة",
+    "plus" to "زائد", "star" to "نجمة", "sparkle" to "لمعة", "heart" to "قلب"
+)
+
+private val qrEyeShapes: List<Pair<String, String>> = listOf(
+    "round" to "مدوّر", "soft" to "ناعم", "square" to "مربع", "circle" to "دائرة", "leaf" to "ورقة"
+)
+
+private fun addHeart(path: Path, cx: Float, cy: Float, w: Float) {
+    val s = w * 1.1f
+    val x0 = cx - s / 2f
+    val y0 = cy - s / 2f
+    fun px(u: Float) = x0 + u * s
+    fun py(v: Float) = y0 + v * s
+    path.moveTo(px(0.5f), py(0.92f))
+    path.cubicTo(px(0.10f), py(0.62f), px(0.00f), py(0.35f), px(0.12f), py(0.20f))
+    path.cubicTo(px(0.24f), py(0.05f), px(0.43f), py(0.08f), px(0.50f), py(0.25f))
+    path.cubicTo(px(0.57f), py(0.08f), px(0.76f), py(0.05f), px(0.88f), py(0.20f))
+    path.cubicTo(px(1.00f), py(0.35f), px(0.90f), py(0.62f), px(0.50f), py(0.92f))
+    path.close()
+}
+
+/** يضيف نقطة وحدة من الباركود بالشكل المطلوب. up/down/left/right = هل المربع المجاور غامق (للأشكال المتصلة) */
+private fun addDot(
+    path: Path, kind: String, cx: Float, cy: Float, w: Float,
+    up: Boolean, down: Boolean, left: Boolean, right: Boolean
+) {
+    val h = w / 2f
+    val l = cx - h
+    val t = cy - h
+    fun rr(tl: Float, tr: Float, br: Float, bl: Float) {
+        path.addRoundRect(RoundRect(l, t, l + w, t + w, CornerRadius(tl), CornerRadius(tr), CornerRadius(br), CornerRadius(bl)))
+    }
+    when (kind) {
+        "square" -> path.addRect(Rect(l, t, l + w, t + w))
+        "circle" -> path.addOval(Rect(Offset(cx, cy), h * 0.96f))
+        "dots" -> path.addOval(Rect(Offset(cx, cy), h * 0.66f))
+        "liquid" -> {
+            val r = h
+            fun c(a: Boolean, b: Boolean) = if (!a && !b) r else 0f
+            rr(c(up, left), c(up, right), c(down, right), c(down, left))
+        }
+        "vbars" -> {
+            val iw = w * 0.78f
+            val r = iw / 2f
+            val x0 = cx - r
+            path.addRoundRect(
+                RoundRect(
+                    x0, t, x0 + iw, t + w,
+                    CornerRadius(if (!up) r else 0f), CornerRadius(if (!up) r else 0f),
+                    CornerRadius(if (!down) r else 0f), CornerRadius(if (!down) r else 0f)
+                )
+            )
+        }
+        "hbars" -> {
+            val ih = w * 0.78f
+            val r = ih / 2f
+            val y0 = cy - r
+            path.addRoundRect(
+                RoundRect(
+                    l, y0, l + w, y0 + ih,
+                    CornerRadius(if (!left) r else 0f), CornerRadius(if (!right) r else 0f),
+                    CornerRadius(if (!right) r else 0f), CornerRadius(if (!left) r else 0f)
+                )
+            )
+        }
+        "diamond" -> {
+            val d = h * 1.08f
+            path.moveTo(cx, cy - d); path.lineTo(cx + d, cy); path.lineTo(cx, cy + d); path.lineTo(cx - d, cy); path.close()
+        }
+        "hex" -> {
+            val rad = h * 1.08f
+            for (i in 0 until 6) {
+                val a = (-PI / 2 + i * PI / 3).toFloat()
+                val x = cx + cos(a) * rad
+                val y = cy + sin(a) * rad
+                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            path.close()
+        }
+        "leaf" -> rr(h, w * 0.1f, h, w * 0.1f)
+        "plus" -> {
+            val a = w * 0.2f
+            path.addRect(Rect(l, cy - a, l + w, cy + a))
+            path.addRect(Rect(cx - a, t, cx + a, t + w))
+        }
+        "star" -> {
+            val outer = h * 1.2f
+            val inner = outer * 0.46f
+            for (i in 0 until 10) {
+                val a = (-PI / 2 + i * PI / 5).toFloat()
+                val rad = if (i % 2 == 0) outer else inner
+                val x = cx + cos(a) * rad
+                val y = cy + sin(a) * rad
+                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            path.close()
+        }
+        "sparkle" -> {
+            val r = h * 1.15f
+            val k = r * 0.30f
+            path.moveTo(cx, cy - r)
+            path.quadraticBezierTo(cx + k, cy - k, cx + r, cy)
+            path.quadraticBezierTo(cx + k, cy + k, cx, cy + r)
+            path.quadraticBezierTo(cx - k, cy + k, cx - r, cy)
+            path.quadraticBezierTo(cx - k, cy - k, cx, cy - r)
+            path.close()
+        }
+        "heart" -> addHeart(path, cx, cy, w)
+        else -> rr(w * 0.32f, w * 0.32f, w * 0.32f, w * 0.32f)
+    }
+}
+
+/** مربع من مربعات علامة الزاوية (depth 0 = الحلقة الخارجية، 1 = داخل الحلقة (الثقب)، 2 = المربع الأوسط) */
+private fun addEyeBox(path: Path, l: Float, t: Float, size: Float, style: String, c: Float, depth: Int, flip: Boolean) {
+    val k = floatArrayOf(2.1f, 1.3f, 1.0f)[depth]
+    var tl = 0f; var tr = 0f; var br = 0f; var bl = 0f
+    when (style) {
+        "round" -> { tl = k * c; tr = tl; br = tl; bl = tl }
+        "soft" -> { tl = k * c * 0.4f; tr = tl; br = tl; bl = tl }
+        "circle" -> { tl = size / 2f; tr = tl; br = tl; bl = tl }
+        "leaf" -> {
+            val big = size * 0.46f
+            val sm = size * 0.08f
+            if (!flip) { tl = big; br = big; tr = sm; bl = sm } else { tl = sm; br = sm; tr = big; bl = big }
+        }
+        else -> {}   // square
+    }
+    path.addRoundRect(RoundRect(l, t, l + size, t + size, CornerRadius(tl), CornerRadius(tr), CornerRadius(br), CornerRadius(bl)))
+}
+
+/** فرشاة تعبّي المسار بالصورة نفسها (الصورة تتمدد على كل الباركود) */
+private fun imageBrush(img: ImageBitmap, side: Float): Brush {
+    val sh = ImageShader(img, TileMode.Clamp, TileMode.Clamp)
+    sh.setLocalMatrix(Matrix().apply { setScale(side / img.width, side / img.height) })
+    return ShaderBrush(sh)
+}
+
 private fun DrawScope.drawQr(
     m: Array<BooleanArray>, side: Float, from: QrTheme, to: QrTheme,
-    p: Float, origin: Offset, rMax: Float, intro: Boolean = false
+    p: Float, origin: Offset, rMax: Float, intro: Boolean = false, shape: QrShape = QrShape()
 ) {
     val n = m.size
     val cell = side / n
@@ -372,30 +556,32 @@ private fun DrawScope.drawQr(
     val logoTo = logoFrom + logoCells - 1
     val animating = p < 1f && rMax > 0f
 
-    val pFrom = Path().apply { fillType = PathFillType.EvenOdd }
-    val pTo = Path().apply { fillType = PathFillType.EvenOdd }
+    val modFrom = Path()
+    val modTo = Path()
+    val eyeFrom = Path().apply { fillType = PathFillType.EvenOdd }
+    val eyeTo = Path().apply { fillType = PathFillType.EvenOdd }
+
+    fun isEye(x: Int, y: Int) = (x < 8 && y < 8) || (x >= n - 8 && y < 8) || (x < 8 && y >= n - 8)
+    fun isLogo(x: Int, y: Int) = x in logoFrom..logoTo && y in logoFrom..logoTo
+    fun on(x: Int, y: Int) = x in 0 until n && y in 0 until n && m[y][x] && !isEye(x, y) && !isLogo(x, y)
 
     fun waveT(cx: Float, cy: Float): Float =
         if (!animating) 1f else ((p * (1f + WAVE) - hypot(cx - origin.x, cy - origin.y) / rMax) / WAVE).coerceIn(0f, 1f)
 
-    fun addRound(path: Path, l: Float, t: Float, w: Float, rad: Float) {
-        path.addRoundRect(RoundRect(l, t, l + w, t + w, CornerRadius(rad, rad)))
-    }
-
     for (y in 0 until n) for (x in 0 until n) {
-        if (!m[y][x]) continue
-        if ((x < 8 && y < 8) || (x >= n - 8 && y < 8) || (x < 8 && y >= n - 8)) continue
-        if (x in logoFrom..logoTo && y in logoFrom..logoTo) continue
+        if (!on(x, y)) continue
         val cx = (x + 0.5f) * cell
         val cy = (y + 0.5f) * cell
         val t = waveT(cx, cy)
         if (intro && t <= 0f) continue   // الموجة ما وصلت لهالمربع بعد
         val s = if (intro) qrBackOut(t) else 1f - 0.55f * sin(PI.toFloat() * t)
-        val w = cell * s
-        addRound(if (t >= 0.5f) pTo else pFrom, cx - w / 2, cy - w / 2, w, cell * 0.32f * s)
+        addDot(
+            if (t >= 0.5f) modTo else modFrom, shape.dots, cx, cy, cell * s,
+            on(x, y - 1), on(x, y + 1), on(x - 1, y), on(x + 1, y)
+        )
     }
-    // علامات الزوايا: حلقة خارجية + حلقة داخلية (ثقب) + مربع وسط، كلها دائرية
-    for ((fx, fy) in listOf(0 to 0, n - 7 to 0, 0 to n - 7)) {
+    // علامات الزوايا: حلقة خارجية + حلقة داخلية (ثقب) + مربع وسط بالشكل المختار
+    for ((fx, fy, flip) in listOf(Triple(0, 0, false), Triple(n - 7, 0, true), Triple(0, n - 7, false))) {
         val cx = (fx + 3.5f) * cell
         val cy = (fy + 3.5f) * cell
         val t = waveT(cx, cy)
@@ -404,15 +590,35 @@ private fun DrawScope.drawQr(
         val c = cell * s
         val ox = cx - 3.5f * c
         val oy = cy - 3.5f * c
-        val path = if (t >= 0.5f) pTo else pFrom
-        addRound(path, ox, oy, 7 * c, c * 2.1f)
-        addRound(path, ox + c, oy + c, 5 * c, c * 1.3f)
-        addRound(path, ox + 2 * c, oy + 2 * c, 3 * c, c * 1.0f)
+        val path = if (t >= 0.5f) eyeTo else eyeFrom
+        addEyeBox(path, ox, oy, 7 * c, shape.eye, c, 0, flip)
+        addEyeBox(path, ox + c, oy + c, 5 * c, shape.eye, c, 1, flip)
+        addEyeBox(path, ox + 2 * c, oy + 2 * c, 3 * c, shape.eye, c, 2, flip)
     }
-    val bFrom = Brush.linearGradient(listOf(from.qrTop, from.qrBottom), Offset.Zero, Offset(side, side))
-    val bTo = Brush.linearGradient(listOf(to.qrTop, to.qrBottom), Offset.Zero, Offset(side, side))
-    if (animating) drawPath(pFrom, bFrom)
-    drawPath(pTo, bTo)
+
+    val img = shape.img
+    if (img != null && shape.imgMode == 1) {
+        // الصورة باهتة خلف الباركود
+        drawImage(
+            img, srcOffset = IntOffset.Zero, srcSize = IntSize(img.width, img.height),
+            dstOffset = IntOffset.Zero, dstSize = IntSize(side.toInt(), side.toInt()),
+            alpha = 0.42f, filterQuality = FilterQuality.Medium
+        )
+    }
+    if (img != null && shape.imgMode == 0) {
+        // النقاط والزوايا مصبوغة بالصورة نفسها، مع تغميق حتى يبقى التباين كافي للمسح
+        val b = imageBrush(img, side)
+        for (pt in listOf(modFrom, modTo, eyeFrom, eyeTo)) {
+            drawPath(pt, b)
+            drawPath(pt, Color.Black.copy(alpha = 0.5f))
+        }
+    } else {
+        val bFrom = Brush.linearGradient(listOf(from.qrTop, from.qrBottom), Offset.Zero, Offset(side, side))
+        val bTo = Brush.linearGradient(listOf(to.qrTop, to.qrBottom), Offset.Zero, Offset(side, side))
+        if (animating) { drawPath(modFrom, bFrom); drawPath(eyeFrom, bFrom) }
+        drawPath(modTo, bTo)
+        drawPath(eyeTo, bTo)
+    }
 }
 
 /* ───────────────────────── خلفيات المستخدم ───────────────────────── */
@@ -451,12 +657,285 @@ private fun importBackground(ctx: Context, uri: Uri): File? = runCatching {
     out
 }.getOrNull()
 
+/** يقرأ الصورة من المعرض مصغّرة (≤ maxSide) ومصححة الدوران */
+private fun loadOriented(ctx: Context, uri: Uri, maxSide: Int): Bitmap? = runCatching {
+    val cr = ctx.contentResolver
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    cr.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+    var s = 1
+    while (max(bounds.outWidth, bounds.outHeight) / (s * 2) >= maxSide) s *= 2
+    var bmp = cr.openInputStream(uri)!!.use {
+        BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = s })
+    }!!
+    val rot = runCatching {
+        cr.openInputStream(uri)!!.use {
+            when (ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)) {
+                ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                else -> 0f
+            }
+        }
+    }.getOrDefault(0f)
+    if (rot != 0f) bmp = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, Matrix().apply { postRotate(rot) }, true)
+    bmp
+}.getOrNull()
+
+/* ───────────────────────── قص الصورة (اختيار الجزء المطلوب) ───────────────────────── */
+
+/** تحريك/تقريب الصورة داخل إطار مربع واختيار الجزء الي يصير شكل الباركود */
+@Composable
+private fun QrImageCropOverlay(src: Bitmap, fontFam: FontFamily, onCancel: () -> Unit, onDone: (Bitmap) -> Unit) {
+    BackHandler(onBack = onCancel)
+    val img = remember(src) { src.asImageBitmap() }
+    var zoom by remember { mutableFloatStateOf(1f) }
+    var off by remember { mutableStateOf(Offset.Zero) }
+    var area by remember { mutableStateOf(IntSize.Zero) }
+
+    fun frameOf(a: IntSize) = minOf(a.width, a.height) * 0.9f
+    fun scaleOf(a: IntSize, z: Float) = frameOf(a) / minOf(src.width, src.height) * z
+    // يمنع خروج الإطار عن حدود الصورة
+    fun clampOff(o: Offset, z: Float, a: IntSize): Offset {
+        if (a.width == 0 || a.height == 0) return o
+        val s = scaleOf(a, z)
+        val fs = frameOf(a)
+        val mx = max(0f, (src.width * s - fs) / 2f)
+        val my = max(0f, (src.height * s - fs) / 2f)
+        return Offset(o.x.coerceIn(-mx, mx), o.y.coerceIn(-my, my))
+    }
+
+    Box(
+        Modifier.fillMaxSize().background(Color(0xFF0B0B10))
+            .pointerInput(Unit) { detectTapGestures { } }
+            .statusBarsPadding().navigationBarsPadding()
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(44.dp).springClickable(1.1f, onCancel).clip(CircleShape).background(Color.White.copy(0.14f)),
+                    contentAlignment = Alignment.Center
+                ) { Icon(Icons.Filled.Close, null, tint = Color.White, modifier = Modifier.size(22.dp)) }
+                Text(
+                    "حدد الجزء المطلوب", color = Color.White, fontSize = 18.sp, fontFamily = fontFam, fontWeight = FontWeight.ExtraBold,
+                    textAlign = TextAlign.Center, modifier = Modifier.weight(1f)
+                )
+                Box(
+                    Modifier.height(44.dp).springClickable(1.08f) {
+                        val a = area
+                        if (a.width == 0 || a.height == 0) return@springClickable
+                        val fs = frameOf(a)
+                        val s = scaleOf(a, zoom)
+                        val left = a.width / 2f - src.width * s / 2f + off.x
+                        val top = a.height / 2f - src.height * s / 2f + off.y
+                        val sx = ((a.width - fs) / 2f - left) / s
+                        val sy = ((a.height - fs) / 2f - top) / s
+                        val sw = fs / s
+                        val out = 800
+                        val result = Bitmap.createBitmap(out, out, Bitmap.Config.ARGB_8888)
+                        val cv = android.graphics.Canvas(result)
+                        cv.drawColor(android.graphics.Color.WHITE)
+                        val mtx = Matrix().apply { postTranslate(-sx, -sy); postScale(out / sw, out / sw) }
+                        cv.drawBitmap(src, mtx, Paint(Paint.FILTER_BITMAP_FLAG))
+                        onDone(result)
+                    }.clip(CircleShape).background(Color.White).padding(horizontal = 22.dp),
+                    contentAlignment = Alignment.Center
+                ) { Text("استخدام", color = Color.Black, fontSize = 15.sp, fontFamily = fontFam, fontWeight = FontWeight.Bold) }
+            }
+
+            Box(
+                Modifier.weight(1f).fillMaxWidth()
+                    .onSizeChanged { area = it }
+                    .pointerInput(src) {
+                        detectTransformGestures { _, pan, zm, _ ->
+                            val nz = (zoom * zm).coerceIn(1f, 6f)
+                            zoom = nz
+                            off = clampOff(off + pan, nz, area)
+                        }
+                    }
+            ) {
+                Canvas(Modifier.fillMaxSize()) {
+                    val fs = frameOf(IntSize(size.width.toInt(), size.height.toInt()))
+                    val s = fs / minOf(src.width, src.height) * zoom
+                    val dw = src.width * s
+                    val dh = src.height * s
+                    val left = size.width / 2f - dw / 2f + off.x
+                    val top = size.height / 2f - dh / 2f + off.y
+                    drawImage(
+                        img, dstOffset = IntOffset(left.roundToInt(), top.roundToInt()),
+                        dstSize = IntSize(dw.roundToInt(), dh.roundToInt()), filterQuality = FilterQuality.Medium
+                    )
+                    val fl = (size.width - fs) / 2f
+                    val ft = (size.height - fs) / 2f
+                    val rad = CornerRadius(14.dp.toPx())
+                    val hole = Path().apply { addRoundRect(RoundRect(fl, ft, fl + fs, ft + fs, rad)) }
+                    clipPath(hole, clipOp = ClipOp.Difference) { drawRect(Color.Black.copy(alpha = 0.66f)) }
+                    for (k in 1..2) {
+                        val d = fs * k / 3f
+                        drawLine(Color.White.copy(0.30f), Offset(fl + d, ft), Offset(fl + d, ft + fs), 1.dp.toPx())
+                        drawLine(Color.White.copy(0.30f), Offset(fl, ft + d), Offset(fl + fs, ft + d), 1.dp.toPx())
+                    }
+                    drawRoundRect(Color.White, Offset(fl, ft), Size(fs, fs), rad, style = Stroke(2.dp.toPx()))
+                }
+            }
+            Text(
+                "اسحب لتحريك الصورة، وقرّب بإصبعين للتكبير", color = Color.White.copy(0.65f), fontSize = 13.sp, fontFamily = fontFam,
+                textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 16.dp)
+            )
+        }
+    }
+}
+
+/* ───────────────────────── تبويب «الشكل» ───────────────────────── */
+
+private class ShapeUi(
+    val dots: String, val eye: String, val imgKey: String, val imgMode: Int, val images: List<File>,
+    val onDots: (String) -> Unit, val onEye: (String) -> Unit, val onImg: (String) -> Unit,
+    val onAddImg: () -> Unit, val onDeleteImg: (File) -> Unit, val onMode: (Int) -> Unit
+)
+
+private val qrPreviewPattern = arrayOf("11010", "10111", "01110", "11011", "01101")
+
+@Composable
+private fun ShapeLabel(text: String, fontFam: FontFamily) {
+    Text(
+        text, color = Color.White.copy(0.75f), fontSize = 12.5.sp, fontFamily = fontFam, fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 6.dp, bottom = 6.dp)
+    )
+}
+
+@Composable
+private fun ShapeTile(
+    label: String, selected: Boolean, fontFam: FontFamily, onClick: () -> Unit,
+    onDelete: (() -> Unit)? = null, content: @Composable BoxScope.() -> Unit
+) {
+    val sel by animateFloatAsState(if (selected) 1f else 0f, spring(0.6f, 400f), label = "shapeSel")
+    val shape = RoundedCornerShape(18.dp)
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            Modifier.size(64.dp)
+                .springClickable(1.08f, onClick)
+                .graphicsLayer { val s = 1f + 0.05f * sel; scaleX = s; scaleY = s }
+                .clip(shape)
+                .background(Color.White.copy(0.14f))
+                .border((1f + 2f * sel).dp, Color.White.copy(0.28f + 0.72f * sel), shape)
+        ) {
+            content()
+            if (selected) {
+                Box(
+                    Modifier.align(Alignment.TopStart).padding(4.dp).size(18.dp).clip(CircleShape).background(Color.White),
+                    contentAlignment = Alignment.Center
+                ) { Icon(Icons.Filled.Check, null, tint = Color.Black, modifier = Modifier.size(12.dp)) }
+            }
+            if (onDelete != null) {
+                Box(
+                    Modifier.align(Alignment.TopEnd).padding(3.dp).size(20.dp).clip(CircleShape)
+                        .background(Color.Black.copy(0.5f)).clickable { onDelete() },
+                    contentAlignment = Alignment.Center
+                ) { Icon(Icons.Filled.Close, null, tint = Color.White, modifier = Modifier.size(12.dp)) }
+            }
+        }
+        Text(label, color = Color.White.copy(0.85f), fontSize = 11.sp, fontFamily = fontFam, maxLines = 1, modifier = Modifier.padding(top = 5.dp))
+    }
+}
+
+@Composable
+private fun DotPreview(kind: String) {
+    Canvas(Modifier.fillMaxSize().padding(9.dp)) {
+        val rows = qrPreviewPattern
+        val n = rows.size
+        val cell = size.minDimension / n
+        fun on(x: Int, y: Int) = y in 0 until n && x in 0 until n && rows[y][x] == '1'
+        val path = Path()
+        for (y in 0 until n) for (x in 0 until n) {
+            if (on(x, y)) addDot(path, kind, (x + 0.5f) * cell, (y + 0.5f) * cell, cell, on(x, y - 1), on(x, y + 1), on(x - 1, y), on(x + 1, y))
+        }
+        drawPath(path, Color.White)
+    }
+}
+
+@Composable
+private fun EyePreview(kind: String) {
+    Canvas(Modifier.fillMaxSize().padding(11.dp)) {
+        val c = size.minDimension / 7f
+        val path = Path().apply { fillType = PathFillType.EvenOdd }
+        addEyeBox(path, 0f, 0f, 7 * c, kind, c, 0, false)
+        addEyeBox(path, c, c, 5 * c, kind, c, 1, false)
+        addEyeBox(path, 2 * c, 2 * c, 3 * c, kind, c, 2, false)
+        drawPath(path, Color.White)
+    }
+}
+
+@Composable
+private fun ShapeImageThumb(file: File) {
+    val thumb by produceState<ImageBitmap?>(null, file) {
+        value = withContext(Dispatchers.IO) { decodeScaled(file, 220)?.asImageBitmap() }
+    }
+    val t = thumb
+    if (t != null) Image(bitmap = t, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+}
+
+@Composable
+private fun ShapeChip(label: String, selected: Boolean, fontFam: FontFamily, onClick: () -> Unit) {
+    Box(
+        Modifier.height(34.dp).springClickable(1.06f, onClick).clip(CircleShape)
+            .background(Color.White.copy(if (selected) 0.30f else 0.10f))
+            .border(0.8.dp, Color.White.copy(if (selected) 0.8f else 0.2f), CircleShape)
+            .padding(horizontal = 16.dp),
+        contentAlignment = Alignment.Center
+    ) { Text(label, color = Color.White, fontSize = 12.5.sp, fontFamily = fontFam, fontWeight = FontWeight.Bold) }
+}
+
+@Composable
+private fun ShapeTab(fontFam: FontFamily, ui: ShapeUi) {
+    val pad = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp)
+    Column(Modifier.fillMaxWidth().height(236.dp).verticalScroll(rememberScrollState())) {
+        ShapeLabel("شكل النقاط", fontFam)
+        LazyRow(Modifier.fillMaxWidth(), contentPadding = pad, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(qrDotShapes.size) { i ->
+                val (k, l) = qrDotShapes[i]
+                ShapeTile(l, ui.dots == k, fontFam, { ui.onDots(k) }) { DotPreview(k) }
+            }
+        }
+        ShapeLabel("شكل الزوايا", fontFam)
+        LazyRow(Modifier.fillMaxWidth(), contentPadding = pad, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(qrEyeShapes.size) { i ->
+                val (k, l) = qrEyeShapes[i]
+                ShapeTile(l, ui.eye == k, fontFam, { ui.onEye(k) }) { EyePreview(k) }
+            }
+        }
+        ShapeLabel("شكل من صورة", fontFam)
+        LazyRow(Modifier.fillMaxWidth(), contentPadding = pad, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            item {
+                ShapeTile("من صورة", false, fontFam, ui.onAddImg) {
+                    Icon(AppIcons.PlusIcon, null, tint = Color.White, modifier = Modifier.align(Alignment.Center).size(28.dp))
+                }
+            }
+            item {
+                ShapeTile("بدون", ui.imgKey.isEmpty(), fontFam, { ui.onImg("") }) {
+                    Icon(Icons.Filled.Close, null, tint = Color.White.copy(0.8f), modifier = Modifier.align(Alignment.Center).size(24.dp))
+                }
+            }
+            items(ui.images.size) { i ->
+                val f = ui.images[i]
+                ShapeTile("صورة ${i + 1}", ui.imgKey == f.name, fontFam, { ui.onImg(f.name) }, { ui.onDeleteImg(f) }) { ShapeImageThumb(f) }
+            }
+        }
+        if (ui.imgKey.isNotEmpty()) {
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ShapeChip("ألوان الصورة بالنقاط", ui.imgMode == 0, fontFam) { ui.onMode(0) }
+                ShapeChip("الصورة خلف الباركود", ui.imgMode == 1, fontFam) { ui.onMode(1) }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
 /* ───────────────────────── صورة المشاركة ───────────────────────── */
 
 /** يرسم بطاقة الباركود كاملة كصورة PNG (نفس شكل الشاشة) */
 private fun renderShareImage(
     ctx: Context, matrix: Array<BooleanArray>, theme: QrTheme, bgKey: String, bgImg: ImageBitmap?,
-    avatar: ImageBitmap?, name: String, username: String
+    avatar: ImageBitmap?, name: String, username: String, shape: QrShape = QrShape()
 ): File? = runCatching {
     val w = 1080
     val h = 1700
@@ -474,7 +953,7 @@ private fun renderShareImage(
         val cardH = 931f
         drawRoundRect(Color.White, Offset(cardX, cardTop), Size(cardW, cardH), CornerRadius(83f))
         translate(cardX + 50f, cardTop + 161f) {
-            drawQr(matrix, 720f, theme, theme, 1f, Offset.Zero, 0f)
+            drawQr(matrix, 720f, theme, theme, 1f, Offset.Zero, 0f, shape = shape)
         }
         // شعار التطبيق بالنص
         val lc = Offset(cardX + 50f + 360f, cardTop + 161f + 360f)
@@ -602,6 +1081,12 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
 
     var bgKey by remember { mutableStateOf(QrStyle.loadBg(ctx)) }
     var customBgs by remember { mutableStateOf(QrStyle.customBgs(ctx)) }
+    var dotsKey by remember { mutableStateOf(QrStyle.loadDots(ctx)) }
+    var eyeKey by remember { mutableStateOf(QrStyle.loadEye(ctx)) }
+    var shapeImgKey by remember { mutableStateOf(QrStyle.loadShapeImg(ctx)) }
+    var imgMode by remember { mutableIntStateOf(QrStyle.loadImgMode(ctx)) }
+    var customShapes by remember { mutableStateOf(QrStyle.customShapes(ctx)) }
+    var cropSrc by remember { mutableStateOf<Bitmap?>(null) }
     var sheet by remember { mutableStateOf(QrSheet.None) }
     var lastSheet by remember { mutableStateOf(QrSheet.Brush) }
     if (sheet != QrSheet.None) lastSheet = sheet
@@ -613,6 +1098,13 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
             decodeScaled(File(QrStyle.bgDir(ctx), bgKey.removePrefix("img:")), 1600)?.asImageBitmap()
         }
     }
+
+    val shapeImage by produceState<ImageBitmap?>(null, shapeImgKey) {
+        value = if (shapeImgKey.isEmpty()) null else withContext(Dispatchers.IO) {
+            decodeScaled(File(QrStyle.shapeDir(ctx), shapeImgKey), 900)?.asImageBitmap()
+        }
+    }
+    val qrShape = QrShape(dotsKey, eyeKey, shapeImage, imgMode)
 
     fun pickTheme(i: Int, at: Offset) {
         if (i == toIdx) return
@@ -632,6 +1124,13 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                 customBgs = QrStyle.customBgs(ctx)
                 pickBg("img:" + f.name)
             } else AppToast.show("ما گدرت أضيف الصورة")
+        }
+    }
+
+    val shapePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) scope.launch {
+            val bmp = withContext(Dispatchers.IO) { loadOriented(ctx, uri, 1800) }
+            if (bmp != null) cropSrc = bmp else AppToast.show("ما گدرت أفتح الصورة")
         }
     }
 
@@ -982,7 +1481,7 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                                         if (intro) {
                                             drawQr(
                                                 mx, size.width, fto, fto, qrWave.value,
-                                                Offset(size.width / 2f, size.height / 2f), hypot(size.width, size.height) / 2f, true
+                                                Offset(size.width / 2f, size.height / 2f), hypot(size.width, size.height) / 2f, true, qrShape
                                             )
                                         } else {
                                             val ob = origin - bgPos
@@ -990,7 +1489,7 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                                                 hypot(ob.x, ob.y), hypot(bgSize.width - ob.x, ob.y),
                                                 hypot(ob.x, bgSize.height - ob.y), hypot(bgSize.width - ob.x, bgSize.height - ob.y)
                                             ).coerceAtLeast(1f)
-                                            drawQr(mx, size.width, ffrom, fto, reveal.value, origin - qrPos, rMax)
+                                            drawQr(mx, size.width, ffrom, fto, reveal.value, origin - qrPos, rMax, shape = qrShape)
                                         }
                                     }
                                     Box(
@@ -1074,6 +1573,20 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                     if (lastSheet == QrSheet.Brush) {
                         BrushSheet(
                             bd = bd, fontFam = fontFam, selectedTheme = toIdx, bgKey = bgKey, customBgs = customBgs,
+                            shape = ShapeUi(
+                                dots = dotsKey, eye = eyeKey, imgKey = shapeImgKey, imgMode = imgMode, images = customShapes,
+                                onDots = { dotsKey = it; QrStyle.saveDots(ctx, it) },
+                                onEye = { eyeKey = it; QrStyle.saveEye(ctx, it) },
+                                onImg = { shapeImgKey = it; QrStyle.saveShapeImg(ctx, it) },
+                                onAddImg = { shapePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                                onDeleteImg = { f ->
+                                    val wasSelected = shapeImgKey == f.name
+                                    f.delete()
+                                    customShapes = QrStyle.customShapes(ctx)
+                                    if (wasSelected) { shapeImgKey = ""; QrStyle.saveShapeImg(ctx, "") }
+                                },
+                                onMode = { imgMode = it; QrStyle.saveImgMode(ctx, it) }
+                            ),
                             onTheme = { i, at -> pickTheme(i, at) },
                             onBg = { pickBg(it) },
                             onAddBg = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
@@ -1101,7 +1614,7 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                                 busyImage = true
                                 scope.launch {
                                     val f = withContext(Dispatchers.Default) {
-                                        renderShareImage(ctx, mx, themeAt(toIdx), bgKey, bgImage, avatarImg, name, username)
+                                        renderShareImage(ctx, mx, themeAt(toIdx), bgKey, bgImage, avatarImg, name, username, qrShape)
                                     }
                                     busyImage = false
                                     if (f == null) { AppToast.show("ما گدرت أجهز الصورة"); return@launch }
@@ -1134,6 +1647,33 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                 modifier = Modifier.align(Alignment.TopStart).padding(start = 14.dp, top = 10.dp).zIndex(10f).size(48.dp)
             ) {
                 Icon(Icons.Filled.Close, null, tint = Color.White, modifier = Modifier.size(22.dp))
+            }
+        }
+
+        // شاشة قص الصورة (تظهر فوق كل شي)
+        cropSrc?.let { bmp ->
+            Box(Modifier.fillMaxSize().zIndex(30f)) {
+                QrImageCropOverlay(
+                    src = bmp, fontFam = fontFam,
+                    onCancel = { cropSrc = null },
+                    onDone = { cropped ->
+                        cropSrc = null
+                        scope.launch {
+                            val f = withContext(Dispatchers.IO) {
+                                runCatching {
+                                    val out = File(QrStyle.shapeDir(ctx), "sh_${System.currentTimeMillis()}.jpg")
+                                    out.outputStream().use { cropped.compress(Bitmap.CompressFormat.JPEG, 92, it) }
+                                    out
+                                }.getOrNull()
+                            }
+                            if (f != null) {
+                                customShapes = QrStyle.customShapes(ctx)
+                                shapeImgKey = f.name
+                                QrStyle.saveShapeImg(ctx, f.name)
+                            } else AppToast.show("ما گدرت أحفظ الصورة")
+                        }
+                    }
+                )
             }
         }
     }
@@ -1186,13 +1726,13 @@ private fun GlassSegmented(
 
 @Composable
 private fun BrushSheet(
-    bd: com.kyant.backdrop.Backdrop, fontFam: FontFamily, selectedTheme: Int, bgKey: String, customBgs: List<File>,
+    bd: com.kyant.backdrop.Backdrop, fontFam: FontFamily, selectedTheme: Int, bgKey: String, customBgs: List<File>, shape: ShapeUi,
     onTheme: (Int, Offset) -> Unit, onBg: (String) -> Unit, onAddBg: () -> Unit,
     onDeleteBg: (File) -> Unit, onDone: () -> Unit
 ) {
     var tab by remember { mutableIntStateOf(0) }
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-        GlassSegmented(bd, listOf("الألوان", "الخلفية"), tab, fontFam, { tab = it }, Modifier.width(200.dp))
+        GlassSegmented(bd, listOf("الألوان", "الشكل", "الخلفية"), tab, fontFam, { tab = it }, Modifier.width(270.dp))
         Spacer(Modifier.weight(1f))
         GlassButton(onClick = onDone, backdrop = bd, pressScale = 1.1f, modifier = Modifier.height(40.dp).width(72.dp)) {
             Text("تم", color = Color.White, fontSize = 14.sp, fontFamily = fontFam, fontWeight = FontWeight.Bold)
@@ -1229,6 +1769,8 @@ private fun BrushSheet(
                 }
             }
         }
+    } else if (tab == 1) {
+        ShapeTab(fontFam, shape)
     } else {
         val preview = themeAt(selectedTheme)
         LazyRow(

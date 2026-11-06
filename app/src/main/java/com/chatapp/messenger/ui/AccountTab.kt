@@ -183,7 +183,9 @@ fun AccountTab(
     /** true لما يكون هذا التبويب هو الظاهر (كل التبويبات مبنية من البداية) */
     active: Boolean = true,
     /** فتح نافذة اختيار رمز الاسم (ملصقات متحركة) */
-    onOpenBadges: (androidx.compose.ui.geometry.Offset) -> Unit = {}
+    onOpenBadges: (androidx.compose.ui.geometry.Offset) -> Unit = {},
+    /** طلب تسجيل الخروج (زره صار بالإعدادات تحت مطور التطبيق) */
+    onRequestLogout: () -> Unit = {}
 ) {
     val me = remember { Repo.auth.currentUser }
     val myUid = me?.uid ?: ""
@@ -556,7 +558,7 @@ fun AccountTab(
     }
     // إعدادات التطبيق: الشاشة تتمدد من زر القائمة نفسه (حجمه وشكله) لين تغطي الشاشة كلها
     LiquidRevealOverlay(visible = showSettings, origin = menuBounds) {
-        AppSettingsScreen(profile = profile, onDismiss = { showSettings = false })
+        AppSettingsScreen(profile = profile, onDismiss = { showSettings = false }, onLogout = onRequestLogout)
     }
     // عرض البانر / الصورة الشخصية بملء الشاشة مع حفظ بالمعرض
     ImageViewerHost(viewImage, gifFile = bannerGif.takeIf { viewImage != null && viewImage == profile.banner }) { viewImage = null }

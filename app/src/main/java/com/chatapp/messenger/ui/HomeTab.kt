@@ -186,8 +186,7 @@ fun HomeTab(
                         label = "homeTitle"
                     ) { m -> Text(when (m) { 1 -> "طلبات الرسائل"; else -> "المحادثات" }) }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-                actions = { TextButton(onClick = onRequestLogout) { Text("تسجيل الخروج") } }
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
             )
         }
     ) { padding ->
@@ -409,8 +408,7 @@ fun GroupsTab(onOpenGroup: (GroupItem) -> Unit, onRequestLogout: () -> Unit) {
         topBar = {
             TopAppBar(
                 title = { Text("المجموعات") },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-                actions = { TextButton(onClick = onRequestLogout) { Text("تسجيل الخروج") } }
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
             )
         }
     ) { padding ->

@@ -317,7 +317,8 @@ private fun MainContent() {
                                 onOverlayChange = { accountOverlay = it },
                                 onOpenProfile = { viewProfile = it },
                                 active = selected,
-                                onOpenBadges = { stickerOrigin = it; stickerOpen = true }
+                                onOpenBadges = { stickerOrigin = it; stickerOpen = true },
+                                onRequestLogout = { confirmLogout = true }
                             )
                         }
                     }

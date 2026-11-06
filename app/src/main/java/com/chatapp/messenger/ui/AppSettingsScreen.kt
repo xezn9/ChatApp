@@ -302,7 +302,7 @@ private fun AppSettingsScene(content: @Composable (Backdrop) -> Unit) {
 // ---------------------------------------------------------------------------
 
 @Composable
-internal fun AppSettingsScreen(profile: Profile, onDismiss: () -> Unit) {
+internal fun AppSettingsScreen(profile: Profile, onDismiss: () -> Unit, onLogout: () -> Unit = {}) {
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
         var selected by remember { mutableStateOf<AppSettingsSection?>(null) }
         var last by remember { mutableStateOf(settingsSections[0]) }
@@ -332,7 +332,7 @@ internal fun AppSettingsScreen(profile: Profile, onDismiss: () -> Unit) {
                     }
                 ) {
                     AppSettingsHome(
-                        profile = profile, bd = bd, onBack = onDismiss,
+                        profile = profile, bd = bd, onBack = onDismiss, onLogout = onLogout,
                         onOpen = { sec, rect ->
                             if (sec.title == "ثيم التطبيق") { themeOrigin = rect; themeOpen = true }
                             else { last = sec; selected = sec }
@@ -430,7 +430,7 @@ internal fun AppSettingsHeader(title: String, bd: Backdrop, onBack: () -> Unit) 
 
 @Composable
 private fun AppSettingsHome(
-    profile: Profile, bd: Backdrop, onBack: () -> Unit, onOpen: (AppSettingsSection, Rect?) -> Unit
+    profile: Profile, bd: Backdrop, onBack: () -> Unit, onLogout: () -> Unit, onOpen: (AppSettingsSection, Rect?) -> Unit
 ) {
     val dark = isAppDark()
     val fg = MaterialTheme.colorScheme.onBackground
@@ -495,8 +495,16 @@ private fun AppSettingsHome(
             }
         }
 
+        // تسجيل الخروج: تحت مطور التطبيق (يفتح نافذة التأكيد)
+        SetIn(3 + settingsSections.size, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), step = 70L) {
+            AppSettingsRow(
+                AppSettingsSection("تسجيل الخروج", "الخروج من حسابك على هذا الجهاز", AppIcons.Logout, Color(0xFFFF453A), Color(0xFFFF2D6F)),
+                bd, dark
+            ) { onLogout() }
+        }
+
         Spacer(Modifier.height(28.dp))
-        SetIn(3 + settingsSections.size, Modifier.fillMaxWidth()) {
+        SetIn(4 + settingsSections.size, Modifier.fillMaxWidth()) {
             Text(
                 "ChatApp", fontSize = 13.sp, color = fg.copy(0.4f),
                 textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()
