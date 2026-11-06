@@ -109,8 +109,6 @@ import java.io.File
 
 private val DangerColor = Color(0xFFE5484D)
 
-/** ارتفاع بانر المجموعة بالـ dp (يستعمله العرض وشاشة تحريك البانر حتى يتطابقان) */
-private const val GROUP_BANNER_HEIGHT = 170
 
 private class ConfirmSpec(
     val title: String,
@@ -148,6 +146,10 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
     val bannerImg = rememberB64Image(g?.item?.banner.orEmpty())
     val bannerGif = rememberGroupGif(groupId, "banner", g?.item?.bannerGifV ?: 0L)
     var viewImage by remember { mutableStateOf<String?>(null) }
+    val hasBanner = g != null && g.item.banner.isNotBlank()
+    // نفس مقاييس بانر الحساب: ارتفاع = 620/1440 من عرض الشاشة + شريط الحالة (يبدأ من أعلى الشاشة)
+    val bannerBodyDp = (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp / 1440f * 620f).dp
+    val statusTopDp = androidx.compose.foundation.layout.WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
 
     var showEdit by remember { mutableStateOf(false) }
     var showAdd by remember { mutableStateOf(false) }
@@ -175,6 +177,32 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
         // ---- طبقة الخلفية + المحتوى (الزجاج يعكس هذي الطبقة) ----
         Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
             ChatBackground(ChatBg(), remember { File("") }, Modifier.fillMaxSize())
+            // البانر يمتد على عرض الشاشة كامل من الأعلى (خلف شريط الحالة) ويذوب بالخلفية، بدون بطاقة
+            if (hasBanner && g != null) {
+                Box(
+                    Modifier.fillMaxWidth().height(bannerBodyDp + statusTopDp)
+                        .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+                        .drawWithContent {
+                            drawContent()
+                            drawRect(
+                                Brush.verticalGradient(0f to Color.Black, 0.6f to Color.Black, 1f to Color.Transparent),
+                                blendMode = androidx.compose.ui.graphics.BlendMode.DstIn
+                            )
+                        }
+                ) {
+                    AnimatedBannerImage(
+                        bannerGif, bannerImg, Modifier.matchParentSize(), ContentScale.Crop,
+                        androidx.compose.ui.BiasAlignment(g.item.bannerFx, g.item.bannerFy)
+                    )
+                    Box(
+                        Modifier.matchParentSize().background(
+                            Brush.verticalGradient(
+                                0f to Color.Black.copy(0.30f), 0.5f to Color.Black.copy(0.05f), 1f to Color.Black.copy(0.25f)
+                            )
+                        )
+                    )
+                }
+            }
         }
 
         // المحتوى الزجاجي لازم يكون خارج طبقة layerBackdrop، وإلا الزجاج يرسم نفسه (تكرار لا نهائي = كراش)
@@ -193,7 +221,7 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
                         Modifier.weight(1f).heightIn(min = 44.dp).padding(horizontal = 6.dp),
                         contentAlignment = Alignment.CenterStart
                     ) {
-                        Text("معلومات المجموعة", color = fg, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        Text("معلومات المجموعة", color = if (hasBanner) Color.White else fg, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -238,48 +266,18 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
 
                         // ---- الهيرو: صورة بحلقة متحركة + اليوزر + شارات ----
                         item {
-                            val heroShape = RoundedCornerShape(34.dp)
-                            val hasBanner = g.item.banner.isNotBlank()
-                            Box(
-                                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
-                                    .enterFx(enter[0])
-                                    .clearGlass(backdrop, dark, heroShape, blurDp = 3f, refractH = 20f, refractA = 40f)
-                                    .clip(heroShape)
-                                    .drawBehind {
-                                        drawRect(
-                                            Brush.radialGradient(
-                                                listOf(AccentBlue.copy(alpha = 0.22f), Color.Transparent),
-                                                center = Offset(size.width / 2f, 120.dp.toPx()),
-                                                radius = size.width * 0.75f
-                                            )
-                                        )
-                                    }
-                            ) {
-                                // البانر: يغطي أعلى البطاقة ويذوب تدريجياً نحو الأسفل، وضغطة عليه تفتحه بملء الشاشة
-                                if (hasBanner) {
-                                    Box(
-                                        Modifier.fillMaxWidth().height(GROUP_BANNER_HEIGHT.dp)
-                                            .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
-                                            .drawWithContent {
-                                                drawContent()
-                                                drawRect(
-                                                    Brush.verticalGradient(0f to Color.Black, 0.55f to Color.Black, 1f to Color.Transparent),
-                                                    blendMode = androidx.compose.ui.graphics.BlendMode.DstIn
-                                                )
-                                            }
-                                            .clickable { viewImage = g.item.banner }
-                                    ) {
-                                        AnimatedBannerImage(
-                                            bannerGif, bannerImg, Modifier.matchParentSize(), ContentScale.Crop,
-                                            androidx.compose.ui.BiasAlignment(g.item.bannerFx, g.item.bannerFy)
-                                        )
-                                    }
-                                }
-                                Column(
-                                Modifier.fillMaxWidth()
-                                    .padding(start = 20.dp, end = 20.dp, top = if (hasBanner) 92.dp else 24.dp, bottom = 24.dp),
+                            // الهيرو بدون بطاقة (مثل الحساب): البانر خلفه بعرض الشاشة، والصورة تتداخل مع حافته السفلى
+                            Column(
+                                Modifier.fillMaxWidth().enterFx(enter[0])
+                                    .padding(start = 20.dp, end = 20.dp, bottom = 16.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
+                                // منطقة البانر: ضغطة عليها تفتح البانر بملء الشاشة
+                                Spacer(
+                                    Modifier.fillMaxWidth()
+                                        .height(if (hasBanner) (bannerBodyDp - 126.dp).coerceAtLeast(8.dp) else 8.dp)
+                                        .then(if (hasBanner) Modifier.clickable { viewImage = g.item.banner } else Modifier)
+                                )
                                 HeroAvatar(g.item.avatar, dark, backdrop, g.item.id, g.item.avatarGifV)
                                 Spacer(Modifier.height(14.dp))
                                 Text(g.item.name, color = fg, fontSize = 24.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
@@ -324,7 +322,6 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
                                     },
                                     color = fg.copy(alpha = 0.55f), fontSize = 12.sp
                                 )
-                            }
                             }
                         }
 
@@ -1114,7 +1111,6 @@ private fun EditGroupDialog(
     if (showBannerCrop && bannerB64.isNotEmpty()) {
         BannerCropOverlay(
             still = bannerImg, gif = pendingBannerGifFile ?: storedBannerGif, initFx = bfx, initFy = bfy,
-            fixedHeightDp = GROUP_BANNER_HEIGHT.toFloat(),
             onCancel = { showBannerCrop = false },
             onDone = { x, y -> bfx = x; bfy = y; showBannerCrop = false }
         )

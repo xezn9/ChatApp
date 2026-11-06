@@ -173,7 +173,6 @@ fun GroupCreateForm(dark: Boolean, modifier: Modifier = Modifier, onCreated: () 
             Box(Modifier.fillMaxSize().zIndex(10f)) {
                 BannerCropOverlay(
                     still = bannerImg, gif = bannerGifFile, initFx = bfx, initFy = bfy,
-                    fixedHeightDp = 170f,
                     onCancel = { showBannerCrop = false },
                     onDone = { x, y -> bfx = x; bfy = y; showBannerCrop = false }
                 )
