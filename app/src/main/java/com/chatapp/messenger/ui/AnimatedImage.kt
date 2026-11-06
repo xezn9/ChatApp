@@ -39,6 +39,9 @@ object GifUtil {
      */
     const val MAX_BANNER_BYTES = 6_000_000
 
+    /** أقصى حجم لـ GIF صورة المجموعة (تنعرض صغيرة بالقوائم، فالحد أقل من البانر) */
+    const val MAX_GROUP_AVATAR_BYTES = 3_000_000
+
     /** أقصى حجم لـ GIF خلفية المحادثة (محلي بالجهاز فقط، فالحد أوسع) */
     const val MAX_BG_BYTES = 12_000_000
 
@@ -219,6 +222,22 @@ fun rememberBannerGif(uid: String, v: Long): File? {
         value = if (v <= 0L || uid.isBlank()) null
         else withContext(Dispatchers.IO) {
             runCatching { com.chatapp.messenger.Repo.bannerGifFile(ctx.cacheDir, uid, v) }.getOrNull()
+        }
+    }
+    return f
+}
+
+/**
+ * ينزّل (أو يقرأ من الكاش) GIF خاص بمجموعة. [slot] = "avatar" (صورة المجموعة) أو "banner".
+ * null = ما فيه GIF أو لسا ينزل (تبقى الصورة الثابتة ظاهرة)
+ */
+@Composable
+fun rememberGroupGif(gid: String, slot: String, v: Long): File? {
+    val ctx = LocalContext.current
+    val f by produceState<File?>(null, gid, slot, v) {
+        value = if (v <= 0L || gid.isBlank()) null
+        else withContext(Dispatchers.IO) {
+            runCatching { com.chatapp.messenger.Repo.groupGifFile(ctx.cacheDir, gid, slot, v) }.getOrNull()
         }
     }
     return f

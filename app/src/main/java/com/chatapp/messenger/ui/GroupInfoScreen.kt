@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Shape
@@ -70,6 +71,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import com.chatapp.messenger.GifChange
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -103,6 +109,9 @@ import java.io.File
 
 private val DangerColor = Color(0xFFE5484D)
 
+/** ارتفاع بانر المجموعة بالـ dp (يستعمله العرض وشاشة تحريك البانر حتى يتطابقان) */
+private const val GROUP_BANNER_HEIGHT = 170
+
 private class ConfirmSpec(
     val title: String,
     val message: String,
@@ -134,6 +143,11 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
     val a = remember(g, me) { if (g != null) GroupAccess(g, me) else null }
     val names = rememberNames(remember(g) { if (g != null) (g.members + g.banned).distinct() else emptyList() })
     fun nameOf(uid: String) = names[uid].orEmpty().ifBlank { "مستخدم" }
+
+    // بانر المجموعة (ثابت + GIF) وعرضه بملء الشاشة
+    val bannerImg = rememberB64Image(g?.item?.banner.orEmpty())
+    val bannerGif = rememberGroupGif(groupId, "banner", g?.item?.bannerGifV ?: 0L)
+    var viewImage by remember { mutableStateOf<String?>(null) }
 
     var showEdit by remember { mutableStateOf(false) }
     var showAdd by remember { mutableStateOf(false) }
@@ -225,7 +239,8 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
                         // ---- الهيرو: صورة بحلقة متحركة + اليوزر + شارات ----
                         item {
                             val heroShape = RoundedCornerShape(34.dp)
-                            Column(
+                            val hasBanner = g.item.banner.isNotBlank()
+                            Box(
                                 Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
                                     .enterFx(enter[0])
                                     .clearGlass(backdrop, dark, heroShape, blurDp = 3f, refractH = 20f, refractA = 40f)
@@ -239,10 +254,33 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
                                             )
                                         )
                                     }
-                                    .padding(horizontal = 20.dp, vertical = 24.dp),
+                            ) {
+                                // البانر: يغطي أعلى البطاقة ويذوب تدريجياً نحو الأسفل، وضغطة عليه تفتحه بملء الشاشة
+                                if (hasBanner) {
+                                    Box(
+                                        Modifier.fillMaxWidth().height(GROUP_BANNER_HEIGHT.dp)
+                                            .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+                                            .drawWithContent {
+                                                drawContent()
+                                                drawRect(
+                                                    Brush.verticalGradient(0f to Color.Black, 0.55f to Color.Black, 1f to Color.Transparent),
+                                                    blendMode = androidx.compose.ui.graphics.BlendMode.DstIn
+                                                )
+                                            }
+                                            .clickable { viewImage = g.item.banner }
+                                    ) {
+                                        AnimatedBannerImage(
+                                            bannerGif, bannerImg, Modifier.matchParentSize(), ContentScale.Crop,
+                                            androidx.compose.ui.BiasAlignment(g.item.bannerFx, g.item.bannerFy)
+                                        )
+                                    }
+                                }
+                                Column(
+                                Modifier.fillMaxWidth()
+                                    .padding(start = 20.dp, end = 20.dp, top = if (hasBanner) 92.dp else 24.dp, bottom = 24.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                HeroAvatar(g.item.avatar, dark, backdrop)
+                                HeroAvatar(g.item.avatar, dark, backdrop, g.item.id, g.item.avatarGifV)
                                 Spacer(Modifier.height(14.dp))
                                 Text(g.item.name, color = fg, fontSize = 24.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                                 if (g.item.handle.isNotBlank()) {
@@ -286,6 +324,7 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
                                     },
                                     color = fg.copy(alpha = 0.55f), fontSize = 12.sp
                                 )
+                            }
                             }
                         }
 
@@ -430,15 +469,23 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
             }
         }
 
+        // عرض البانر بملء الشاشة (يتحرك إذا GIF)
+        ImageViewerHost(viewImage, gifFile = bannerGif.takeIf { viewImage != null && viewImage == g?.item?.banner }) { viewImage = null }
+
         // ================= النوافذ الزجاجية (فوق طبقة الخلفية) =================
         if (g != null && a != null) {
             if (showEdit) {
                 EditGroupDialog(
                     g = g, backdrop = backdrop, dark = dark,
                     onDismiss = { showEdit = false },
-                    onSave = { name, bio, avatar ->
+                    onSave = { e ->
                         showEdit = false
-                        act("تم حفظ التعديلات") { Repo.updateGroupInfo(groupId, name, bio, avatar) }
+                        act("تم حفظ التعديلات") {
+                            Repo.updateGroupInfo(
+                                groupId, e.name, e.bio, e.avatar, e.avatarGif,
+                                e.banner, e.bannerGif, e.bannerFx, e.bannerFy
+                            )
+                        }
                     }
                 )
             }
@@ -625,7 +672,7 @@ private fun Modifier.enterFx(p: Animatable<Float, *>): Modifier = graphicsLayer 
 
 /** صورة المجموعة داخل إطار Liquid Glass دائري (انكسار قوي على الحافة) مع طفو خفيف */
 @Composable
-private fun HeroAvatar(b64: String, dark: Boolean, backdrop: Backdrop) {
+private fun HeroAvatar(b64: String, dark: Boolean, backdrop: Backdrop, gid: String, gifV: Long) {
     val t = rememberInfiniteTransition(label = "float")
     val fy by t.animateFloat(
         initialValue = -3f, targetValue = 3f,
@@ -637,7 +684,7 @@ private fun HeroAvatar(b64: String, dark: Boolean, backdrop: Backdrop) {
             .graphicsLayer { translationY = fy.dp.toPx() }
             .clearGlass(backdrop, dark, CircleShape, blurDp = 2f, refractH = 28f, refractA = 56f, surfaceTint = AccentBlue.copy(alpha = 0.10f)),
         contentAlignment = Alignment.Center
-    ) { GroupAvatar(b64, 108.dp) }
+    ) { GroupAvatar(b64, 108.dp, gid, gifV) }
 }
 
 /**
@@ -881,32 +928,173 @@ private fun GroupDivider(fg: Color) {
 
 // ============================ الحوارات ============================
 
+/** نتيجة نافذة التعديل: القيم الي تنرسل لـ Repo.updateGroupInfo (null / Keep = بدون تغيير) */
+private class GroupEdit(
+    val name: String, val bio: String,
+    val avatar: String?, val avatarGif: GifChange,
+    val banner: String?, val bannerGif: GifChange,
+    val bannerFx: Float, val bannerFy: Float
+)
+
+/** أقصى طول لنص base64 للصورة الثابتة (قواعد قاعدة البيانات: 400000) */
+private const val MAX_STILL_B64 = 390_000
+
 @Composable
 private fun EditGroupDialog(
     g: GroupFull, backdrop: Backdrop, dark: Boolean,
-    onDismiss: () -> Unit, onSave: (String, String, String?) -> Unit
+    onDismiss: () -> Unit, onSave: (GroupEdit) -> Unit
 ) {
     val fg = glassFg(dark)
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val gid = g.item.id
     var name by remember { mutableStateOf(g.item.name) }
     var bio by remember { mutableStateOf(g.item.bio) }
+
+    // ---- صورة المجموعة: newAvatar = صورة ثابتة جديدة (null = بدون تغيير). pendingAvatarGif = GIF جديد ----
     var newAvatar by remember { mutableStateOf<String?>(null) }
+    var pendingAvatarGif by remember { mutableStateOf<ByteArray?>(null) }
+    var pendingAvatarGifFile by remember { mutableStateOf<File?>(null) }
     var cropSrc by remember { mutableStateOf<String?>(null) }
-    val pick = rememberImagePicker(maxSide = 800, quality = 85) { b64 ->
-        // أي صورة تنختار: تفتح شاشة تحريك الصورة لاختيار الجزء المطلوب
+    val pickAvatar = rememberImagePicker(
+        maxSide = 800, quality = 80,
+        gifLimit = GifUtil.MAX_GROUP_AVATAR_BYTES,
+        onGif = { bytes, still ->
+            if (still.length > MAX_STILL_B64) {
+                AppToast.show("الصورة كبيرة، جرّب GIF أصغر")
+            } else {
+                // GIF ما ينقص (يبقى متحرك)، فنتخطى شاشة القص. أول فريم يصير الصورة الثابتة
+                newAvatar = still
+                pendingAvatarGif = bytes
+                scope.launch {
+                    pendingAvatarGifFile = withContext(Dispatchers.IO) {
+                        runCatching {
+                            File(ctx.cacheDir, "gif_groups").apply { mkdirs() }
+                                .let { d -> File(d, "pending_avatar_${System.currentTimeMillis()}.gif").also { it.writeBytes(bytes) } }
+                        }.getOrNull()
+                    }
+                }
+            }
+        }
+    ) { b64 ->
+        // صورة عادية: تفتح شاشة تحريك الصورة لاختيار الجزء المطلوب
         cropSrc = b64
     }
+
+    // ---- البانر ----
+    var bannerB64 by remember { mutableStateOf(g.item.banner) }
+    var bannerGifV by remember { mutableLongStateOf(g.item.bannerGifV) }
+    var pendingBannerGif by remember { mutableStateOf<ByteArray?>(null) }
+    var pendingBannerGifFile by remember { mutableStateOf<File?>(null) }
+    val storedBannerGif = rememberGroupGif(gid, "banner", bannerGifV)
+    var bfx by remember { mutableFloatStateOf(g.item.bannerFx) }
+    var bfy by remember { mutableFloatStateOf(g.item.bannerFy) }
+    var showBannerCrop by remember { mutableStateOf(false) }
+    fun clearBannerGif() { bannerGifV = 0L; pendingBannerGif = null; pendingBannerGifFile = null }
+    val pickBanner = rememberImagePicker(
+        maxSide = 800, quality = 60,
+        onGif = { bytes, still ->
+            if (still.length > MAX_STILL_B64) {
+                AppToast.show("الصورة كبيرة، جرّب GIF أصغر")
+            } else {
+                clearBannerGif()
+                bannerB64 = still
+                pendingBannerGif = bytes
+                bfx = 0f; bfy = 0f; showBannerCrop = true
+                scope.launch {
+                    pendingBannerGifFile = withContext(Dispatchers.IO) {
+                        runCatching {
+                            File(ctx.cacheDir, "gif_groups").apply { mkdirs() }
+                                .let { d -> File(d, "pending_banner_${System.currentTimeMillis()}.gif").also { it.writeBytes(bytes) } }
+                        }.getOrNull()
+                    }
+                }
+            }
+        }
+    ) { b64 ->
+        if (b64.length > MAX_STILL_B64) {
+            AppToast.show("الصورة كبيرة، جرّب صورة أصغر")
+        } else {
+            clearBannerGif()
+            bannerB64 = b64
+            bfx = 0f; bfy = 0f; showBannerCrop = true
+        }
+    }
+    val bannerImg = rememberB64Image(bannerB64)
+
     Box(Modifier.fillMaxSize()) {
     GlassDialog(
         backdrop = backdrop, dark = dark, clear = true, title = "تعديل المجموعة",
         onDismiss = onDismiss,
         confirmText = "حفظ",
         confirmEnabled = name.isNotBlank(),
-        onConfirm = { onSave(name, bio, newAvatar) }
+        onConfirm = {
+            val avatarGifChange: GifChange = when {
+                pendingAvatarGif != null -> GifChange.Set(pendingAvatarGif!!)
+                // اختار صورة ثابتة جديدة وكان فيه GIF قديم = نحذف الـ GIF
+                newAvatar != null && g.item.avatarGifV > 0L -> GifChange.Remove
+                else -> GifChange.Keep
+            }
+            val bannerGifChange: GifChange = when {
+                pendingBannerGif != null -> GifChange.Set(pendingBannerGif!!)
+                bannerGifV == 0L && g.item.bannerGifV > 0L -> GifChange.Remove
+                else -> GifChange.Keep
+            }
+            onSave(
+                GroupEdit(
+                    name, bio, newAvatar, avatarGifChange,
+                    bannerB64.takeIf { it != g.item.banner }, bannerGifChange, bfx, bfy
+                )
+            )
+        }
     ) {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(Modifier.clickable(onClick = pick)) { GroupAvatar(newAvatar ?: g.item.avatar, 84.dp) }
+            // ---- البانر ----
+            val bannerShape = RoundedCornerShape(20.dp)
+            Box(
+                Modifier.fillMaxWidth().height(120.dp)
+                    .clip(bannerShape)
+                    .background(fg.copy(alpha = 0.08f))
+                    .border(0.8.dp, glassBorderBrush(0.25f), bannerShape)
+                    .clickable(onClick = pickBanner),
+                contentAlignment = Alignment.Center
+            ) {
+                if (bannerImg != null) {
+                    AnimatedBannerImage(
+                        pendingBannerGifFile ?: storedBannerGif, bannerImg, Modifier.fillMaxSize(), ContentScale.Crop,
+                        androidx.compose.ui.BiasAlignment(bfx, bfy)
+                    )
+                } else {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(AppIcons.Image, null, tint = fg.copy(alpha = 0.6f), modifier = Modifier.size(28.dp))
+                        Spacer(Modifier.height(4.dp))
+                        Text("اضغط لإضافة بانر (يقبل GIF)", color = fg.copy(alpha = 0.65f), fontSize = 12.sp)
+                    }
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(top = 6.dp),
+                horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically
+            ) {
+                BannerAction(if (bannerB64.isEmpty()) "إضافة بانر" else "تغيير", AccentBlue, pickBanner)
+                if (bannerB64.isNotEmpty()) {
+                    BannerAction("تحريك", AccentBlue) { showBannerCrop = true }
+                    BannerAction("حذف", DangerColor) { clearBannerGif(); bannerB64 = ""; bfx = 0f; bfy = 0f }
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+            // ---- صورة المجموعة ----
+            Box(Modifier.clickable(onClick = pickAvatar)) {
+                GroupAvatar(
+                    newAvatar ?: g.item.avatar, 84.dp,
+                    // إذا اختار صورة ثابتة جديدة ما نعرض الـ GIF القديم
+                    gid = if (newAvatar == null) gid else "", gifV = if (newAvatar == null) g.item.avatarGifV else 0L,
+                    gifFile = pendingAvatarGifFile
+                )
+            }
             Text(
-                "اضغط لتغيير الصورة", color = fg.copy(alpha = 0.65f), fontSize = 12.sp,
+                "اضغط لتغيير الصورة (تقبل GIF)", color = fg.copy(alpha = 0.65f), fontSize = 12.sp,
                 modifier = Modifier.padding(top = 4.dp, bottom = 10.dp)
             )
             GlassField(value = name, onValueChange = { name = it.take(40) }, placeholder = "اسم المجموعة", fg = fg, singleLine = true)
@@ -915,9 +1103,33 @@ private fun EditGroupDialog(
         }
     }
     cropSrc?.let { src ->
-        AvatarCropOverlay(srcB64 = src, onCancel = { cropSrc = null }, onDone = { newAvatar = it; cropSrc = null })
+        AvatarCropOverlay(
+            srcB64 = src, onCancel = { cropSrc = null },
+            onDone = {
+                // صورة ثابتة جديدة تلغي أي GIF جديد كان مختاره
+                newAvatar = it; pendingAvatarGif = null; pendingAvatarGifFile = null; cropSrc = null
+            }
+        )
+    }
+    if (showBannerCrop && bannerB64.isNotEmpty()) {
+        BannerCropOverlay(
+            still = bannerImg, gif = pendingBannerGifFile ?: storedBannerGif, initFx = bfx, initFy = bfy,
+            fixedHeightDp = GROUP_BANNER_HEIGHT.toFloat(),
+            onCancel = { showBannerCrop = false },
+            onDone = { x, y -> bfx = x; bfy = y; showBannerCrop = false }
+        )
     }
     }
+}
+
+/** زر نصي صغير تحت معاينة البانر */
+@Composable
+private fun BannerAction(text: String, color: Color, onClick: () -> Unit) {
+    Text(
+        text, color = color, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+    )
 }
 
 @Composable

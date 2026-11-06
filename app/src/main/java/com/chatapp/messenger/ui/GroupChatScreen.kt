@@ -166,13 +166,22 @@ internal class GroupLoaded(val g: com.chatapp.messenger.GroupFull?)
 
 /** صورة المجموعة الدائرية (أو أيقونة افتراضية) */
 @Composable
-internal fun GroupAvatar(b64: String, size: Dp) {
+internal fun GroupAvatar(
+    b64: String, size: Dp,
+    /** إذا انعطى gid + gifV تنعرض صورة المجموعة المتحركة (تنزل مرة وحدة وتنحفظ بالكاش) */
+    gid: String = "", gifV: Long = 0L,
+    /** ملف GIF محلي للمعاينة قبل الحفظ (يتغلب على المخزّن) */
+    gifFile: java.io.File? = null
+) {
     val img = rememberB64Image(b64)
+    val stored = rememberGroupGif(gid, "avatar", gifV)
+    val gif = gifFile ?: stored
     Box(
         Modifier.size(size).clip(CircleShape).background(Color(0xFF2B2F36)),
         contentAlignment = Alignment.Center
     ) {
-        if (img != null) Image(img, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        if (gif != null) AnimatedGifImage(gif, Modifier.fillMaxSize(), ContentScale.Crop, key = gif.path)
+        else if (img != null) Image(img, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         else Icon(AppIcons.GroupAdd, null, tint = Color(0xFF8A8F98), modifier = Modifier.size(size * 0.55f))
     }
 }
@@ -900,7 +909,7 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                     onClick = onOpenInfo, backdrop = contentBackdrop,
                     modifier = Modifier.weight(1f).heightIn(min = 44.dp)
                 ) {
-                    GroupAvatar(g?.item?.avatar ?: "", 32.dp)
+                    GroupAvatar(g?.item?.avatar ?: "", 32.dp, g?.item?.id ?: "", g?.item?.avatarGifV ?: 0L)
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f, fill = false)) {
                         Text(

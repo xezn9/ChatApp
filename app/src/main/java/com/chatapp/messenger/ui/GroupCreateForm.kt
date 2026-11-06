@@ -87,6 +87,15 @@ fun GroupCreateForm(dark: Boolean, modifier: Modifier = Modifier, onCreated: () 
     var gid by remember { mutableStateOf("") }
     var bio by remember { mutableStateOf("") }
     var avatarB64 by remember { mutableStateOf("") }
+    // صورة المجموعة المتحركة (GIF) + البانر (ثابت أو GIF)
+    var avatarGif by remember { mutableStateOf<ByteArray?>(null) }
+    var avatarGifFile by remember { mutableStateOf<java.io.File?>(null) }
+    var bannerB64 by remember { mutableStateOf("") }
+    var bannerGif by remember { mutableStateOf<ByteArray?>(null) }
+    var bannerGifFile by remember { mutableStateOf<java.io.File?>(null) }
+    var bfx by remember { mutableFloatStateOf(0f) }
+    var bfy by remember { mutableFloatStateOf(0f) }
+    var showBannerCrop by remember { mutableStateOf(false) }
     var invited by remember { mutableStateOf(setOf<String>()) }
     var friendsOpen by remember { mutableStateOf(false) }
     var creating by remember { mutableStateOf(false) }
@@ -94,10 +103,52 @@ fun GroupCreateForm(dark: Boolean, modifier: Modifier = Modifier, onCreated: () 
 
     // أي صورة تنختار: نفتح شاشة تحريك الصورة حتى تختار الجزء الي تريده
     var cropSrc by remember { mutableStateOf<String?>(null) }
-    val pickAvatar = rememberImagePicker(maxSide = 800, quality = 85) { b64 ->
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    // يحفظ GIF بملف مؤقت للمعاينة المتحركة قبل الإنشاء
+    fun stageGif(bytes: ByteArray, tag: String, done: (java.io.File?) -> Unit) {
+        scope.launch {
+            done(kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    java.io.File(ctx.cacheDir, "gif_groups").apply { mkdirs() }
+                        .let { d -> java.io.File(d, "pending_${tag}_${System.currentTimeMillis()}.gif").also { it.writeBytes(bytes) } }
+                }.getOrNull()
+            })
+        }
+    }
+    val pickAvatar = rememberImagePicker(
+        maxSide = 800, quality = 80,
+        gifLimit = GifUtil.MAX_GROUP_AVATAR_BYTES,
+        onGif = { bytes, still ->
+            if (still.length > 390_000) AppToast.show("الصورة كبيرة، جرّب GIF أصغر")
+            else {
+                // GIF ما ينقص (يبقى متحرك)، فنتخطى شاشة القص
+                avatarB64 = still; avatarGif = bytes; avatarGifFile = null
+                stageGif(bytes, "avatar") { avatarGifFile = it }
+            }
+        }
+    ) { b64 ->
+        avatarGif = null; avatarGifFile = null
         cropSrc = b64
     }
+    val pickBanner = rememberImagePicker(
+        maxSide = 800, quality = 60,
+        onGif = { bytes, still ->
+            if (still.length > 390_000) AppToast.show("الصورة كبيرة، جرّب GIF أصغر")
+            else {
+                bannerB64 = still; bannerGif = bytes; bannerGifFile = null
+                bfx = 0f; bfy = 0f; showBannerCrop = true
+                stageGif(bytes, "banner") { bannerGifFile = it }
+            }
+        }
+    ) { b64 ->
+        if (b64.length > 390_000) AppToast.show("الصورة كبيرة، جرّب صورة أصغر")
+        else {
+            bannerB64 = b64; bannerGif = null; bannerGifFile = null
+            bfx = 0f; bfy = 0f; showBannerCrop = true
+        }
+    }
     val avatar = rememberB64Image(avatarB64)
+    val bannerImg = rememberB64Image(bannerB64)
     val idOk = gid.isBlank() || Repo.isValidUsername(gid)
     val canCreate = name.isNotBlank() && idOk && !creating
 
@@ -118,6 +169,16 @@ fun GroupCreateForm(dark: Boolean, modifier: Modifier = Modifier, onCreated: () 
                 AvatarCropOverlay(srcB64 = src, onCancel = { cropSrc = null }, onDone = { avatarB64 = it; cropSrc = null })
             }
         }
+        if (showBannerCrop && bannerB64.isNotEmpty()) {
+            Box(Modifier.fillMaxSize().zIndex(10f)) {
+                BannerCropOverlay(
+                    still = bannerImg, gif = bannerGifFile, initFx = bfx, initFy = bfy,
+                    fixedHeightDp = 170f,
+                    onCancel = { showBannerCrop = false },
+                    onDone = { x, y -> bfx = x; bfy = y; showBannerCrop = false }
+                )
+            }
+        }
         Column(
             Modifier.fillMaxSize()
                 .verticalScroll(rememberScrollState())
@@ -128,6 +189,42 @@ fun GroupCreateForm(dark: Boolean, modifier: Modifier = Modifier, onCreated: () 
             Text("مجموعة جديدة", color = fg, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(22.dp))
 
+            // ---- بانر المجموعة (يقبل GIF) ----
+            val bannerShape = RoundedCornerShape(20.dp)
+            Box(
+                Modifier.fillMaxWidth().height(110.dp).clip(bannerShape)
+                    .background(fg.copy(alpha = 0.10f))
+                    .border(1.dp, fg.copy(alpha = 0.18f), bannerShape)
+                    .clickable(onClick = pickBanner),
+                contentAlignment = Alignment.Center
+            ) {
+                if (bannerImg != null) {
+                    AnimatedBannerImage(bannerGifFile, bannerImg, Modifier.fillMaxSize(), ContentScale.Crop, androidx.compose.ui.BiasAlignment(bfx, bfy))
+                } else {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(AppIcons.Image, null, tint = fg.copy(alpha = 0.55f), modifier = Modifier.size(28.dp))
+                        Spacer(Modifier.height(4.dp))
+                        Text("بانر المجموعة (يقبل GIF)", color = fg.copy(alpha = 0.65f), fontSize = 12.sp)
+                    }
+                }
+            }
+            if (bannerB64.isNotEmpty()) {
+                Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "تحريك", color = AccentBlue, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                        modifier = Modifier.clip(RoundedCornerShape(10.dp))
+                            .clickable { showBannerCrop = true }.padding(horizontal = 12.dp, vertical = 4.dp)
+                    )
+                    Text(
+                        "إزالة البانر", color = Color(0xFFFF5A5F), fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                        modifier = Modifier.clip(RoundedCornerShape(10.dp))
+                            .clickable { bannerB64 = ""; bannerGif = null; bannerGifFile = null; bfx = 0f; bfy = 0f }
+                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                    )
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+
             // ---- صورة المجموعة ----
             Box(Modifier.size(100.dp)) {
                 Box(
@@ -137,7 +234,8 @@ fun GroupCreateForm(dark: Boolean, modifier: Modifier = Modifier, onCreated: () 
                         .clickable(onClick = pickAvatar),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (avatar != null) Image(avatar, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    if (avatarGifFile != null) AnimatedGifImage(avatarGifFile!!, Modifier.fillMaxSize(), ContentScale.Crop, key = avatarGifFile!!.path)
+                    else if (avatar != null) Image(avatar, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                     else Icon(AppIcons.Image, null, tint = fg.copy(alpha = 0.55f), modifier = Modifier.size(36.dp))
                 }
                 Box(
@@ -150,12 +248,12 @@ fun GroupCreateForm(dark: Boolean, modifier: Modifier = Modifier, onCreated: () 
             }
             Spacer(Modifier.height(8.dp))
             if (avatarB64.isEmpty()) {
-                Text("صورة المجموعة", color = fg.copy(alpha = 0.65f), fontSize = 13.sp)
+                Text("صورة المجموعة (تقبل GIF)", color = fg.copy(alpha = 0.65f), fontSize = 13.sp)
             } else {
                 Text(
                     "إزالة الصورة", color = Color(0xFFFF5A5F), fontSize = 13.sp, fontWeight = FontWeight.Medium,
                     modifier = Modifier.clip(RoundedCornerShape(10.dp))
-                        .clickable { avatarB64 = "" }.padding(horizontal = 10.dp, vertical = 4.dp)
+                        .clickable { avatarB64 = ""; avatarGif = null; avatarGifFile = null }.padding(horizontal = 10.dp, vertical = 4.dp)
                 )
             }
 
@@ -239,10 +337,16 @@ fun GroupCreateForm(dark: Boolean, modifier: Modifier = Modifier, onCreated: () 
                         creating = true
                         scope.launch {
                             try {
-                                Repo.createGroup(name, gid, bio, avatarB64, invited)
+                                Repo.createGroup(
+                                    name, gid, bio, avatarB64, invited,
+                                    avatarGif = avatarGif,
+                                    bannerB64 = bannerB64, bannerGif = bannerGif, bannerFx = bfx, bannerFy = bfy
+                                )
                                 AppToast.show("تم إنشاء المجموعة")
                                 // نفرّغ النموذج حتى يكون جاهز لمجموعة ثانية
                                 name = ""; gid = ""; bio = ""; avatarB64 = ""; invited = emptySet(); friendsOpen = false
+                                avatarGif = null; avatarGifFile = null
+                                bannerB64 = ""; bannerGif = null; bannerGifFile = null; bfx = 0f; bfy = 0f
                                 onCreated()
                             } catch (e: CancellationException) {
                                 throw e

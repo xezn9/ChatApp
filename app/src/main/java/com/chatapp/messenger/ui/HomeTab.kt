@@ -792,7 +792,7 @@ private fun GroupRow(g: GroupItem, onClick: () -> Unit) {
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        GroupAvatar(g.avatar, 52.dp)
+        GroupAvatar(g.avatar, 52.dp, g.id, g.avatarGifV)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(

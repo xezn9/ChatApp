@@ -47,8 +47,24 @@ data class GroupItem(
     val avatar: String,
     val owner: String,
     val memberCount: Int,
-    val createdAt: Long
+    val createdAt: Long,
+    /** بانر المجموعة (صورة ثابتة base64، تنعرض إذا ما فيه GIF أو لحد ما ينزل) */
+    val banner: String = "",
+    /** موضع القص للبانر: -1..1 لكل محور (0 = المنتصف) */
+    val bannerFx: Float = 0f,
+    val bannerFy: Float = 0f,
+    /** رقم نسخة GIF البانر المخزّن بـ RTDB (0 = ما فيه GIF) */
+    val bannerGifV: Long = 0L,
+    /** رقم نسخة GIF صورة المجموعة المخزّن بـ RTDB (0 = صورة ثابتة) */
+    val avatarGifV: Long = 0L
 )
+
+/** تغيير ملف GIF لمجموعة: بدون تغيير / حذف / رفع جديد */
+sealed class GifChange {
+    object Keep : GifChange()
+    object Remove : GifChange()
+    class Set(val bytes: ByteArray) : GifChange()
+}
 
 /** صلاحيات مشرف (مثل تيليجرام) */
 data class GroupPerms(
@@ -439,7 +455,10 @@ object Repo {
 
     /** ينشئ مجموعة حقيقية: أنا المالك + الأصدقاء المدعوين أعضاء. يرجع id المجموعة أو يرمي استثناء برسالة عربية */
     suspend fun createGroup(
-        name: String, handle: String, bio: String, avatarB64: String, invited: Set<String>
+        name: String, handle: String, bio: String, avatarB64: String, invited: Set<String>,
+        avatarGif: ByteArray? = null,
+        bannerB64: String = "", bannerGif: ByteArray? = null,
+        bannerFx: Float = 0f, bannerFy: Float = 0f
     ): String {
         val me = auth.currentUser?.uid ?: throw IllegalStateException("لازم تسجّل دخول أول")
         val cleanName = name.trim()
@@ -461,6 +480,11 @@ object Repo {
             "owner" to me,
             "createdAt" to ServerValue.TIMESTAMP
         )
+        if (bannerB64.isNotEmpty()) {
+            meta["banner"] = bannerB64
+            meta["bannerFx"] = bannerFx.coerceIn(-1f, 1f).toDouble()
+            meta["bannerFy"] = bannerFy.coerceIn(-1f, 1f).toDouble()
+        }
         withTimeout(20_000) { rtdb.getReference("groups/$id/meta").setValue(meta).await() }
         // الخطوة 2: الأعضاء + قوائم مجموعاتهم + حجز المعرّف. إذا فشلت نمسح المجموعة حتى ما تنبقى نصف منشأة
         try {
@@ -480,7 +504,57 @@ object Repo {
             runCatching { rtdb.getReference("groups/$id/meta").removeValue() }
             throw e
         }
+        // الخطوة 3: ملفات GIF (تحتاج المجموعة موجودة حتى القواعد تتحقق من المالك). إذا فشلت تبقى الصورة الثابتة
+        val gifMeta = hashMapOf<String, Any>()
+        if (avatarGif != null) runCatching { gifMeta["avatarGifV"] = uploadGroupGif(id, "avatar", avatarGif) }
+        if (bannerGif != null && bannerB64.isNotEmpty()) runCatching { gifMeta["bannerGifV"] = uploadGroupGif(id, "banner", bannerGif) }
+        if (gifMeta.isNotEmpty()) runCatching { gWrite(rtdb.getReference("groups/$id/meta").updateChildren(gifMeta)) }
         return id
+    }
+
+    // ---------- GIF المجموعة (صورة المجموعة + البانر): يتخزن بـ RTDB بالمسار groupGifs/{gid}/{avatar|banner} ----------
+
+    /** يرفع GIF لمجموعة ويرجع رقم نسخته. [slot] = "avatar" أو "banner" */
+    private suspend fun uploadGroupGif(gid: String, slot: String, bytes: ByteArray): Long {
+        val v = System.currentTimeMillis()
+        val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+        try {
+            withTimeout(120_000) {
+                rtdb.getReference("groupGifs/$gid/$slot").setValue(mapOf("v" to v, "data" to b64)).await()
+            }
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            throw IllegalStateException("انتهت المهلة أثناء رفع الـ GIF، تأكد من الاتصال بالإنترنت")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (e.message?.contains("ermission", ignoreCase = true) == true)
+                throw IllegalStateException("ما عندك صلاحية لهذا الإجراء")
+            throw e
+        }
+        return v
+    }
+
+    /**
+     * ينزّل GIF [slot] لمجموعة [gid] مرة وحدة لكل نسخة [v] ويخزنه بالكاش.
+     * يرجع null إذا ما انقرى (لا إنترنت، ما عندي صلاحية...) فتبقى الصورة الثابتة ظاهرة.
+     */
+    suspend fun groupGifFile(cacheDir: java.io.File, gid: String, slot: String, v: Long): java.io.File? {
+        val dir = java.io.File(cacheDir, "gif_groups").apply { mkdirs() }
+        val prefix = "g_${gid}_${slot}_"
+        val cached = java.io.File(dir, "$prefix$v.gif")
+        if (cached.exists() && cached.length() > 0) return cached
+        val snap = withTimeout(120_000) { rtdb.getReference("groupGifs/$gid/$slot").get().await() }
+        val data = snap.child("data").getValue(String::class.java) ?: return null
+        val real = snap.child("v").getValue(Long::class.java) ?: v
+        val bytes = android.util.Base64.decode(data, android.util.Base64.NO_WRAP)
+        // نحذف النسخ القديمة لنفس الخانة
+        dir.listFiles { f -> f.name.startsWith(prefix) }?.forEach { it.delete() }
+        val out = java.io.File(dir, "$prefix$real.gif")
+        val tmp = java.io.File(dir, out.name + ".tmp")
+        tmp.writeBytes(bytes)
+        if (!tmp.renameTo(out)) { tmp.delete(); return null }
+        com.chatapp.messenger.ui.GifUtil.trimCache(dir)
+        return out
     }
 
     /** مجموعة وحدة (null إذا انحذفت أو انطردت منها) */
@@ -529,7 +603,12 @@ object Repo {
             avatar = m.str("avatar"),
             owner = m.str("owner"),
             memberCount = members.size,
-            createdAt = m.num("createdAt")
+            createdAt = m.num("createdAt"),
+            banner = m.str("banner"),
+            bannerFx = ((m.child("bannerFx").value as? Number)?.toFloat() ?: 0f).coerceIn(-1f, 1f),
+            bannerFy = ((m.child("bannerFy").value as? Number)?.toFloat() ?: 0f).coerceIn(-1f, 1f),
+            bannerGifV = m.num("bannerGifV"),
+            avatarGifV = m.num("avatarGifV")
         )
         return GroupFull(item, members, admins, settings, restricted, banned, pin)
     }
@@ -735,13 +814,39 @@ object Repo {
         else gWrite(ref.setValue(hashMapOf<String, Any>("id" to msg.id, "from" to msg.from, "text" to msg.text.take(200))))
     }
 
-    /** تعديل اسم/نبذة/صورة المجموعة (avatar = null يعني بدون تغيير) */
-    suspend fun updateGroupInfo(gid: String, name: String, bio: String, avatar: String?) {
+    /**
+     * تعديل اسم/نبذة/صورة/بانر المجموعة. (avatar / banner = null يعني بدون تغيير)
+     * [avatarGif] / [bannerGif]: ملف GIF جديد أو حذفه أو بدون تغيير. [bannerFx]/[bannerFy] = موضع قص البانر.
+     * إذا تغيّرت الصورة الثابتة بدون GIF، لازم تمرّر GifChange.Remove حتى ينحذف الـ GIF القديم.
+     */
+    suspend fun updateGroupInfo(
+        gid: String, name: String, bio: String, avatar: String?,
+        avatarGif: GifChange = GifChange.Keep,
+        banner: String? = null, bannerGif: GifChange = GifChange.Keep,
+        bannerFx: Float? = null, bannerFy: Float? = null
+    ) {
         val n = name.trim()
         if (n.isEmpty()) throw IllegalArgumentException("اكتب اسم المجموعة")
         val m = hashMapOf<String, Any>("name" to n.take(40), "bio" to bio.trim().take(150))
         if (avatar != null) m["avatar"] = avatar
+        if (banner != null) m["banner"] = banner
+        if (bannerFx != null) m["bannerFx"] = bannerFx.coerceIn(-1f, 1f).toDouble()
+        if (bannerFy != null) m["bannerFy"] = bannerFy.coerceIn(-1f, 1f).toDouble()
+        // الـ GIF الجديد يرتفع أول، وبعدها نحفظ رقم نسخته مع باقي البيانات
+        when (avatarGif) {
+            is GifChange.Set -> m["avatarGifV"] = uploadGroupGif(gid, "avatar", avatarGif.bytes)
+            GifChange.Remove -> m["avatarGifV"] = 0L
+            GifChange.Keep -> {}
+        }
+        when (bannerGif) {
+            is GifChange.Set -> m["bannerGifV"] = uploadGroupGif(gid, "banner", bannerGif.bytes)
+            GifChange.Remove -> m["bannerGifV"] = 0L
+            GifChange.Keep -> {}
+        }
         gWrite(rtdb.getReference("groups/$gid/meta").updateChildren(m))
+        // نمسح ملفات GIF المحذوفة (بعد نجاح حفظ البيانات)
+        if (avatarGif === GifChange.Remove) runCatching { withTimeout(20_000) { rtdb.getReference("groupGifs/$gid/avatar").removeValue().await() } }
+        if (bannerGif === GifChange.Remove) runCatching { withTimeout(20_000) { rtdb.getReference("groupGifs/$gid/banner").removeValue().await() } }
     }
 
     /** صلاحيات الأعضاء العاديين (الإرسال، الدعوة، التثبيت، تغيير المعلومات، الوضع البطيء) */
@@ -862,6 +967,7 @@ object Repo {
         val updates = HashMap<String, Any?>()
         updates["groups/$gid"] = null
         updates["groupChats/$gid"] = null
+        updates["groupGifs/$gid"] = null
         g.members.forEach { updates["userGroups/$it/$gid"] = null }
         if (g.item.handle.isNotBlank()) updates["groupHandles/${g.item.handle}"] = null
         gWrite(rtdb.reference.updateChildren(updates))

@@ -659,7 +659,7 @@ private fun AvatarWithStory(
 
 /** يفتح معرض الصور، يضغط الصورة ويرجعها كنص base64 */
 @Composable
-internal fun rememberImagePicker(maxSide: Int, quality: Int, onGif: ((bytes: ByteArray, firstFrameB64: String) -> Unit)? = null, onPicked: (String) -> Unit): () -> Unit {
+internal fun rememberImagePicker(maxSide: Int, quality: Int, onGif: ((bytes: ByteArray, firstFrameB64: String) -> Unit)? = null, gifLimit: Int = GifUtil.MAX_BANNER_BYTES, onPicked: (String) -> Unit): () -> Unit {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val cb by rememberUpdatedState(onPicked)
@@ -667,12 +667,12 @@ internal fun rememberImagePicker(maxSide: Int, quality: Int, onGif: ((bytes: Byt
         if (uri != null) scope.launch {
             // GIF يُرفع كما هو (بدون ضغط JPEG) حتى تبقى الحركة. ونطلع منه أول فريم كصورة ثابتة للبروفايل
             if (onGif != null && withContext(Dispatchers.IO) { GifUtil.isGifUri(ctx, uri) }) {
-                when (val r = GifUtil.readLimited(ctx, uri, GifUtil.MAX_BANNER_BYTES)) {
+                when (val r = GifUtil.readLimited(ctx, uri, gifLimit)) {
                     is GifRead.Ok -> {
                         val still = ImageUtil.uriToB64(ctx, uri, maxSide, quality)
                         if (still != null) onGif(r.bytes, still) else AppToast.show("تعذّر قراءة الصورة")
                     }
-                    is GifRead.TooBig -> AppToast.show("ملف الـ GIF كبير، الحد الأقصى للبانر 6 ميگا", long = true)
+                    is GifRead.TooBig -> AppToast.show("ملف الـ GIF كبير، الحد الأقصى ${gifLimit / 1_000_000} ميگا", long = true)
                     else -> AppToast.show("تعذّر قراءة الصورة")
                 }
                 return@launch
@@ -1260,7 +1260,9 @@ internal fun BannerCropOverlay(
     initFx: Float,
     initFy: Float,
     onCancel: () -> Unit,
-    onDone: (Float, Float) -> Unit
+    onDone: (Float, Float) -> Unit,
+    /** إذا انعطى: ارتفاع البانر الفعلي بالـ dp بعرض الإطار (مثل بانر المجموعة)، وإلا نسبة بانر الملف الشخصي */
+    fixedHeightDp: Float? = null
 ) {
     BackHandler(onBack = onCancel)
     var fx by remember { mutableFloatStateOf(initFx) }
@@ -1289,7 +1291,8 @@ internal fun BannerCropOverlay(
                     // نفس معادلة ارتفاع البانر بشاشة الملف الشخصي: عرض/1440*620 + شريط الحالة
                     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
                     val screenW = maxWidth + 32.dp
-                    val aspect = screenW.value / (screenW.value / 1440f * 620f + statusTop.value)
+                    val aspect = if (fixedHeightDp != null) (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp - 32f) / fixedHeightDp
+                    else screenW.value / (screenW.value / 1440f * 620f + statusTop.value)
                     Box(
                         Modifier.fillMaxWidth().aspectRatio(aspect)
                             .clip(RoundedCornerShape(16.dp))
