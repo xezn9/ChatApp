@@ -18,6 +18,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.geometry.Offset
+import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
@@ -140,9 +141,27 @@ internal object StickerRegistry {
 
     val packs: List<StickerPack> get() = packList
 
+    // أسماء الأقسام المخصّصة (يحددها المستخدم): packId -> الاسم
+    @Volatile private var custom: Map<String, String> = emptyMap()
+    private fun namePrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("sticker_names", Context.MODE_PRIVATE)
+    private fun loadCustom(ctx: Context) {
+        custom = namePrefs(ctx).all.mapNotNull { (k, v) -> (v as? String)?.takeIf { it.isNotBlank() }?.let { k to it } }.toMap()
+    }
+
+    /** اسم القسم المعروض: المخصّص إذا موجود وإلا الافتراضي */
+    fun titleOf(p: StickerPack): String = custom[p.id] ?: p.title
+
+    /** تسمية قسم. الاسم الفاضي يرجّع الاسم الأصلي */
+    fun rename(ctx: Context, id: String, name: String) {
+        val n = name.trim().take(30)
+        namePrefs(ctx).edit().apply { if (n.isBlank()) remove(id) else putString(id, n) }.apply()
+        loadCustom(ctx)
+    }
+
     @Synchronized
     fun ensure(ctx: Context) {
         if (scanned) return
+        loadCustom(ctx)
         val am = ctx.applicationContext.assets
         val dirs = try { am.list("stickers")?.toList() ?: emptyList() } catch (_: Exception) { emptyList() }
         val map = LinkedHashMap<String, Map<String, String>>()
@@ -401,13 +420,27 @@ internal fun StickerBadgeView(id: String, size: Dp, modifier: Modifier = Modifie
     StickerRegistry.ensure(LocalContext.current)
     val parts = remember(id) { id.split(':') }
     if (parts.size != 3) return
-    val pack = StickerPacks.firstOrNull { it.id == parts[1] } ?: return
+    val pack = StickerPacks.firstOrNull { it.id == parts[1] }
+    if (pack == null) {
+        // حزمة منزّلة من تيليجرام وما موجودة عندي: أسحب الرمز من السيرفر (رفعه صاحبه)
+        if (parts[1].startsWith("tg_")) RemoteSticker(id, size, modifier)
+        return
+    }
     val name = parts[2]
     if (isLottieSticker(pack, name)) CachedSpriteSticker(pack, name, size, modifier)
     else {
         val file = StickerRegistry.fileOf(pack.id, name) ?: return
         SpriteSticker(pack, file, name, size, modifier)
     }
+}
+
+@Composable
+private fun RemoteSticker(id: String, size: Dp, modifier: Modifier) {
+    val ctx = LocalContext.current.applicationContext
+    val res by produceState<Pair<ImageBitmap, Int>?>(null, id) { value = BadgeSync.fetch(ctx, id) }
+    val r = res
+    if (r == null) { Box(modifier.size(size)); return }
+    SpriteView(r.first, r.second, size, modifier)
 }
 
 @Composable
@@ -483,40 +516,14 @@ internal fun StickerPickerContent(dark: Boolean, onDone: () -> Unit) {
     var rev by remember { mutableStateOf(0) }                       // يتغير بعد تنزيل/حذف حزمة لتحديث القوائم
     var showDownload by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf<StickerPack?>(null) }
+    var renameTarget by remember { mutableStateOf<StickerPack?>(null) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     BackHandler(enabled = pack != null) { pack = null }
+    // رمزي الحالي إذا من حزمة منزّلة: نتأكد إنه مرفوع حتى يشوفه الكل (يغطي الي اختاروه قبل هذي الميزة)
+    LaunchedEffect(prof.badge) { if (prof.badge.startsWith("s:tg_")) BadgeSync.ensureUploaded(ctx, prof.badge) }
     previewId?.let { BadgePreviewDialog(it) { previewId = null } }
-    if (showDownload) {
-        StickerDownloadDialog(
-            dark = dark,
-            onDismiss = { showDownload = false },
-            onDownloaded = { StickerRegistry.refresh(ctx); rev++; showDownload = false }
-        )
-    }
-    confirmDelete?.let { target ->
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { confirmDelete = null },
-            title = { Text("حذف الحزمة", fontWeight = FontWeight.Bold) },
-            text = { Text("تنحذف حزمة \"${target.title}\" من جهازك. تقدر تنزّلها مرة ثانية بأي وقت.") },
-            confirmButton = {
-                androidx.compose.material3.TextButton(onClick = {
-                    confirmDelete = null
-                    scope.launch {
-                        // إذا رمزي الحالي من هذي الحزمة نرجعه بدون رمز
-                        if (prof.badge.startsWith("s:${target.id}:")) Repo.setBadge("")
-                        withContext(Dispatchers.IO) { TelegramStickers.delete(ctx, target.id) }
-                        StickerRegistry.refresh(ctx)
-                        pack = null
-                        rev++
-                    }
-                }) { Text("حذف", color = Color(0xFFFF5A5F), fontWeight = FontWeight.Bold) }
-            },
-            dismissButton = {
-                androidx.compose.material3.TextButton(onClick = { confirmDelete = null }) { Text("إلغاء") }
-            }
-        )
-    }
-
+    val red = Color(0xFFFF5A5F)
+    Box(Modifier.fillMaxSize()) {
     AnimatedContent(
         targetState = pack,
         modifier = Modifier.fillMaxSize(),
@@ -558,7 +565,7 @@ internal fun StickerPickerContent(dark: Boolean, onDone: () -> Unit) {
                 allPacks.chunked(2).forEach { rowPacks ->
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         rowPacks.forEach { sp ->
-                            PackCard(sp, fg, Modifier.weight(1f).height(160.dp)) { pack = sp }
+                            PackCard(sp, StickerRegistry.titleOf(sp), fg, Modifier.weight(1f).height(160.dp)) { pack = sp }
                         }
                         if (rowPacks.size == 1) Spacer(Modifier.weight(1f))
                     }
@@ -569,7 +576,7 @@ internal fun StickerPickerContent(dark: Boolean, onDone: () -> Unit) {
             val list = remember(p) { StickerStore.files(ctx, p) }
             Column(Modifier.fillMaxSize().padding(start = 14.dp, end = 14.dp, top = 20.dp)) {
                 Text(
-                    p.title, color = fg, fontSize = 18.sp, fontWeight = FontWeight.Bold,
+                    remember(p, rev) { StickerRegistry.titleOf(p) }, color = fg, fontSize = 18.sp, fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()
                 )
                 Text(
@@ -583,11 +590,16 @@ internal fun StickerPickerContent(dark: Boolean, onDone: () -> Unit) {
                             .clickable { pack = null }.padding(horizontal = 14.dp, vertical = 6.dp)
                     ) { Text("‹ الأقسام", color = fg, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
                     Spacer(Modifier.weight(1f))
+                    Box(
+                        Modifier.clip(RoundedCornerShape(50)).background(fg.copy(0.10f))
+                            .clickable { renameTarget = p }.padding(horizontal = 14.dp, vertical = 6.dp)
+                    ) { Text("✏ تسمية", color = fg, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
                     if (p.downloaded) {
+                        Spacer(Modifier.width(8.dp))
                         Box(
-                            Modifier.clip(RoundedCornerShape(50)).background(Color(0xFFFF5A5F).copy(0.16f))
+                            Modifier.clip(RoundedCornerShape(50)).background(red.copy(0.16f))
                                 .clickable { confirmDelete = p }.padding(horizontal = 14.dp, vertical = 6.dp)
-                        ) { Text("🗑 حذف الحزمة", color = Color(0xFFFF5A5F), fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+                        ) { Text("🗑 حذف", color = red, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
                     }
                 }
                 Spacer(Modifier.height(10.dp))
@@ -607,7 +619,7 @@ internal fun StickerPickerContent(dark: Boolean, onDone: () -> Unit) {
                             Modifier.fillMaxWidth().aspectRatio(1f).clip(shape)
                                 .background(fg.copy(if (sel) 0.18f else 0.07f))
                                 .border(if (sel) 2.dp else 0.8.dp, if (sel) p.color else fg.copy(0.14f), shape)
-                                .clickable { Repo.setBadge(id); onDone() }
+                                .clickable { Repo.setBadge(id); BadgeSync.ensureUploaded(ctx, id); onDone() }
                                 .onLongPressPreview {
                                     haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                                     previewId = id
@@ -619,10 +631,62 @@ internal fun StickerPickerContent(dark: Boolean, onDone: () -> Unit) {
             }
         }
     }
+
+    if (showDownload) {
+        StickerDownloadDialog(
+            dark = dark,
+            onDismiss = { showDownload = false },
+            onDownloaded = { StickerRegistry.refresh(ctx); rev++; showDownload = false }
+        )
+    }
+    renameTarget?.let { t ->
+        var text by remember(t.id) { mutableStateOf(StickerRegistry.titleOf(t)) }
+        PickerOverlay(dark, onDismiss = { renameTarget = null }) {
+            Text("تسمية القسم", color = fg, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text("اتركه فاضي للرجوع للاسم الأصلي", color = fg.copy(0.6f), fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+            Spacer(Modifier.height(14.dp))
+            DlField(text, { text = it }, "اسم القسم", fg, true, androidx.compose.ui.text.input.KeyboardType.Text, ltr = false)
+            Spacer(Modifier.height(16.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OverlayBtn("إلغاء", fg.copy(0.10f), fg) { renameTarget = null }
+                OverlayBtn("حفظ", Color(0xFF4DA3FF), Color.White) {
+                    StickerRegistry.rename(ctx, t.id, text)
+                    renameTarget = null
+                    rev++
+                }
+            }
+        }
+    }
+    confirmDelete?.let { target ->
+        PickerOverlay(dark, onDismiss = { confirmDelete = null }) {
+            Text("حذف الحزمة", color = fg, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "تنحذف حزمة \"${StickerRegistry.titleOf(target)}\" من جهازك. تقدر تنزّلها مرة ثانية بأي وقت.",
+                color = fg.copy(0.7f), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp)
+            )
+            Spacer(Modifier.height(16.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OverlayBtn("إلغاء", fg.copy(0.10f), fg) { confirmDelete = null }
+                OverlayBtn("حذف", red, Color.White) {
+                    confirmDelete = null
+                    scope.launch {
+                        // إذا رمزي الحالي من هذي الحزمة نرجعه بدون رمز
+                        if (prof.badge.startsWith("s:${target.id}:")) Repo.setBadge("")
+                        withContext(Dispatchers.IO) { TelegramStickers.delete(ctx, target.id) }
+                        StickerRegistry.rename(ctx, target.id, "")
+                        StickerRegistry.refresh(ctx)
+                        pack = null
+                        rev++
+                    }
+                }
+            }
+        }
+    }
+    }
 }
 
 @Composable
-private fun PackCard(sp: StickerPack, fg: Color, modifier: Modifier, onClick: () -> Unit) {
+private fun PackCard(sp: StickerPack, title: String, fg: Color, modifier: Modifier, onClick: () -> Unit) {
     val ctx = LocalContext.current
     val list = remember(sp) { StickerStore.files(ctx, sp) }
     val shape = RoundedCornerShape(22.dp)
@@ -638,7 +702,7 @@ private fun PackCard(sp: StickerPack, fg: Color, modifier: Modifier, onClick: ()
                 list.take(2).forEach { f -> StickerBadgeView(StickerStore.idOf(sp, f), 46.dp, fps = 12) }
             }
         }
-        Text(sp.title, color = fg, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        Text(title, color = fg, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1)
         Text("${list.size} ملصق", color = fg.copy(0.6f), fontSize = 11.5.sp)
     }
 }
@@ -649,7 +713,7 @@ private fun PackCard(sp: StickerPack, fg: Color, modifier: Modifier, onClick: ()
 //  ما فيها blur ولا زجاج ثقيل، والمحتوى ينحمّل بعد ما تخلص الحركة (حتى ما يعلّق التطبيق)
 // ---------------------------------------------------------------------------
 @Composable
-internal fun BadgePopup(open: Boolean, origin: androidx.compose.ui.geometry.Offset, dark: Boolean, onDismiss: () -> Unit) {
+internal fun BadgePopup(open: Boolean, origin: androidx.compose.ui.geometry.Offset, dark: Boolean, backdrop: Backdrop, onDismiss: () -> Unit) {
     val p = remember { androidx.compose.animation.core.Animatable(0f) }
     var ready by remember { mutableStateOf(false) }
     val appCtx = LocalContext.current
@@ -698,13 +762,19 @@ internal fun BadgePopup(open: Boolean, origin: androidx.compose.ui.geometry.Offs
                     alpha = (p.value * 2f).coerceIn(0f, 1f)
                     transformOrigin = androidx.compose.ui.graphics.TransformOrigin(fx, fy)
                 }
-                .clip(shape)
-                .background(if (dark) Color(0xF2171A2B) else Color(0xF2FFFFFF))
-                .border(
-                    1.dp,
-                    androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color.White.copy(0.55f), Color.White.copy(0.08f))),
-                    shape
+                // Liquid Glass حقيقي (نفس نوافذ التطبيق): blur + vibrancy + lens فوق خلفية التطبيق
+                .drawBackdrop(
+                    backdrop = backdrop,
+                    shape = { shape },
+                    effects = {
+                        vibrancy()
+                        blur((16f.dp.toPx()) * GlassFx.blurK)
+                        lens((12f.dp.toPx()) * GlassFx.refractK, (24f.dp.toPx()) * GlassFx.refractK)
+                    },
+                    onDrawSurface = { glassSurfaceLayer { drawRect(if (dark) Color.Black.copy(0.42f) else Color.White.copy(0.55f)) } }
                 )
+                .border(0.8.dp, glassBorderBrush(0.45f), shape)
+                .clip(shape)
                 .clickable(
                     interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                     indication = null,

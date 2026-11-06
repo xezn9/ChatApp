@@ -432,7 +432,7 @@ private fun MainContent() {
             }
         )
 
-        BadgePopup(open = stickerOpen, origin = stickerOrigin, dark = groupDark, onDismiss = { stickerOpen = false })
+        BadgePopup(open = stickerOpen, origin = stickerOrigin, dark = groupDark, backdrop = backdrop, onDismiss = { stickerOpen = false })
 
         // انيميشن دخول المحادثة: تنزلق من الجانب مع تلاشي وتكبير خفيف
         AnimatedVisibility(

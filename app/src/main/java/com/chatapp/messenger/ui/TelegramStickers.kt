@@ -7,6 +7,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -232,18 +236,7 @@ internal fun StickerDownloadDialog(dark: Boolean, onDismiss: () -> Unit, onDownl
         }
     }
 
-    val shape = RoundedCornerShape(26.dp)
-    Dialog(
-        onDismissRequest = { if (!busy) onDismiss() },
-        properties = DialogProperties(dismissOnBackPress = !busy, dismissOnClickOutside = !busy)
-    ) {
-        Column(
-            Modifier.fillMaxWidth().clip(shape)
-                .background(if (dark) Color(0xFF171A2B) else Color(0xFFF7F8FC))
-                .border(1.dp, fg.copy(0.14f), shape)
-                .padding(20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
+    PickerOverlay(dark, locked = busy, onDismiss = onDismiss) {
             Text("تنزيل ملصقات من تيليجرام", color = fg, fontSize = 17.sp, fontWeight = FontWeight.Bold)
             Text(
                 "الصق رابط حزمة الملصقات وراح تنضاف كقسم جديد",
@@ -294,12 +287,46 @@ internal fun StickerDownloadDialog(dark: Boolean, onDismiss: () -> Unit, onDownl
                     contentAlignment = Alignment.Center
                 ) { Text("تنزيل", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
             }
-        }
     }
 }
 
+/**
+ * طبقة حوار داخل نافذة الرموز (مو Dialog مستقل، حتى تبقى جزء من الزجاج): تعتيم + بطاقة نصف شفافة بحد زجاجي.
+ * [locked] = أثناء التنزيل: الضغط بالخارج وزر الرجوع ما يسكّرونها.
+ */
 @Composable
-private fun DlField(value: String, onChange: (String) -> Unit, hint: String, fg: Color, enabled: Boolean, kb: KeyboardType) {
+internal fun PickerOverlay(dark: Boolean, locked: Boolean = false, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    val shape = RoundedCornerShape(26.dp)
+    androidx.activity.compose.BackHandler(enabled = true) { if (!locked) onDismiss() }
+    Box(
+        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { if (!locked) onDismiss() }
+            .imePadding(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            Modifier.padding(20.dp).fillMaxWidth().clip(shape)
+                .background(if (dark) Color(0xE61A1E33) else Color(0xF2FFFFFF))
+                .border(0.8.dp, glassBorderBrush(0.45f), shape)
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            content = content
+        )
+    }
+}
+
+/** زر بسيط داخل [PickerOverlay] (يتوزّع بالتساوي بالصف) */
+@Composable
+internal fun RowScope.OverlayBtn(text: String, bg: Color, textColor: Color, onClick: () -> Unit) {
+    Box(
+        Modifier.weight(1f).clip(RoundedCornerShape(16.dp)).background(bg).clickable { onClick() }.padding(vertical = 12.dp),
+        contentAlignment = Alignment.Center
+    ) { Text(text, color = textColor, fontSize = 14.sp, fontWeight = FontWeight.SemiBold) }
+}
+
+@Composable
+internal fun DlField(value: String, onChange: (String) -> Unit, hint: String, fg: Color, enabled: Boolean, kb: KeyboardType, ltr: Boolean = true) {
     val shape = RoundedCornerShape(14.dp)
     Box(
         Modifier.fillMaxWidth().clip(shape).background(fg.copy(0.08f)).border(0.8.dp, fg.copy(0.14f), shape)
@@ -308,7 +335,7 @@ private fun DlField(value: String, onChange: (String) -> Unit, hint: String, fg:
         if (value.isEmpty()) Text(hint, color = fg.copy(0.4f), fontSize = 13.sp, style = TextStyle(textDirection = TextDirection.Content))
         BasicTextField(
             value = value, onValueChange = onChange, enabled = enabled, singleLine = true,
-            textStyle = TextStyle(color = fg, fontSize = 14.sp, textDirection = TextDirection.Ltr),
+            textStyle = TextStyle(color = fg, fontSize = 14.sp, textDirection = if (ltr) TextDirection.Ltr else TextDirection.Content),
             cursorBrush = SolidColor(fg),
             keyboardOptions = KeyboardOptions(keyboardType = kb),
             modifier = Modifier.fillMaxWidth()
