@@ -116,7 +116,10 @@ import kotlin.math.roundToInt
 //  حزم معروفة تحتفظ بترتيبها وألوانها، والباقي يترتب أبجدياً ويتولّد له لون واسم تلقائي.
 // ============================================================================
 
-internal class StickerPack(val id: String, val title: String, val color: Color)
+internal class StickerPack(val id: String, val title: String, val color: Color, val dir: File? = null) {
+    /** حزمة منزّلة من تيليجرام (ملفاتها بذاكرة الجهاز مو بالـ assets) */
+    val downloaded: Boolean get() = dir != null
+}
 
 private val KnownPacks = listOf(
     StickerPack("crayons", "Crayons", Color(0xFFFF9F0A)),
@@ -154,9 +157,32 @@ internal object StickerRegistry {
         }
         val known = KnownPacks.filter { map.containsKey(it.id) }
         val extra = map.keys.filter { k -> KnownPacks.none { it.id == k } }.sortedBy { it.lowercase() }.map { autoPack(it) }
+        // الحزم المنزّلة من تيليجرام: files/tgpacks/tg_<اسم>/
+        val dl = ArrayList<StickerPack>()
+        TelegramStickers.root(ctx).listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") && !it.name.contains(':') }
+            ?.sortedBy { it.name.lowercase() }?.forEach { d ->
+                val byName = LinkedHashMap<String, String>()
+                (d.list()?.toList() ?: emptyList())
+                    .filter { it.substringAfterLast('.', "").lowercase() in EXTS && !it.substringBeforeLast('.').contains(':') }
+                    .sortedBy { EXTS.indexOf(it.substringAfterLast('.').lowercase()) }
+                    .forEach { byName.putIfAbsent(it.substringBeforeLast('.'), it) }
+                if (byName.isNotEmpty()) {
+                    val auto = autoPack(d.name)
+                    val title = try { org.json.JSONObject(File(d, "meta.json").readText()).optString("title") } catch (_: Exception) { "" }
+                    map[d.name] = byName
+                    dl += StickerPack(d.name, title.ifBlank { d.name.removePrefix("tg_") }, auto.color, d)
+                }
+            }
         fileMap = map
-        packList = known + extra
+        packList = known + extra + dl
         scanned = true
+    }
+
+    /** إعادة قراءة الأقسام (بعد تنزيل أو حذف حزمة) */
+    fun refresh(ctx: Context) {
+        scanned = false
+        StickerStore.reset()
+        ensure(ctx)
     }
 
     private fun autoPack(id: String): StickerPack {
@@ -203,6 +229,19 @@ internal object StickerStore {
         override fun sizeOf(key: String, value: ImageBitmap): Int = value.width * value.height * 4
     }
 
+    /** مسح الكاشات بعد تغيّر الأقسام */
+    @Synchronized
+    fun reset() {
+        files.clear()
+        jsonCache.evictAll()
+        sheetCache.evictAll()
+        synchronized(framesCache) { framesCache.clear() }
+    }
+
+    /** فتح ملف ملصق: من ذاكرة الجهاز (حزم تيليجرام) أو من الـ assets */
+    fun open(ctx: Context, pack: StickerPack, file: String): java.io.InputStream =
+        pack.dir?.let { File(it, file).inputStream() } ?: ctx.assets.open("stickers/${pack.id}/$file")
+
     /** أسماء ملفات الحزمة مرتبة */
     @Synchronized
     fun files(ctx: Context, pack: StickerPack): List<String> {
@@ -212,11 +251,12 @@ internal object StickerStore {
 
     fun idOf(pack: StickerPack, file: String) = "s:${pack.id}:${file.substringBeforeLast('.')}"
 
-    suspend fun loadJson(ctx: Context, path: String): String? {
+    suspend fun loadJson(ctx: Context, pack: StickerPack, file: String): String? {
+        val path = "${pack.id}/$file"
         jsonCache.get(path)?.let { return it }
         return withContext(Dispatchers.IO) {
             try {
-                GZIPInputStream(ctx.assets.open(path)).bufferedReader().use { it.readText() }
+                GZIPInputStream(open(ctx, pack, file)).bufferedReader().use { it.readText() }
             } catch (_: Exception) { null }
         }?.also { jsonCache.put(path, it) }
     }
@@ -265,7 +305,7 @@ internal object StickerStore {
 
     private suspend fun renderLottie(ctx: Context, pack: StickerPack, name: String, dir: File, memKey: String, keep: Boolean): Pair<ImageBitmap, Int>? {
         return try {
-            val json = loadJson(ctx, "stickers/${pack.id}/$name.tgs") ?: return null
+            val json = loadJson(ctx, pack, "$name.tgs") ?: return null
             val comp = LottieCompositionFactory.fromJsonStringSync(json, memKey).value ?: return null
             val n = ((comp.duration / 1000f) * FPS).roundToInt().coerceIn(1, MAX_FRAMES)
             val d = LottieDrawable()
@@ -331,12 +371,13 @@ internal object StickerStore {
     }
 
     /** يرجع (الصورة، عدد الإطارات). الصور الثابتة الكبيرة تُصغَّر حتى ما تاكل الذاكرة */
-    suspend fun loadSheet(ctx: Context, path: String, name: String): Pair<ImageBitmap, Int>? {
+    suspend fun loadSheet(ctx: Context, pack: StickerPack, file: String, name: String): Pair<ImageBitmap, Int>? {
+        val path = "${pack.id}/$file"
         sheetCache.get(path)?.let { bmp -> return bmp to synchronized(framesCache) { framesCache[path] ?: 1 } }
         return withContext(Dispatchers.IO) {
             try {
                 val b = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                ctx.assets.open(path).use { android.graphics.BitmapFactory.decodeStream(it, null, b) }
+                open(ctx, pack, file).use { android.graphics.BitmapFactory.decodeStream(it, null, b) }
                 val frames = framesFor(name, b.outWidth, b.outHeight)
                 val o = android.graphics.BitmapFactory.Options()
                 if (frames == 1) {
@@ -344,7 +385,7 @@ internal object StickerStore {
                     while (maxOf(b.outWidth, b.outHeight) / (sample * 2) >= 256) sample *= 2
                     o.inSampleSize = sample
                 }
-                val bmp = ctx.assets.open(path).use { android.graphics.BitmapFactory.decodeStream(it, null, o) }?.asImageBitmap()
+                val bmp = open(ctx, pack, file).use { android.graphics.BitmapFactory.decodeStream(it, null, o) }?.asImageBitmap()
                 bmp?.let { it to frames }
             } catch (_: Throwable) { null }
         }?.also { (bmp, frames) ->
@@ -365,7 +406,7 @@ internal fun StickerBadgeView(id: String, size: Dp, modifier: Modifier = Modifie
     if (isLottieSticker(pack, name)) CachedSpriteSticker(pack, name, size, modifier)
     else {
         val file = StickerRegistry.fileOf(pack.id, name) ?: return
-        SpriteSticker("stickers/${pack.id}/$file", name, size, modifier)
+        SpriteSticker(pack, file, name, size, modifier)
     }
 }
 
@@ -379,9 +420,9 @@ private fun CachedSpriteSticker(pack: StickerPack, name: String, size: Dp, modif
 }
 
 @Composable
-private fun SpriteSticker(path: String, name: String, size: Dp, modifier: Modifier) {
+private fun SpriteSticker(pack: StickerPack, file: String, name: String, size: Dp, modifier: Modifier) {
     val ctx = LocalContext.current.applicationContext
-    val sheet by produceState<Pair<ImageBitmap, Int>?>(null, path) { value = StickerStore.loadSheet(ctx, path, name) }
+    val sheet by produceState<Pair<ImageBitmap, Int>?>(null, pack.id, file) { value = StickerStore.loadSheet(ctx, pack, file, name) }
     val r = sheet
     if (r == null) { Box(modifier.size(size)); return }
     SpriteView(r.first, r.second, size, modifier)
@@ -439,8 +480,42 @@ internal fun StickerPickerContent(dark: Boolean, onDone: () -> Unit) {
     val prof by remember(me) { Repo.basicProfileFlow(me) }.collectAsState(initial = Profile())
     var pack by remember { mutableStateOf<StickerPack?>(null) }
     var previewId by remember { mutableStateOf<String?>(null) }
+    var rev by remember { mutableStateOf(0) }                       // يتغير بعد تنزيل/حذف حزمة لتحديث القوائم
+    var showDownload by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf<StickerPack?>(null) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     BackHandler(enabled = pack != null) { pack = null }
     previewId?.let { BadgePreviewDialog(it) { previewId = null } }
+    if (showDownload) {
+        StickerDownloadDialog(
+            dark = dark,
+            onDismiss = { showDownload = false },
+            onDownloaded = { StickerRegistry.refresh(ctx); rev++; showDownload = false }
+        )
+    }
+    confirmDelete?.let { target ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmDelete = null },
+            title = { Text("حذف الحزمة", fontWeight = FontWeight.Bold) },
+            text = { Text("تنحذف حزمة \"${target.title}\" من جهازك. تقدر تنزّلها مرة ثانية بأي وقت.") },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    confirmDelete = null
+                    scope.launch {
+                        // إذا رمزي الحالي من هذي الحزمة نرجعه بدون رمز
+                        if (prof.badge.startsWith("s:${target.id}:")) Repo.setBadge("")
+                        withContext(Dispatchers.IO) { TelegramStickers.delete(ctx, target.id) }
+                        StickerRegistry.refresh(ctx)
+                        pack = null
+                        rev++
+                    }
+                }) { Text("حذف", color = Color(0xFFFF5A5F), fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { confirmDelete = null }) { Text("إلغاء") }
+            }
+        )
+    }
 
     AnimatedContent(
         targetState = pack,
@@ -468,9 +543,19 @@ internal fun StickerPickerContent(dark: Boolean, onDone: () -> Unit) {
                         .clickable { Repo.setBadge(""); onDone() }.padding(vertical = 12.dp),
                     horizontalArrangement = Arrangement.Center
                 ) { Text(if (prof.badge.isBlank()) "بدون رمز ✓" else "بدون رمز", color = fg, fontSize = 14.sp, fontWeight = FontWeight.SemiBold) }
+                Spacer(Modifier.height(10.dp))
+                // تنزيل ملصقات من تيليجرام (رابط الحزمة) وتنضاف كقسم جديد
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
+                        .background(Color(0xFF4DA3FF).copy(0.16f))
+                        .border(1.dp, Color(0xFF4DA3FF).copy(0.5f), RoundedCornerShape(18.dp))
+                        .clickable { showDownload = true }.padding(vertical = 12.dp),
+                    horizontalArrangement = Arrangement.Center
+                ) { Text("⬇  تنزيل ملصقات من تيليجرام", color = fg, fontSize = 14.sp, fontWeight = FontWeight.SemiBold) }
                 Spacer(Modifier.height(14.dp))
                 // الأقسام (2 بكل صف) والصفحة تنسحب إذا الأقسام أكثر من الشاشة
-                StickerPacks.chunked(2).forEach { rowPacks ->
+                val allPacks = remember(rev) { StickerPacks }
+                allPacks.chunked(2).forEach { rowPacks ->
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         rowPacks.forEach { sp ->
                             PackCard(sp, fg, Modifier.weight(1f).height(160.dp)) { pack = sp }
@@ -492,10 +577,19 @@ internal fun StickerPickerContent(dark: Boolean, onDone: () -> Unit) {
                     textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = 2.dp)
                 )
                 Spacer(Modifier.height(10.dp))
-                Box(
-                    Modifier.clip(RoundedCornerShape(50)).background(fg.copy(0.10f))
-                        .clickable { pack = null }.padding(horizontal = 14.dp, vertical = 6.dp)
-                ) { Text("‹ الأقسام", color = fg, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier.clip(RoundedCornerShape(50)).background(fg.copy(0.10f))
+                            .clickable { pack = null }.padding(horizontal = 14.dp, vertical = 6.dp)
+                    ) { Text("‹ الأقسام", color = fg, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+                    Spacer(Modifier.weight(1f))
+                    if (p.downloaded) {
+                        Box(
+                            Modifier.clip(RoundedCornerShape(50)).background(Color(0xFFFF5A5F).copy(0.16f))
+                                .clickable { confirmDelete = p }.padding(horizontal = 14.dp, vertical = 6.dp)
+                        ) { Text("🗑 حذف الحزمة", color = Color(0xFFFF5A5F), fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+                    }
+                }
                 Spacer(Modifier.height(10.dp))
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(5),
@@ -660,7 +754,7 @@ private fun LottiePreview(pack: StickerPack, name: String, size: Dp) {
     val ctx = LocalContext.current.applicationContext
     val comp by produceState<com.airbnb.lottie.LottieComposition?>(null, pack.id, name) {
         value = withContext(Dispatchers.Default) {
-            StickerStore.loadJson(ctx, "stickers/${pack.id}/$name.tgs")
+            StickerStore.loadJson(ctx, pack, "$name.tgs")
                 ?.let { LottieCompositionFactory.fromJsonStringSync(it, "P:${pack.id}/$name").value }
         }
     }
