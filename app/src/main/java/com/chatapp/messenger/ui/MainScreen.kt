@@ -53,6 +53,7 @@ import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
@@ -142,6 +143,10 @@ private fun MainContent() {
     var stickerOrigin by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
     // واجهات صفحة Home: 0 = المحادثات، 1 = المجموعات، 2 = طلبات الرسائل
     var homeMode by remember { mutableStateOf(0) }
+    // زر ⋮ بصفحة Home: الحالة هنا لأن الزر والقائمة يُرسمان فوق المبدّل
+    var homeMenuOpen by remember { mutableStateOf(false) }
+    var homeMenuCmd by remember { mutableStateOf(0) }
+    var homeSelecting by remember { mutableStateOf(false) }
     // عدد طلبات الرسائل الجديدة (يظهر على زر "الطلبات")
     val requestCount by remember(myUid) { Repo.requestCountFlow(myUid) }.collectAsState(initial = 0)
     // إعدادات خصوصيتي: تنقرأ هنا مرة وحدة وتنتشر لكل التطبيق (حالة الاتصال، مقروء، آخر ظهور)
@@ -312,7 +317,10 @@ private fun MainContent() {
                                 onOverlayChange = { homeOverlay = it },
                                 homeMode = homeMode,
                                 onOpenGroup = { openGroupId = it.id; groupInfoOpen = false },
-                                onOpenSupport = { supportThread = it }
+                                onOpenSupport = { supportThread = it },
+                                menuCmd = homeMenuCmd,
+                                onMenuCmdHandled = { homeMenuCmd = 0 },
+                                onSelectingChange = { homeSelecting = it }
                             )
                             1 -> GroupsTab(
                                 onOpenGroup = { openGroupId = it.id; groupInfoOpen = false },
@@ -390,6 +398,40 @@ private fun MainContent() {
                     .wrapContentWidth(Alignment.CenterHorizontally)
                     .widthIn(max = 340.dp)
                     .fillMaxWidth()
+            )
+        }
+
+        // زر ⋮ (Liquid Glass) أعلى اليسار الفعلي + قائمته: خارج صندوق layerBackdrop ومرسومين فوق المبدّل
+        val menuBtnVisible = tab == 0 && homeMode == 0 && !homeSelecting && open == null &&
+            profileOpen == null && chatGroupId == null && supportThread == null && !overlayOpen
+        if (!menuBtnVisible && homeMenuOpen) homeMenuOpen = false
+        val screenRtl = androidx.compose.ui.platform.LocalLayoutDirection.current ==
+            androidx.compose.ui.unit.LayoutDirection.Rtl
+        if (menuBtnVisible) {
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr
+            ) {
+                GlassButton(
+                    onClick = { homeMenuOpen = true },
+                    backdrop = backdrop,
+                    modifier = Modifier
+                        .align(if (screenRtl) Alignment.TopEnd else Alignment.TopStart)
+                        .statusBarsPadding()
+                        .padding(start = 12.dp, end = 12.dp, top = 10.dp)
+                        .size(44.dp)
+                ) {
+                    Icon(Icons.Filled.MoreVert, "المزيد", tint = contentColor, modifier = Modifier.size(24.dp))
+                }
+            }
+        }
+        if (homeMenuOpen) {
+            HomeMoreMenu(
+                backdrop = backdrop,
+                dark = isAppDark(),
+                onDismiss = { homeMenuOpen = false },
+                onSelect = { homeMenuOpen = false; homeMenuCmd = 1 },
+                onIntro = { homeMenuOpen = false; homeMenuCmd = 2 },
+                onActivity = { homeMenuOpen = false; homeMenuCmd = 3 }
             )
         }
 

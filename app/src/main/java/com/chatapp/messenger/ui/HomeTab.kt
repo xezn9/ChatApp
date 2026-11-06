@@ -133,7 +133,11 @@ fun HomeTab(
     // فتح محادثة مجموعة
     onOpenGroup: (GroupItem) -> Unit = {},
     // فتح محادثة الدعم (معرّف صاحب المحادثة: أنا للمستخدم، أو المستخدم الي راسل للمطور)
-    onOpenSupport: (String) -> Unit = {}
+    onOpenSupport: (String) -> Unit = {},
+    // أوامر قائمة ⋮ (الزر والقائمة يُرسمان من MainScreen فوق المبدّل): 1 تحديد، 2 مقدمة، 3 نشاط
+    menuCmd: Int = 0,
+    onMenuCmdHandled: () -> Unit = {},
+    onSelectingChange: (Boolean) -> Unit = {}
 ) {
     val myUid = remember { Repo.auth.currentUser?.uid ?: "" }
     val users by remember { Repo.usersFlow() }.collectAsState(initial = emptyList())
@@ -166,9 +170,17 @@ fun HomeTab(
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
     var actionTarget by remember { mutableStateOf<ChatTarget?>(null) }
     var bulkDelete by remember { mutableStateOf(false) }
-    var showMenu by remember { mutableStateOf(false) }
     var showIntro by remember { mutableStateOf(false) }
     var showActivity by remember { mutableStateOf(false) }
+    LaunchedEffect(menuCmd) {
+        when (menuCmd) {
+            1 -> { selecting = true; selectedIds = emptySet() }
+            2 -> showIntro = true
+            3 -> showActivity = true
+        }
+        if (menuCmd != 0) onMenuCmdHandled()
+    }
+    LaunchedEffect(selecting) { onSelectingChange(selecting) }
     fun exitSelection() { selecting = false; selectedIds = emptySet() }
     fun toggleSel(uid: String) {
         selectedIds = if (uid in selectedIds) selectedIds - uid else selectedIds + uid
@@ -389,7 +401,6 @@ fun HomeTab(
     // ⋮ (أعلى اليسار) أو أزرار التحديد المتعدد: دايماً بالجهة اليسرى الفعلية
     // ملاحظة: align() يتحدد باتجاه الأب (RTL) مو باتجاه الـ Row، فنختار الطرف حسب اتجاه الشاشة الحقيقي
     val screenRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
-    val homeDark = isAppDark()
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
         Row(
             Modifier.align(if (screenRtl) Alignment.TopEnd else Alignment.TopStart)
@@ -407,27 +418,8 @@ fun HomeTab(
                     exitSelection()
                 }
                 SelectPill("🗑️ حذف", Color(0xFFFF5A5F), enabled = selectedIds.isNotEmpty()) { bulkDelete = true }
-            } else if (homeMode == 0 && !anyOverlay) {
-                // زر ⋮ زجاجي (Liquid Glass)
-                com.chatapp.messenger.ui.glass.GlassButton(
-                    onClick = { showMenu = true },
-                    backdrop = bd,
-                    modifier = Modifier.size(44.dp)
-                ) { Icon(Icons.Filled.MoreVert, "المزيد", tint = fgc, modifier = Modifier.size(24.dp)) }
             }
         }
-    }
-
-    // قائمة ⋮ الزجاجية (تنرسم فوق كل شي، وتاخذ الخلفية من bd)
-    if (showMenu && homeMode == 0 && !selecting && !anyOverlay) {
-        HomeMoreMenu(
-            backdrop = bd,
-            dark = homeDark,
-            onDismiss = { showMenu = false },
-            onSelect = { showMenu = false; selecting = true; selectedIds = emptySet() },
-            onIntro = { showMenu = false; showIntro = true },
-            onActivity = { showMenu = false; showActivity = true }
-        )
     }
 
     // عارض القصص بملء الشاشة (يتنقل للقصة التالية تلقائياً)
