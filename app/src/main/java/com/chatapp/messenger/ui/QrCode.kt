@@ -4,6 +4,12 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
@@ -987,12 +993,12 @@ private val stickerSpecs: List<StickerSpec> by lazy {
 }
 
 /** مركز الملصق الحالي (بكسل): موضعه الأساسي + سحب المستخدم + تعويم دائم */
-private fun stickerCenter(sp: StickerSpec, t: Float, w: Float, h: Float, drag: Offset?, density: Float): Offset {
+private fun stickerCenter(sp: StickerSpec, t: Float, w: Float, h: Float, drag: Offset?, density: Float, tilt: Offset = Offset.Zero): Offset {
     val a = sp.amp * density
     val ang = 2f * PI.toFloat() * (sp.k * t + sp.ph)
     return Offset(
-        sp.fx * w + (drag?.x ?: 0f) * w + sin(ang) * a,
-        sp.fy * h + (drag?.y ?: 0f) * h + cos(ang) * a
+        sp.fx * w + (drag?.x ?: 0f) * w + sin(ang) * a + tilt.x * sp.dp * 0.7f * density,
+        sp.fy * h + (drag?.y ?: 0f) * h + cos(ang) * a + tilt.y * sp.dp * 0.7f * density
     )
 }
 
@@ -1000,10 +1006,12 @@ private fun stickerCenter(sp: StickerSpec, t: Float, w: Float, h: Float, drag: O
 @Composable
 private fun StickerField(
     ids: List<String>, t: androidx.compose.runtime.State<Float>, drag: Map<Int, Offset>,
-    dragging: Int, field: androidx.compose.runtime.MutableState<IntSize>
+    dragging: Int, field: androidx.compose.runtime.MutableState<IntSize>, tilt: androidx.compose.runtime.State<Offset>
 ) {
     if (ids.isEmpty()) return
     val dens = androidx.compose.ui.platform.LocalDensity.current.density
+    // الواجهة عربية (RTL): نجبر الحقل على LTR حتى الإحداثيات المطلقة تنحسب من اليسار مو من اليمين
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
     Box(Modifier.fillMaxSize().onSizeChanged { field.value = it }) {
         stickerSpecs.forEachIndexed { i, sp ->
             val id = ids[i % ids.size]
@@ -1011,7 +1019,7 @@ private fun StickerField(
             Box(
                 Modifier.size(sz).graphicsLayer {
                     val f = field.value
-                    val c = stickerCenter(sp, t.value, f.width.toFloat(), f.height.toFloat(), drag[i], dens)
+                    val c = stickerCenter(sp, t.value, f.width.toFloat(), f.height.toFloat(), drag[i], dens, tilt.value)
                     translationX = c.x - size.width / 2f
                     translationY = c.y - size.height / 2f
                     rotationZ = sin(2f * PI.toFloat() * (t.value + sp.ph2)) * sp.rot
@@ -1020,6 +1028,7 @@ private fun StickerField(
                 }
             ) { StickerBadgeView(id, sz) }
         }
+    }
     }
 }
 
@@ -1314,6 +1323,32 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
     var stDragging by remember { mutableIntStateOf(-1) }
     val stField = remember { mutableStateOf(IntSize.Zero) }
     val blockedCoords = remember { mutableMapOf<String, LayoutCoordinates>() }
+    val stTilt = remember { mutableStateOf(Offset.Zero) }
+
+    // مايل الجهاز (مثل الجايروسكوب): الملصقات تنزاح حسب ميلان الجوال، الأكبر (الأقرب) تنزاح أكثر
+    DisposableEffect(stickerIds.isNotEmpty()) {
+        val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+        val sensor = sm?.getDefaultSensor(Sensor.TYPE_GRAVITY) ?: sm?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        var listener: SensorEventListener? = null
+        if (stickerIds.isNotEmpty() && sm != null && sensor != null) {
+            var bx = 0f; var by = 0f; var fx = 0f; var fy = 0f; var inited = false
+            listener = object : SensorEventListener {
+                override fun onSensorChanged(e: SensorEvent) {
+                    val x = e.values[0] / 9.81f
+                    val y = e.values[1] / 9.81f
+                    if (!inited) { bx = x; by = y; fx = x; fy = y; inited = true }
+                    fx += (x - fx) * 0.18f; fy += (y - fy) * 0.18f      // تنعيم سريع
+                    bx += (x - bx) * 0.004f; by += (y - by) * 0.004f    // وضع الراحة يتأقلم ببطء
+                    val tx = (-(fx - bx) * 2.4f).coerceIn(-1f, 1f)
+                    val ty = ((fy - by) * 2.4f).coerceIn(-1f, 1f)
+                    stTilt.value = Offset(tx, ty)
+                }
+                override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+            }
+            sm.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_GAME)
+        }
+        onDispose { listener?.let { sm?.unregisterListener(it) } }
+    }
     fun Modifier.blockSt(key: String): Modifier = this.onGloballyPositioned { blockedCoords[key] = it }
     var sheet by remember { mutableStateOf(QrSheet.None) }
     var lastSheet by remember { mutableStateOf(QrSheet.Brush) }
@@ -1433,7 +1468,7 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                 var hit = -1
                 for (i in stickerSpecs.indices.reversed()) {
                     val sp = stickerSpecs[i]
-                    val c = stickerCenter(sp, stT.value, f.width.toFloat(), f.height.toFloat(), stDrag[i], density)
+                    val c = stickerCenter(sp, stT.value, f.width.toFloat(), f.height.toFloat(), stDrag[i], density, stTilt.value)
                     if (hypot(p.x - c.x, p.y - c.y) <= sp.dp * density * 0.6f) { hit = i; break }
                 }
                 if (hit < 0) return@awaitEachGesture
@@ -1473,7 +1508,7 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
             blob(w * (0.82f + 0.10f * cos(tt)), h * (0.52f + 0.08f * sin(tt)), w * 0.62f, lerp(fto.qrTop, Color.White, 0.25f).copy(alpha = 0.55f))
             blob(w * (0.45f + 0.16f * sin(tt + 2f)), h * (0.84f + 0.05f * cos(tt)), w * 0.55f, lerp(fto.bgTop, Color.White, 0.30f).copy(alpha = 0.45f))
         }
-        StickerField(stickerIds, stT, stDrag, stDragging, stField)
+        StickerField(stickerIds, stT, stDrag, stDragging, stField, stTilt)
         }
 
         Box(
