@@ -1,6 +1,24 @@
 package com.chatapp.messenger.ui
 
 import androidx.compose.foundation.Image
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -176,6 +194,17 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
                     val sorted = g.members.sortedWith(compareBy<String>({ rank(it) }, { names[it].orEmpty() }))
                     val now = System.currentTimeMillis()
 
+                    // دخول متتابع (نبضة نابضية) للهيرو والبطاقات؛ نخزنه خارج LazyColumn حتى ما يعيد الحركة عند التمرير
+                    val enter = remember { List(5) { Animatable(0f) } }
+                    LaunchedEffect(Unit) {
+                        enter.forEachIndexed { i, an ->
+                            launch {
+                                kotlinx.coroutines.delay(i * 70L)
+                                an.animateTo(1f, spring(dampingRatio = 0.78f, stiffness = 260f))
+                            }
+                        }
+                    }
+
                     LazyColumn(
                         Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(
@@ -187,56 +216,79 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
                         // ---- الزر + العنوان (يتحركون مع الواجهة) ----
                         item { header() }
 
-                        // ---- الرأس ----
+                        // ---- الهيرو: صورة بحلقة متحركة + اليوزر + شارات ----
                         item {
+                            val heroShape = RoundedCornerShape(34.dp)
                             Column(
                                 Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
-                                    .glassSurface(backdrop, dark, RoundedCornerShape(30.dp), blurDp = 10f)
-                                    .padding(horizontal = 20.dp, vertical = 20.dp),
+                                    .enterFx(enter[0])
+                                    .glassSurface(backdrop, dark, heroShape, blurDp = 12f)
+                                    .clip(heroShape)
+                                    .drawBehind {
+                                        drawRect(
+                                            Brush.radialGradient(
+                                                listOf(AccentBlue.copy(alpha = 0.30f), Color.Transparent),
+                                                center = Offset(size.width / 2f, 120.dp.toPx()),
+                                                radius = size.width * 0.75f
+                                            )
+                                        )
+                                    }
+                                    .padding(horizontal = 20.dp, vertical = 24.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                GroupAvatar(g.item.avatar, 96.dp)
-                                Spacer(Modifier.height(12.dp))
-                                Text(g.item.name, color = fg, fontSize = 22.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                                HeroAvatar(g.item.avatar, dark)
+                                Spacer(Modifier.height(14.dp))
+                                Text(g.item.name, color = fg, fontSize = 24.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                                 if (g.item.handle.isNotBlank()) {
-                                    Text("@${g.item.handle}", color = AccentBlue, fontSize = 14.sp)
+                                    Spacer(Modifier.height(6.dp))
+                                    Text(
+                                        "@${g.item.handle}", color = AccentBlue, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.clip(CircleShape).background(AccentBlue.copy(alpha = 0.16f))
+                                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                                    )
                                 }
                                 if (g.item.bio.isNotBlank()) {
-                                    Spacer(Modifier.height(6.dp))
+                                    Spacer(Modifier.height(10.dp))
                                     Text(g.item.bio, color = fg.copy(alpha = 0.78f), fontSize = 14.sp, textAlign = TextAlign.Center)
                                 }
-                                Spacer(Modifier.height(6.dp))
-                                Text(
-                                    "${g.item.memberCount} عضو · " + when {
-                                        a.isOwner -> "أنت المالك"
-                                        a.isAdmin -> "أنت مشرف"
-                                        a.isRestricted -> "أنت مقيّد"
-                                        else -> "أنت عضو"
-                                    },
-                                    color = fg.copy(alpha = 0.6f), fontSize = 12.sp
-                                )
+                                Spacer(Modifier.height(16.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    StatPill("${g.item.memberCount} عضو", AccentBlue, fg) {
+                                        Icon(AppIcons.Group, null, tint = AccentBlue, modifier = Modifier.size(15.dp))
+                                    }
+                                    val roleText = when {
+                                        a.isOwner -> "المالك"
+                                        a.isAdmin -> "مشرف"
+                                        a.isRestricted -> "مقيّد"
+                                        else -> "عضو"
+                                    }
+                                    val roleColor = when {
+                                        a.isOwner -> Color(0xFFFFB020)
+                                        a.isAdmin -> AccentBlue
+                                        a.isRestricted -> DangerColor
+                                        else -> fg.copy(alpha = 0.7f)
+                                    }
+                                    StatPill(roleText, roleColor, fg) { Text(if (a.isOwner) "👑" else if (a.isAdmin) "🛡️" else if (a.isRestricted) "🚫" else "👤", fontSize = 12.sp) }
+                                    val pub = g.settings.publicJoin && g.item.handle.isNotBlank()
+                                    StatPill(if (pub) "عامة" else "خاصة", if (pub) Color(0xFF34C759) else fg.copy(alpha = 0.7f), fg) {
+                                        Icon(if (pub) AppIcons.Public else AppIcons.Lock, null, tint = if (pub) Color(0xFF34C759) else fg.copy(alpha = 0.7f), modifier = Modifier.size(15.dp))
+                                    }
+                                }
                             }
                         }
 
-                        // ---- الإجراءات ----
-                        item {
-                            Column(
-                                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                if (a.canChangeInfo) {
-                                    InfoAction(backdrop, dark, Icons.Filled.Edit, "تعديل المجموعة", "الاسم والنبذة والصورة", AccentBlue) { showEdit = true }
-                                }
-                                if (a.canInvite) {
-                                    InfoAction(backdrop, dark, AppIcons.GroupAdd, "إضافة أعضاء", "من أصدقائك", Color(0xFFFFA62B)) { showAdd = true }
-                                }
-                                // مشاركة المجموعة: تطلع نافذة المشاركة بيوزر المجموعة (أي شخص يبحث عنه ينضم إذا المجموعة مشاركة)
-                                if (g.item.handle.isNotBlank() && (g.settings.publicJoin || a.canBan)) {
-                                    InfoAction(
-                                        backdrop, dark, Icons.Filled.Share, "مشاركة المجموعة",
-                                        if (g.settings.publicJoin) "أي شخص ينضم الها باليوزر @${g.item.handle}" else "فعّل \"مشاركة المجموعة\" من الصلاحيات أول",
-                                        Color(0xFF34C759)
-                                    ) {
+                        // ---- إجراءات سريعة: بلاطات زجاجية ----
+                        val canShare = g.item.handle.isNotBlank() && (g.settings.publicJoin || a.canBan)
+                        if (a.canChangeInfo || a.canInvite || canShare) {
+                            item {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).enterFx(enter[1]),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    if (a.canChangeInfo) QuickTile(Modifier.weight(1f), backdrop, dark, Icons.Filled.Edit, "تعديل", AccentBlue) { showEdit = true }
+                                    if (a.canInvite) QuickTile(Modifier.weight(1f), backdrop, dark, AppIcons.GroupAdd, "إضافة", Color(0xFFFFA62B)) { showAdd = true }
+                                    if (canShare) QuickTile(Modifier.weight(1f), backdrop, dark, Icons.Filled.Share, "مشاركة", Color(0xFF34C759)) {
+                                        // تطلع نافذة المشاركة بيوزر المجموعة (أي شخص يبحث عنه ينضم إذا المجموعة مشاركة)
                                         if (g.settings.publicJoin) {
                                             val text = "انضم لمجموعة «${g.item.name}» على ChatApp\n" +
                                                 "ابحث عنها بقسم المجموعات باليوزر: @${g.item.handle}"
@@ -250,34 +302,72 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
                                         }
                                     }
                                 }
-                                if (a.canBan) {
-                                    InfoAction(backdrop, dark, Icons.Filled.Settings, "صلاحيات الأعضاء", "الإرسال، الدعوة، التثبيت، الوضع البطيء", Color(0xFF8A5CFF)) { showSettings = true }
-                                    InfoAction(backdrop, dark, AppIcons.Block, "المحظورون", "${g.banned.size} محظور", DangerColor) { showBanned = true }
+                            }
+                        }
+
+                        // ---- الإدارة: بطاقة وحدة مقسّمة ----
+                        if (a.canBan) {
+                            item {
+                                val cardShape = RoundedCornerShape(28.dp)
+                                Column(
+                                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+                                        .enterFx(enter[2])
+                                        .glassSurface(backdrop, dark, cardShape, blurDp = 8f)
+                                        .clip(cardShape)
+                                ) {
+                                    SettingRow(Icons.Filled.Settings, "صلاحيات الأعضاء", "الإرسال، الدعوة، التثبيت، الوضع البطيء", Color(0xFF8A5CFF), null, fg) { showSettings = true }
+                                    Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(0.6.dp).background(fg.copy(alpha = 0.10f)))
+                                    SettingRow(AppIcons.Block, "المحظورون", if (g.banned.isEmpty()) "ما فيه أحد" else "${g.banned.size} محظور", DangerColor, null, fg) { showBanned = true }
                                 }
                             }
                         }
 
-                        // ---- الأعضاء ----
+                        // ---- الأعضاء: قائمة مقسّمة بزوايا مستديرة بالأطراف ----
                         item {
-                            Text(
-                                "الأعضاء (${g.members.size})",
-                                color = fg.copy(alpha = 0.75f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(horizontal = 24.dp, vertical = 10.dp)
-                            )
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 14.dp, bottom = 8.dp).enterFx(enter[3]),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("الأعضاء", color = fg.copy(alpha = 0.85f), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    "${g.members.size}", color = AccentBlue, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.clip(CircleShape).background(AccentBlue.copy(alpha = 0.16f))
+                                        .padding(horizontal = 9.dp, vertical = 2.dp)
+                                )
+                            }
                         }
-                        items(sorted, key = { it }) { uid ->
+                        itemsIndexed(sorted, key = { _, uid -> uid }) { idx, uid ->
                             val label = when {
                                 uid == g.item.owner -> "المالك"
                                 uid in g.admins -> g.admins[uid]?.title?.ifBlank { "مشرف" } ?: "مشرف"
                                 else -> null
                             }
+                            val roleColor = when {
+                                uid == g.item.owner -> Color(0xFFFFB020)
+                                uid in g.admins -> AccentBlue
+                                else -> null
+                            }
                             val r = g.restricted[uid]
                             val restrictedNow = r != null && (r.until == 0L || r.until > now)
+                            val big = 24.dp
+                            val small = 6.dp
+                            val n = sorted.size
+                            val rowShape = when {
+                                n == 1 -> RoundedCornerShape(big)
+                                idx == 0 -> RoundedCornerShape(big, big, small, small)
+                                idx == n - 1 -> RoundedCornerShape(small, small, big, big)
+                                else -> RoundedCornerShape(small)
+                            }
                             MemberRow(
                                 uid = uid,
                                 me = me,
                                 fg = fg,
+                                dark = dark,
+                                backdrop = backdrop,
+                                shape = rowShape,
                                 label = label,
+                                roleColor = roleColor,
                                 restricted = restrictedNow,
                                 canManage = a.canManage(uid),
                                 onManage = { memberDialog = uid },
@@ -285,27 +375,48 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
                             )
                         }
 
-                        // ---- مغادرة / حذف ----
+                        // ---- مغادرة / حذف: زر زجاجي أحمر ----
                         item {
-                            Spacer(Modifier.height(16.dp))
-                            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).navigationBarsPadding()) {
+                            Spacer(Modifier.height(22.dp))
+                            Column(
+                                Modifier.fillMaxWidth().padding(horizontal = 16.dp).navigationBarsPadding().enterFx(enter[4]),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
                                 if (a.isOwner) {
-                                    InfoAction(backdrop, dark, Icons.Filled.Delete, "حذف المجموعة", "يحذف المجموعة ورسائلها عند الجميع نهائياً", DangerColor) {
-                                        confirm = ConfirmSpec(
-                                            "حذف المجموعة",
-                                            "راح تنحذف المجموعة \"${g.item.name}\" مع كل رسائلها وأعضائها نهائياً، وما تقدر ترجعها.",
-                                            "حذف نهائي",
-                                            Icons.Filled.Delete
-                                        ) { act { Repo.deleteGroup(g); onGone() } }
+                                    GlassButton(
+                                        onClick = {
+                                            confirm = ConfirmSpec(
+                                                "حذف المجموعة",
+                                                "راح تنحذف المجموعة \"${g.item.name}\" مع كل رسائلها وأعضائها نهائياً، وما تقدر ترجعها.",
+                                                "حذف نهائي",
+                                                Icons.Filled.Delete
+                                            ) { act { Repo.deleteGroup(g); onGone() } }
+                                        },
+                                        backdrop = backdrop, tint = DangerColor, pressScale = 1.03f,
+                                        modifier = Modifier.fillMaxWidth().height(54.dp)
+                                    ) {
+                                        Icon(Icons.Filled.Delete, null, tint = Color.White, modifier = Modifier.size(22.dp))
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("حذف المجموعة", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                     }
+                                    Spacer(Modifier.height(8.dp))
+                                    Text("يحذف المجموعة ورسائلها عند الجميع نهائياً", color = fg.copy(alpha = 0.55f), fontSize = 12.sp, textAlign = TextAlign.Center)
                                 } else {
-                                    InfoAction(backdrop, dark, AppIcons.Logout, "مغادرة المجموعة", null, DangerColor) {
-                                        confirm = ConfirmSpec(
-                                            "مغادرة المجموعة",
-                                            "متأكد تريد تغادر \"${g.item.name}\"؟ ما راح توصلك رسائلها بعد.",
-                                            "مغادرة",
-                                            AppIcons.Logout
-                                        ) { act { Repo.leaveGroup(groupId, me in g.admins); onGone() } }
+                                    GlassButton(
+                                        onClick = {
+                                            confirm = ConfirmSpec(
+                                                "مغادرة المجموعة",
+                                                "متأكد تريد تغادر \"${g.item.name}\"؟ ما راح توصلك رسائلها بعد.",
+                                                "مغادرة",
+                                                AppIcons.Logout
+                                            ) { act { Repo.leaveGroup(groupId, me in g.admins); onGone() } }
+                                        },
+                                        backdrop = backdrop, tint = DangerColor, pressScale = 1.03f,
+                                        modifier = Modifier.fillMaxWidth().height(54.dp)
+                                    ) {
+                                        Icon(AppIcons.Logout, null, tint = Color.White, modifier = Modifier.size(22.dp))
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("مغادرة المجموعة", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -499,53 +610,135 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
 
 // ============================ عناصر واجهة ============================
 
+/** دخول: يظهر من تحت مع تكبير خفيف حسب تقدم الحركة (يُقرأ بمرحلة الرسم فقط) */
+private fun Modifier.enterFx(p: Animatable<Float, *>): Modifier = graphicsLayer {
+    val v = p.value.coerceIn(0f, 1f)
+    alpha = v
+    translationY = (1f - v) * 48.dp.toPx()
+    val sc = 0.94f + 0.06f * v
+    scaleX = sc; scaleY = sc
+}
+
+/** صورة المجموعة بحلقة متدرجة تدور ببطء */
 @Composable
-private fun InfoAction(
-    backdrop: Backdrop, dark: Boolean,
-    icon: ImageVector, title: String, subtitle: String?, tint: Color, onClick: () -> Unit
+private fun HeroAvatar(b64: String, dark: Boolean) {
+    val t = rememberInfiniteTransition(label = "ring")
+    val ang by t.animateFloat(
+        initialValue = 0f, targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(9000, easing = LinearEasing)), label = "ringAngle"
+    )
+    Box(Modifier.size(116.dp), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier.fillMaxSize().graphicsLayer { rotationZ = ang }.clip(CircleShape)
+                .background(Brush.sweepGradient(listOf(AccentBlue, Color(0xFFFF4FA3), Color(0xFFFFB020), AccentBlue)))
+        )
+        Box(
+            Modifier.size(108.dp).clip(CircleShape).background(if (dark) Color(0xFF0B0F14) else Color.White),
+            contentAlignment = Alignment.Center
+        ) { GroupAvatar(b64, 102.dp) }
+    }
+}
+
+/** شارة صغيرة زجاجية (عدد الأعضاء / دوري / عامة-خاصة) */
+@Composable
+private fun StatPill(text: String, tint: Color, fg: Color, leading: @Composable () -> Unit) {
+    Row(
+        Modifier.clip(CircleShape).background(fg.copy(alpha = 0.08f))
+            .border(0.8.dp, glassBorderBrush(0.30f), CircleShape)
+            .padding(horizontal = 11.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        leading()
+        Spacer(Modifier.width(6.dp))
+        Text(text, color = if (tint == fg.copy(alpha = 0.7f)) fg else tint, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+    }
+}
+
+/** بلاطة إجراء سريع (زجاج + أيقونة ملوّنة + ضغطة نابضية) */
+@Composable
+private fun QuickTile(
+    modifier: Modifier, backdrop: Backdrop, dark: Boolean,
+    icon: ImageVector, label: String, tint: Color, onClick: () -> Unit
 ) {
     val fg = glassFg(dark)
-    val shape = RoundedCornerShape(22.dp)
-    Row(
-        Modifier.fillMaxWidth()
+    val shape = RoundedCornerShape(26.dp)
+    val src = remember { MutableInteractionSource() }
+    val pressed by src.collectIsPressedAsState()
+    val sc by animateFloatAsState(if (pressed) 0.93f else 1f, spring(0.55f, 450f), label = "tile")
+    Column(
+        modifier
+            .graphicsLayer { scaleX = sc; scaleY = sc }
             .glassSurface(backdrop, dark, shape, blurDp = 6f)
             .clip(shape)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .clickable(interactionSource = src, indication = null, onClick = onClick)
+            .padding(vertical = 14.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            Modifier.size(46.dp).clip(CircleShape)
+                .background(Brush.verticalGradient(listOf(tint.copy(alpha = 0.40f), tint.copy(alpha = 0.16f))))
+                .border(0.8.dp, tint.copy(alpha = 0.40f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) { Icon(icon, null, tint = tint, modifier = Modifier.size(23.dp)) }
+        Spacer(Modifier.height(8.dp))
+        Text(label, color = fg, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+    }
+}
+
+/** سطر داخل بطاقة الإدارة */
+@Composable
+private fun SettingRow(
+    icon: ImageVector, title: String, subtitle: String?, tint: Color,
+    badge: String?, fg: Color, onClick: () -> Unit
+) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
-            Modifier.size(38.dp).clip(CircleShape).background(tint.copy(alpha = 0.22f)),
+            Modifier.size(40.dp).clip(CircleShape).background(tint.copy(alpha = 0.20f)),
             contentAlignment = Alignment.Center
-        ) { Icon(icon, null, tint = tint, modifier = Modifier.size(20.dp)) }
-        Spacer(Modifier.width(12.dp))
+        ) { Icon(icon, null, tint = tint, modifier = Modifier.size(21.dp)) }
+        Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(title, color = if (tint == DangerColor) DangerColor else fg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            if (subtitle != null) Text(subtitle, color = fg.copy(alpha = 0.65f), fontSize = 12.sp)
+            if (subtitle != null) Text(subtitle, color = fg.copy(alpha = 0.60f), fontSize = 12.sp)
         }
+        if (badge != null) {
+            Text(
+                badge, color = tint, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.clip(CircleShape).background(tint.copy(alpha = 0.16f)).padding(horizontal = 9.dp, vertical = 2.dp)
+            )
+            Spacer(Modifier.width(8.dp))
+        }
+        // سهم "للأمام": ArrowBack ينعكس تلقائياً بـ RTL، ندوّره 180° ليشير للجهة الصحيحة بالاتجاهين
+        Icon(
+            Icons.AutoMirrored.Filled.ArrowBack, null, tint = fg.copy(alpha = 0.40f),
+            modifier = Modifier.size(18.dp).graphicsLayer { rotationZ = 180f }
+        )
     }
 }
 
 @Composable
 private fun MemberRow(
-    uid: String, me: String, fg: Color, label: String?, restricted: Boolean,
+    uid: String, me: String, fg: Color, dark: Boolean, backdrop: Backdrop, shape: Shape,
+    label: String?, roleColor: Color?, restricted: Boolean,
     canManage: Boolean, onManage: () -> Unit, onOpenProfile: (UserItem) -> Unit
 ) {
     val prof by remember(uid) { Repo.basicProfileFlow(uid) }.collectAsState(initial = Profile())
     val avatar = rememberB64Image(prof.avatar)
-    val shape = RoundedCornerShape(20.dp)
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp)
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 1.dp)
+            .glassSurface(backdrop, dark, shape, blurDp = 5f)
             .clip(shape)
-            .background(fg.copy(alpha = 0.07f))
-            .border(0.8.dp, glassBorderBrush(0.28f), shape)
             // الضغطة على العضو/المشرف تفتح حسابه (نفسك ما تفتح)
             .then(if (uid != me) Modifier.clickable { onOpenProfile(UserItem(uid, prof.name, "", prof.username)) } else Modifier)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 12.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
-            Modifier.size(44.dp).clip(CircleShape).background(Color(0xFF2B2F36)),
+            Modifier.size(48.dp).clip(CircleShape).background(Color(0xFF2B2F36))
+                .then(if (roleColor != null) Modifier.border(2.dp, roleColor, CircleShape) else Modifier),
             contentAlignment = Alignment.Center
         ) {
             if (avatar != null) Image(avatar, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
@@ -569,15 +762,15 @@ private fun MemberRow(
             Badge("مقيّد", DangerColor)
             Spacer(Modifier.width(6.dp))
         }
-        if (label != null) Badge(label, AccentBlue)
-        // أدوات الإدارة (طرد/تقييد/إشراف) صارت بزر ⋮ منفصل حتى الضغطة على الصف تفتح الحساب
+        if (label != null) Badge(label, roleColor ?: AccentBlue)
+        // أدوات الإدارة (طرد/تقييد/إشراف) بزر ⋮ منفصل حتى الضغطة على الصف تفتح الحساب
         if (canManage) {
             Spacer(Modifier.width(4.dp))
             Box(
-                Modifier.size(36.dp).clip(CircleShape).clickable(onClick = onManage),
+                Modifier.size(36.dp).clip(CircleShape).background(fg.copy(alpha = 0.08f)).clickable(onClick = onManage),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Filled.MoreVert, null, tint = fg.copy(alpha = 0.7f), modifier = Modifier.size(22.dp))
+                Icon(Icons.Filled.MoreVert, null, tint = fg.copy(alpha = 0.75f), modifier = Modifier.size(20.dp))
             }
         }
     }
@@ -592,13 +785,23 @@ private fun Badge(text: String, color: Color) {
     )
 }
 
-/** سطر صلاحية بمفتاح LiquidToggle (بدل Switch). الضغط/السحب على المفتاح نفسه */
+/** سطر صلاحية بمفتاح LiquidToggle + أيقونة ملوّنة. الضغط/السحب على المفتاح نفسه */
 @Composable
-private fun SwitchRow(label: String, checked: Boolean, backdrop: Backdrop, dark: Boolean, onChange: (Boolean) -> Unit) {
+private fun SwitchRow(
+    label: String, checked: Boolean, backdrop: Backdrop, dark: Boolean,
+    icon: ImageVector? = null, tint: Color = AccentBlue, onChange: (Boolean) -> Unit
+) {
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        if (icon != null) {
+            Box(
+                Modifier.size(34.dp).clip(CircleShape).background(tint.copy(alpha = 0.20f)),
+                contentAlignment = Alignment.Center
+            ) { Icon(icon, null, tint = tint, modifier = Modifier.size(18.dp)) }
+            Spacer(Modifier.width(12.dp))
+        }
         Text(label, color = glassFg(dark), fontSize = 15.sp, modifier = Modifier.weight(1f))
         Spacer(Modifier.width(12.dp))
         LiquidToggle(
@@ -609,6 +812,21 @@ private fun SwitchRow(label: String, checked: Boolean, backdrop: Backdrop, dark:
             accent = AccentBlue
         )
     }
+}
+
+/** حاوية مقسّمة لمجموعة مفاتيح (خلفية زجاجية خفيفة + فواصل) */
+@Composable
+private fun SwitchGroup(fg: Color, content: @Composable () -> Unit) {
+    val shape = RoundedCornerShape(22.dp)
+    Column(
+        Modifier.fillMaxWidth().clip(shape).background(fg.copy(alpha = 0.06f))
+            .border(0.8.dp, glassBorderBrush(0.25f), shape)
+    ) { content() }
+}
+
+@Composable
+private fun GroupDivider(fg: Color) {
+    Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp).height(0.6.dp).background(fg.copy(alpha = 0.10f)))
 }
 
 // ============================ الحوارات ============================
@@ -692,30 +910,45 @@ private fun SettingsDialog(current: GroupSettings, hasHandle: Boolean, backdrop:
     ) {
         Column {
             Text("شنو يقدر يسوي الأعضاء العاديين (المشرفون لهم صلاحياتهم الخاصة):", color = fg.copy(alpha = 0.8f), fontSize = 13.sp)
-            Spacer(Modifier.height(8.dp))
-            SwitchRow("مشاركة المجموعة (أي شخص ينضم)", s.publicJoin, backdrop, dark) { s = s.copy(publicJoin = it) }
+            Spacer(Modifier.height(10.dp))
+            SwitchGroup(fg) {
+                SwitchRow("مشاركة المجموعة (أي شخص ينضم)", s.publicJoin, backdrop, dark, AppIcons.Public, Color(0xFF34C759)) { s = s.copy(publicJoin = it) }
+            }
             Text(
                 if (hasHandle) "إذا شغّلتها، أي شخص يبحث عن يوزر المجموعة بقسم المجموعات يلگاها وينضم الها بدون دعوة، وتگدر تشاركها بزر المشاركة."
                 else "هذي المجموعة بدون يوزر، فما راح تطلع بالبحث. المشاركة تشتغل بس للمجموعات الي الها يوزر.",
-                color = fg.copy(alpha = 0.6f), fontSize = 12.sp
+                color = fg.copy(alpha = 0.6f), fontSize = 12.sp,
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp)
             )
             Spacer(Modifier.height(6.dp))
-            SwitchRow("إرسال الرسائل", s.sendMessages, backdrop, dark) { s = s.copy(sendMessages = it) }
-            SwitchRow("إضافة أعضاء", s.inviteUsers, backdrop, dark) { s = s.copy(inviteUsers = it) }
-            SwitchRow("تثبيت الرسائل", s.pinMessages, backdrop, dark) { s = s.copy(pinMessages = it) }
-            SwitchRow("تغيير معلومات المجموعة", s.changeInfo, backdrop, dark) { s = s.copy(changeInfo = it) }
+            SwitchGroup(fg) {
+                SwitchRow("إرسال الرسائل", s.sendMessages, backdrop, dark, AppIcons.ChatBubble, AccentBlue) { s = s.copy(sendMessages = it) }
+                GroupDivider(fg)
+                SwitchRow("إضافة أعضاء", s.inviteUsers, backdrop, dark, AppIcons.GroupAdd, Color(0xFFFFA62B)) { s = s.copy(inviteUsers = it) }
+                GroupDivider(fg)
+                SwitchRow("تثبيت الرسائل", s.pinMessages, backdrop, dark, AppIcons.Pin, Color(0xFFFF4FA3)) { s = s.copy(pinMessages = it) }
+                GroupDivider(fg)
+                SwitchRow("تغيير معلومات المجموعة", s.changeInfo, backdrop, dark, Icons.Filled.Edit, Color(0xFF8A5CFF)) { s = s.copy(changeInfo = it) }
+            }
+            Spacer(Modifier.height(16.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(AppIcons.Clock, null, tint = AccentBlue, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("الوضع البطيء (فاصل بين رسائل العضو الواحد)", color = fg, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            }
             Spacer(Modifier.height(10.dp))
-            Text("الوضع البطيء (فاصل بين رسائل العضو الواحد)", color = fg, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(8.dp))
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 slowOptions.forEach { (sec, label) ->
                     val sel = s.slowMode == sec
                     Text(
                         label,
                         color = if (sel) Color.White else fg,
-                        fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                        fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.clip(CircleShape)
-                            .background(if (sel) AccentBlue else fg.copy(alpha = 0.12f))
+                            .then(
+                                if (sel) Modifier.background(Brush.verticalGradient(listOf(AccentBlue, AccentBlue.copy(alpha = 0.72f))))
+                                else Modifier.background(fg.copy(alpha = 0.08f)).border(0.8.dp, glassBorderBrush(0.25f), CircleShape)
+                            )
                             .clickable { s = s.copy(slowMode = sec) }
                             .padding(horizontal = 14.dp, vertical = 8.dp)
                     )
@@ -743,11 +976,17 @@ private fun AdminPermsDialog(
         Column {
             GlassField(value = title, onValueChange = { title = it.take(16) }, placeholder = "اللقب (اختياري)", fg = fg, singleLine = true)
             Spacer(Modifier.height(8.dp))
-            SwitchRow("تغيير معلومات المجموعة", p.changeInfo, backdrop, dark) { p = p.copy(changeInfo = it) }
-            SwitchRow("حذف رسائل الأعضاء", p.deleteMessages, backdrop, dark) { p = p.copy(deleteMessages = it) }
-            SwitchRow("تقييد وطرد وحظر الأعضاء", p.banUsers, backdrop, dark) { p = p.copy(banUsers = it) }
-            SwitchRow("إضافة أعضاء", p.inviteUsers, backdrop, dark) { p = p.copy(inviteUsers = it) }
-            SwitchRow("تثبيت الرسائل", p.pinMessages, backdrop, dark) { p = p.copy(pinMessages = it) }
+            SwitchGroup(fg) {
+                SwitchRow("تغيير معلومات المجموعة", p.changeInfo, backdrop, dark, Icons.Filled.Edit, Color(0xFF8A5CFF)) { p = p.copy(changeInfo = it) }
+                GroupDivider(fg)
+                SwitchRow("حذف رسائل الأعضاء", p.deleteMessages, backdrop, dark, Icons.Filled.Delete, DangerColor) { p = p.copy(deleteMessages = it) }
+                GroupDivider(fg)
+                SwitchRow("تقييد وطرد وحظر الأعضاء", p.banUsers, backdrop, dark, AppIcons.Block, DangerColor) { p = p.copy(banUsers = it) }
+                GroupDivider(fg)
+                SwitchRow("إضافة أعضاء", p.inviteUsers, backdrop, dark, AppIcons.GroupAdd, Color(0xFFFFA62B)) { p = p.copy(inviteUsers = it) }
+                GroupDivider(fg)
+                SwitchRow("تثبيت الرسائل", p.pinMessages, backdrop, dark, AppIcons.Pin, Color(0xFFFF4FA3)) { p = p.copy(pinMessages = it) }
+            }
         }
     }
 }
