@@ -216,6 +216,9 @@ data class StoryView(val uid: String, val liked: Boolean, val at: Long)
 /** قصة فعّالة لمستخدم (تظهر بقائمة القصص عند الكل) */
 data class ActiveStory(val uid: String, val profile: Profile)
 
+/** حدث بنشاط ملفي: زيارة أو إعجاب بالقصة */
+data class ActivityEvent(val uid: String, val type: String, val at: Long)
+
 /** علاقتي بشخص: لا شي / أنا أتابعه فقط / هو يتابعني فقط / أصدقاء (متابعة متبادلة) */
 enum class Relation { NONE, SENT, RECEIVED, FRIENDS }
 
@@ -238,6 +241,11 @@ data class Profile(
     val customBubble: String = "",
     /** معرّف الرمز المتحرك الي يظهر جنب الاسم عند الكل (فاضي = بدون رمز) */
     val badge: String = "",
+    /** مقدمة الدردشة: رسالة ترحيب تظهر للي يفتح محادثة جديدة معي (فقط إذا introOn) */
+    val introOn: Boolean = false,
+    val intro: String = "",
+    /** ملصق المقدمة (نفس معرّفات رموز الاسم، فاضي = 👋) */
+    val introSticker: String = "",
     /** true إذا هذا المستخدم حاظرني (ما أقدر أشوف ملفه) */
     val restricted: Boolean = false,
     /** true إذا الحساب معطّل أو محذوف (ما يظهر ملفه ولا يمكن مراسلته) */
@@ -1390,7 +1398,10 @@ object Repo {
                         status = status,
                         bubbleStyle = d.getString("bubbleStyle") ?: "glass",
                         customBubble = d.getString("customBubble") ?: "",
-                        badge = d.getString("badge") ?: ""
+                        badge = d.getString("badge") ?: "",
+                        introOn = d.getBoolean("introOn") == true,
+                        intro = d.getString("intro") ?: "",
+                        introSticker = d.getString("introSticker") ?: ""
                     )
                 )
             }
@@ -1698,6 +1709,11 @@ object Repo {
         viewsCol(owner).document(me).set(
             mapOf("uid" to me, "storyAt" to storyAt, "liked" to liked, "at" to now, "likedAt" to if (liked) now else 0L)
         ).await()
+        // سجل النشاط عند صاحب القصة (يبقى حتى بعد انتهاء القصة)
+        runCatching {
+            val ev = db.collection("activity").document(owner).collection("events").document("like_$me")
+            if (liked) ev.set(mapOf("type" to "like", "uid" to me, "at" to now)).await() else ev.delete().await()
+        }
     }
 
     /** مشاهدات قصتي الحالية (لصاحب القصة فقط): الأحدث أولاً */
@@ -1750,8 +1766,8 @@ object Repo {
         awaitClose { reg.remove() }
     }
 
-    /** معرّفات الطرف الثاني من استعلام متابعة، الأحدث أولاً */
-    private fun followsQueryFlow(field: String, other: String, me: String): Flow<List<String>> = callbackFlow {
+    /** (معرّف الطرف الثاني، وقت المتابعة) من استعلام متابعة، الأحدث أولاً */
+    private fun followsTimedFlow(field: String, other: String, me: String): Flow<List<Pair<String, Long>>> = callbackFlow {
         if (me.isBlank()) { close(); return@callbackFlow }
         val reg = db.collection("follows").whereEqualTo(field, me)
             .addSnapshotListener { snap, _ ->
@@ -1761,12 +1777,18 @@ object Repo {
                             val uid = d.getString(other) ?: return@mapNotNull null
                             uid to (d.getTimestamp("at", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
                                 ?.toDate()?.time ?: 0L)
-                        }.sortedByDescending { it.second }.map { it.first }
+                        }.sortedByDescending { it.second }
                     )
                 }
             }
         awaitClose { reg.remove() }
     }
+
+    private fun followsQueryFlow(field: String, other: String, me: String): Flow<List<String>> =
+        followsTimedFlow(field, other, me).map { l -> l.map { it.first } }
+
+    /** من يتابعني مع وقت المتابعة (لصفحة النشاط) */
+    fun followersTimedFlow(me: String): Flow<List<Pair<String, Long>>> = followsTimedFlow("to", "from", me)
 
     /** كل من أتابعهم (الأحدث أولاً) */
     fun followingFlow(me: String): Flow<List<String>> = followsQueryFlow("from", "to", me)
@@ -1847,6 +1869,54 @@ object Repo {
                     .commit().await()
             }
         }
+    }
+
+    // ---------- مقدمة الدردشة ----------
+
+    suspend fun saveIntro(on: Boolean, text: String, sticker: String) {
+        val u = auth.currentUser ?: return
+        db.collection("profiles").document(u.uid).set(
+            mapOf("introOn" to on, "intro" to text.trim().take(150), "introSticker" to sticker),
+            SetOptions.merge()
+        ).await()
+    }
+
+    // ---------- النشاط ----------
+    // activity/<owner>/events/<type>_<actor> = { type: visit|like, uid: actor, at }
+    // الفاعل يكتب وثيقته هو فقط عند صاحب الملف/القصة، وصاحبها فقط يقرأها.
+
+    private val visitSentAt = HashMap<String, Long>()
+
+    /** أنا فتحت ملف [owner]: تتسجل بنشاطه (مرة كل 10 دقائق بالأكثر لنفس الشخص) */
+    fun recordProfileVisit(owner: String) {
+        val me = auth.currentUser?.uid ?: return
+        if (owner.isBlank() || owner == me) return
+        val now = System.currentTimeMillis()
+        synchronized(visitSentAt) {
+            if (now - (visitSentAt[owner] ?: 0L) < 10 * 60_000L) return
+            visitSentAt[owner] = now
+        }
+        db.collection("activity").document(owner).collection("events").document("visit_$me")
+            .set(mapOf("type" to "visit", "uid" to me, "at" to now))
+    }
+
+    /** نشاط ملفي: زيارات + إعجابات القصص (الأحدث أولاً) */
+    fun activityFlow(me: String): Flow<List<ActivityEvent>> = callbackFlow {
+        if (me.isBlank()) { close(); return@callbackFlow }
+        val reg = db.collection("activity").document(me).collection("events")
+            .addSnapshotListener { snap, err ->
+                if (err != null) trySend(emptyList())
+                else if (snap != null) {
+                    trySend(
+                        snap.documents.mapNotNull { d ->
+                            val uid = d.getString("uid") ?: return@mapNotNull null
+                            val type = d.getString("type") ?: return@mapNotNull null
+                            ActivityEvent(uid, type, (d.get("at") as? Number)?.toLong() ?: 0L)
+                        }.sortedByDescending { it.at }
+                    )
+                }
+            }
+        awaitClose { reg.remove() }
     }
 
     // ---------- شكل الفقاعات (يتخزن بملفي الشخصي حتى يشوفه الطرف الثاني) ----------
@@ -2047,6 +2117,7 @@ object Repo {
         runCatching { deleteAllDocs(db.collection("friendRequests").whereEqualTo("to", uid)) }
         runCatching { deleteAllDocs(db.collection("follows").whereEqualTo("from", uid)) }
         runCatching { deleteAllDocs(db.collection("follows").whereEqualTo("to", uid)) }
+        runCatching { deleteAllDocs(db.collection("activity").document(uid).collection("events")) }
         runCatching { deleteAllDocs(db.collection("blocks").document(uid).collection("users")) }
 
         // القصة ومشاهداتها

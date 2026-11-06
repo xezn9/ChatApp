@@ -231,7 +231,7 @@ internal fun FriendsScreen(
 
 /** صف صديق/طلب: صورة + اسم + يوزر + أزرار على الجانب. الضغط على الصف يفتح الملف الشخصي */
 @Composable
-private fun FriendRow(
+internal fun FriendRow(
     uid: String,
     backdrop: Backdrop,
     onClick: (UserItem) -> Unit,

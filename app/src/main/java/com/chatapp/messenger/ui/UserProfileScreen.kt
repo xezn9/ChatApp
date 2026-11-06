@@ -94,6 +94,8 @@ fun UserProfileScreen(user: UserItem, onBack: () -> Unit, onMessage: () -> Unit)
     val scope = rememberCoroutineScope()
     val myUid = remember { Repo.auth.currentUser?.uid ?: "" }
     val isMe = user.uid == myUid
+    // زيارتي لملفه تتسجل بنشاطه (آخر من زار ملفي)
+    androidx.compose.runtime.LaunchedEffect(user.uid) { if (!isMe) Repo.recordProfileVisit(user.uid) }
     val relation by remember(user.uid) { Repo.relationFlow(user.uid) }.collectAsState(initial = Relation.NONE)
     var relBusy by remember { mutableStateOf(false) }
     var confirmUnfriend by remember { mutableStateOf(false) }

@@ -94,6 +94,25 @@ import com.chatapp.messenger.ChatItem
 import com.chatapp.messenger.Profile
 import com.chatapp.messenger.Repo
 import com.chatapp.messenger.UserItem
+import com.chatapp.messenger.MuteStore
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.activity.compose.BackHandler
+import androidx.compose.ui.platform.LocalContext
+import com.chatapp.messenger.ui.theme.isAppDark
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+
+/** محادثة مضغوطة ضغطة مطولة (لقائمة كتم/تحديد/حذف) */
+private data class ChatTarget(val uid: String, val name: String, val lastAt: Long)
 
 /** يتذكر آخر واجهة واتجاه التبديل (1 = للأمام، -1 = للخلف) لحركة الدوّار بين المحادثات/المجموعات/الطلبات */
 private class ModeDir(var cur: Int, var dir: Float = 1f)
@@ -135,7 +154,29 @@ fun HomeTab(
     var viewIndex by remember { mutableStateOf<Int?>(null) }
     var storySnapshot by remember { mutableStateOf<List<ActiveStory>>(emptyList()) }
     var lastIdx by remember { mutableStateOf(0) }
-    LaunchedEffect(viewIndex != null) { onOverlayChange(viewIndex != null) }
+    // ⋮ أعلى اليسار: تحديد الدردشات / مقدمة الدردشة / النشاط + كتم المحادثات
+    val ctx = LocalContext.current
+    val bd = rememberLayerBackdrop()
+    LaunchedEffect(Unit) { MuteStore.init(ctx) }
+    val mutedAll by MuteStore.muted.collectAsState()
+    val myMuted = remember(mutedAll, myUid) {
+        mutedAll.filter { it.startsWith("$myUid:") }.map { it.removePrefix("$myUid:") }.toSet()
+    }
+    var selecting by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf(setOf<String>()) }
+    var actionTarget by remember { mutableStateOf<ChatTarget?>(null) }
+    var bulkDelete by remember { mutableStateOf(false) }
+    var showMenu by remember { mutableStateOf(false) }
+    var showIntro by remember { mutableStateOf(false) }
+    var showActivity by remember { mutableStateOf(false) }
+    fun exitSelection() { selecting = false; selectedIds = emptySet() }
+    fun toggleSel(uid: String) {
+        selectedIds = if (uid in selectedIds) selectedIds - uid else selectedIds + uid
+        if (selectedIds.isEmpty()) selecting = false
+    }
+    BackHandler(enabled = selecting && actionTarget == null && !bulkDelete) { exitSelection() }
+    val anyOverlay = viewIndex != null || showIntro || showActivity
+    LaunchedEffect(anyOverlay) { onOverlayChange(anyOverlay) }
     DisposableEffect(Unit) { onDispose { onOverlayChange(false) } }
 
     // المثبتين (الأشخاص المميزين) أولاً، حتى لو ما عندهم رسائل بعد
@@ -172,6 +213,7 @@ fun HomeTab(
     }
 
     Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().layerBackdrop(bd)) {
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
@@ -184,7 +226,7 @@ fun HomeTab(
                                 (slideOutVertically(tween(160)) { -it / 2 } + fadeOut(tween(120)))
                         },
                         label = "homeTitle"
-                    ) { m -> Text(when (m) { 1 -> "طلبات الرسائل"; else -> "المحادثات" }) }
+                    ) { m -> Text(if (selecting && m == 0) "تم تحديد ${selectedIds.size}" else when (m) { 1 -> "طلبات الرسائل"; else -> "المحادثات" }) }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
             )
@@ -319,20 +361,73 @@ fun HomeTab(
                                 pinned = c.uid in pinned,
                                 unread = c.unread,
                                 showPresence = true,
+                                muted = c.uid in myMuted,
+                                selectMode = selecting,
+                                selected = c.uid in selectedIds,
+                                // ضغطة مطولة = قائمة (كتم / تحديد / حذف)
                                 onLongClick = { p ->
-                                    onRequestDeleteChat(
+                                    if (selecting) toggleSel(c.uid)
+                                    else actionTarget = ChatTarget(
                                         c.uid,
                                         p.name.ifBlank { u?.name ?: "" }.ifBlank { "مستخدم" },
                                         c.lastAt
                                     )
                                 },
-                                onClick = { p -> onOpenChat(toItem(p)) },
-                                onAvatarClick = { p -> onOpenProfile(toItem(p)) }
+                                onClick = { p -> if (selecting) toggleSel(c.uid) else onOpenChat(toItem(p)) },
+                                onAvatarClick = { p -> if (selecting) toggleSel(c.uid) else onOpenProfile(toItem(p)) }
                             )
                         }
                     }
                 }
             }
+                }
+            }
+        }
+    }
+    }
+
+    // ⋮ (أعلى اليسار) أو أزرار التحديد المتعدد: دايماً بالجهة اليسرى الفعلية
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        Row(
+            Modifier.align(Alignment.TopStart).statusBarsPadding().padding(start = 12.dp, top = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            val fgc = MaterialTheme.colorScheme.onBackground
+            if (selecting) {
+                val allMuted = selectedIds.isNotEmpty() && selectedIds.all { it in myMuted }
+                SelectPill("✕", fgc) { exitSelection() }
+                SelectPill(if (allMuted) "🔔 إلغاء الكتم" else "🔕 كتم", fgc, enabled = selectedIds.isNotEmpty()) {
+                    MuteStore.setMany(ctx, selectedIds, !allMuted)
+                    AppToast.show(if (allMuted) "تم إلغاء الكتم" else "تم كتم ${selectedIds.size} محادثة")
+                    exitSelection()
+                }
+                SelectPill("🗑️ حذف", Color(0xFFFF5A5F), enabled = selectedIds.isNotEmpty()) { bulkDelete = true }
+            } else if (homeMode == 0 && !anyOverlay) {
+                Box {
+                    Box(
+                        Modifier.size(44.dp).clip(CircleShape).background(fgc.copy(0.12f)).clickable { showMenu = true },
+                        contentAlignment = Alignment.Center
+                    ) { Icon(Icons.Filled.MoreVert, "المزيد", tint = fgc, modifier = Modifier.size(24.dp)) }
+                    DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                            DropdownMenuItem(
+                                text = { Text("تحديد الدردشات") },
+                                leadingIcon = { Text("☑️") },
+                                onClick = { showMenu = false; selecting = true; selectedIds = emptySet() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("مقدمة الدردشة") },
+                                leadingIcon = { Text("👋") },
+                                onClick = { showMenu = false; showIntro = true }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("النشاط") },
+                                leadingIcon = { Text("📈") },
+                                onClick = { showMenu = false; showActivity = true }
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -372,6 +467,57 @@ fun HomeTab(
             }
         }
     }
+
+    // قائمة الضغط المطوّل على محادثة
+    actionTarget?.let { t ->
+        ChatActionSheet(
+            backdrop = bd,
+            title = t.name,
+            muted = t.uid in myMuted,
+            onMute = {
+                val nowMuted = t.uid !in myMuted
+                MuteStore.setMuted(ctx, t.uid, nowMuted)
+                AppToast.show(if (nowMuted) "تم كتم ${t.name}" else "تم إلغاء كتم ${t.name}")
+                actionTarget = null
+            },
+            onSelect = { selecting = true; selectedIds = setOf(t.uid); actionTarget = null },
+            onDelete = { actionTarget = null; onRequestDeleteChat(t.uid, t.name, t.lastAt) },
+            onDismiss = { actionTarget = null }
+        )
+    }
+    // تأكيد حذف عدة محادثات (من عندي فقط)
+    if (bulkDelete) {
+        GlassConfirmDialog(
+            backdrop = bd,
+            dark = isAppDark(),
+            title = "حذف المحادثات",
+            message = "راح تنحذف ${selectedIds.size} محادثة من عندك فقط. الطرف الثاني تبقى عنده المحادثات كاملة.",
+            confirmText = "حذف",
+            icon = Icons.Filled.Delete,
+            onConfirm = {
+                val ids = selectedIds.toList()
+                bulkDelete = false
+                ids.forEach { id ->
+                    val c = shownChats.firstOrNull { it.uid == id }
+                    Repo.clearChat(myUid, id, c?.lastAt ?: 0L)
+                }
+                exitSelection()
+            },
+            onDismiss = { bulkDelete = false }
+        )
+    }
+    // مقدمة الدردشة
+    AnimatedVisibility(
+        visible = showIntro,
+        enter = slideInHorizontally(spring(0.86f, 420f)) { it } + fadeIn(tween(180)),
+        exit = slideOutHorizontally(tween(240)) { it } + fadeOut(tween(200))
+    ) { ChatIntroScreen(onDismiss = { showIntro = false }) }
+    // النشاط: آخر زيارات / إعجابات القصص / متابعين
+    AnimatedVisibility(
+        visible = showActivity,
+        enter = slideInHorizontally(spring(0.86f, 420f)) { it } + fadeIn(tween(180)),
+        exit = slideOutHorizontally(tween(240)) { it } + fadeOut(tween(200))
+    ) { ActivityScreen(onDismiss = { showActivity = false }, onOpenProfile = { onOpenProfile(it) }) }
     }
 }
 
@@ -515,9 +661,15 @@ private fun UserRow(
     pinned: Boolean = false,
     unread: Int = 0,
     showPresence: Boolean = false,
+    muted: Boolean = false,
+    selectMode: Boolean = false,
+    selected: Boolean = false,
     onLongClick: ((Profile) -> Unit)? = null
 ) {
     val haptic = LocalHapticFeedback.current
+    // نستعمل آخر نسخة من الـ lambdas (وضع التحديد يتغير بدون ما يتغير مفتاح الـ pointerInput)
+    val clickNow by rememberUpdatedState(onClick)
+    val longNow by rememberUpdatedState(onLongClick)
     val prof by remember(uid) { Repo.basicProfileFlow(uid) }.collectAsState(initial = Profile())
     val avatar = rememberB64Image(prof.avatar)
     val shown = prof.name.ifBlank { fallbackName }.ifBlank { "مستخدم" }
@@ -528,10 +680,10 @@ private fun UserRow(
         // ضغطة = فتح المحادثة، ضغطة مطولة = حذف المحادثة
         Modifier.fillMaxWidth().pointerInput(uid, prof) {
             detectTapGestures(
-                onTap = { onClick(prof) },
+                onTap = { clickNow(prof) },
                 onLongPress = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onLongClick(prof)
+                    longNow?.invoke(prof)
                 }
             )
         }
@@ -540,6 +692,15 @@ private fun UserRow(
         rowMod.padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        // دائرة التحديد (وضع تحديد الدردشات)
+        if (selectMode) {
+            Box(
+                Modifier.padding(end = 12.dp).size(24.dp).clip(CircleShape)
+                    .background(if (selected) AccentBlue else Color.Transparent)
+                    .border(2.dp, if (selected) AccentBlue else MaterialTheme.colorScheme.onBackground.copy(0.4f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) { if (selected) Text("✓", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
+        }
         Box(Modifier.size(52.dp)) {
             Box(
                 Modifier.fillMaxSize().clip(CircleShape).background(Color(0xFF2B2F36)).clickable { onAvatarClick(prof) },
@@ -561,6 +722,7 @@ private fun UserRow(
                     overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false)
                 )
                 BadgeAfterName(prof, 18.dp)
+                if (muted) Text("🔕", fontSize = 12.sp, modifier = Modifier.padding(start = 6.dp))
                 if (pinned) {
                     Spacer(Modifier.width(6.dp))
                     Icon(Icons.Filled.Star, null, tint = Color(0xFFFFC107), modifier = Modifier.size(15.dp))
@@ -654,4 +816,15 @@ private fun GroupRow(g: GroupItem, onClick: () -> Unit) {
             )
         }
     }
+}
+
+/** زر نصي صغير بشريط التحديد المتعدد */
+@Composable
+private fun SelectPill(label: String, color: Color, enabled: Boolean = true, onClick: () -> Unit) {
+    Box(
+        Modifier.height(40.dp).clip(RoundedCornerShape(50))
+            .background(MaterialTheme.colorScheme.onBackground.copy(if (enabled) 0.12f else 0.06f))
+            .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 14.dp),
+        contentAlignment = Alignment.Center
+    ) { Text(label, color = color.copy(alpha = if (enabled) 1f else 0.4f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold) }
 }

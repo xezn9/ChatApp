@@ -505,12 +505,22 @@ private fun SpriteView(img: ImageBitmap, frames: Int, size: Dp, modifier: Modifi
 //  محتوى نافذة اختيار الرمز (يوضع داخل GroupCreatePanel): أقسام الملصقات، والقسم يفتح كل ملصقاته
 // ---------------------------------------------------------------------------
 @Composable
-internal fun StickerPickerContent(dark: Boolean, onDone: () -> Unit) {
+internal fun StickerPickerContent(
+    dark: Boolean,
+    onDone: () -> Unit,
+    // إذا مُرّر: الاختيار يرجع للمستدعي بدل ما يصير رمز الاسم (مثلاً ملصق مقدمة الدردشة)
+    onPick: ((String) -> Unit)? = null,
+    currentId: String? = null,
+    heading: String = "رمز الاسم",
+    subheading: String = "اختر ملصق متحرك يظهر جنب اسمك عند الجميع"
+) {
     val fg = if (dark) Color.White else Color(0xFF101418)
     val ctx = LocalContext.current
     StickerRegistry.ensure(ctx)
     val me = remember { Repo.auth.currentUser?.uid ?: "" }
     val prof by remember(me) { Repo.basicProfileFlow(me) }.collectAsState(initial = Profile())
+    val curId = currentId ?: prof.badge
+    fun pick(id: String) { if (onPick != null) onPick(id) else Repo.setBadge(id) }
     var pack by remember { mutableStateOf<StickerPack?>(null) }
     var previewId by remember { mutableStateOf<String?>(null) }
     var rev by remember { mutableStateOf(0) }                       // يتغير بعد تنزيل/حذف حزمة لتحديث القوائم
@@ -520,7 +530,7 @@ internal fun StickerPickerContent(dark: Boolean, onDone: () -> Unit) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     BackHandler(enabled = pack != null) { pack = null }
     // رمزي الحالي إذا من حزمة منزّلة: نتأكد إنه مرفوع حتى يشوفه الكل (يغطي الي اختاروه قبل هذي الميزة)
-    LaunchedEffect(prof.badge) { if (prof.badge.startsWith("s:tg_")) BadgeSync.ensureUploaded(ctx, prof.badge) }
+    LaunchedEffect(curId) { if (curId.startsWith("s:tg_")) BadgeSync.ensureUploaded(ctx, curId) }
     previewId?.let { BadgePreviewDialog(it) { previewId = null } }
     val red = Color(0xFFFF5A5F)
     Box(Modifier.fillMaxSize()) {
@@ -540,16 +550,16 @@ internal fun StickerPickerContent(dark: Boolean, onDone: () -> Unit) {
                     .padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 18.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text("رمز الاسم", color = fg, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                Text("اختر ملصق متحرك يظهر جنب اسمك عند الجميع", color = fg.copy(0.6f), fontSize = 12.5.sp, modifier = Modifier.padding(top = 4.dp))
+                Text(heading, color = fg, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text(subheading, color = fg.copy(0.6f), fontSize = 12.5.sp, modifier = Modifier.padding(top = 4.dp))
                 Spacer(Modifier.height(16.dp))
                 // بدون رمز
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
-                        .background(fg.copy(if (prof.badge.isBlank()) 0.16f else 0.08f))
-                        .clickable { Repo.setBadge(""); onDone() }.padding(vertical = 12.dp),
+                        .background(fg.copy(if (curId.isBlank()) 0.16f else 0.08f))
+                        .clickable { pick(""); onDone() }.padding(vertical = 12.dp),
                     horizontalArrangement = Arrangement.Center
-                ) { Text(if (prof.badge.isBlank()) "بدون رمز ✓" else "بدون رمز", color = fg, fontSize = 14.sp, fontWeight = FontWeight.SemiBold) }
+                ) { Text(if (curId.isBlank()) "بدون ملصق ✓" else "بدون ملصق", color = fg, fontSize = 14.sp, fontWeight = FontWeight.SemiBold) }
                 Spacer(Modifier.height(10.dp))
                 // تنزيل ملصقات من تيليجرام (رابط الحزمة) وتنضاف كقسم جديد
                 Row(
@@ -612,14 +622,14 @@ internal fun StickerPickerContent(dark: Boolean, onDone: () -> Unit) {
                 ) {
                     items(list, key = { it }) { file ->
                         val id = StickerStore.idOf(p, file)
-                        val sel = prof.badge == id
+                        val sel = curId == id
                         val shape = RoundedCornerShape(16.dp)
                         val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
                         Box(
                             Modifier.fillMaxWidth().aspectRatio(1f).clip(shape)
                                 .background(fg.copy(if (sel) 0.18f else 0.07f))
                                 .border(if (sel) 2.dp else 0.8.dp, if (sel) p.color else fg.copy(0.14f), shape)
-                                .clickable { Repo.setBadge(id); BadgeSync.ensureUploaded(ctx, id); onDone() }
+                                .clickable { pick(id); BadgeSync.ensureUploaded(ctx, id); onDone() }
                                 .onLongPressPreview {
                                     haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                                     previewId = id
@@ -713,7 +723,13 @@ private fun PackCard(sp: StickerPack, title: String, fg: Color, modifier: Modifi
 //  ما فيها blur ولا زجاج ثقيل، والمحتوى ينحمّل بعد ما تخلص الحركة (حتى ما يعلّق التطبيق)
 // ---------------------------------------------------------------------------
 @Composable
-internal fun BadgePopup(open: Boolean, origin: androidx.compose.ui.geometry.Offset, dark: Boolean, backdrop: Backdrop, onDismiss: () -> Unit) {
+internal fun BadgePopup(
+    open: Boolean, origin: androidx.compose.ui.geometry.Offset, dark: Boolean, backdrop: Backdrop, onDismiss: () -> Unit,
+    onPick: ((String) -> Unit)? = null,
+    currentId: String? = null,
+    heading: String = "رمز الاسم",
+    subheading: String = "اختر ملصق متحرك يظهر جنب اسمك عند الجميع"
+) {
     val p = remember { androidx.compose.animation.core.Animatable(0f) }
     var ready by remember { mutableStateOf(false) }
     val appCtx = LocalContext.current
@@ -782,9 +798,9 @@ internal fun BadgePopup(open: Boolean, origin: androidx.compose.ui.geometry.Offs
                 )
         ) {
             if (ready) {
-                StickerPickerContent(dark = dark, onDone = onDismiss)
+                StickerPickerContent(dark = dark, onDone = onDismiss, onPick = onPick, currentId = currentId, heading = heading, subheading = subheading)
             } else {
-                Text("رمز الاسم", color = fg, fontSize = 18.sp, fontWeight = FontWeight.Bold,
+                Text(heading, color = fg, fontSize = 18.sp, fontWeight = FontWeight.Bold,
                     modifier = Modifier.align(Alignment.TopCenter).padding(top = 20.dp))
             }
             // زر الإغلاق

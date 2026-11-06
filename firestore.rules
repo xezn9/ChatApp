@@ -112,6 +112,22 @@ service cloud.firestore {
       allow delete: if verified() && fid.split('_')[0] == request.auth.uid;
     }
 
+    // النشاط: activity/<owner>/events/<type>_<actor>. الفاعل يكتب/يمسح وثيقته هو فقط، وصاحب النشاط وحده يقرأ ويمسح
+    match /activity/{owner}/events/{eid} {
+      allow read: if verified() && request.auth.uid == owner;
+      allow create, update: if verified()
+        && request.auth.uid != owner
+        && request.resource.data.keys().hasOnly(['type', 'uid', 'at'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.type in ['visit', 'like']
+        && eid == request.resource.data.type + '_' + request.auth.uid
+        && notBanned()
+        && !blockedBy(owner);
+      allow delete: if verified()
+        && (request.auth.uid == owner
+          || eid in ['visit_' + request.auth.uid, 'like_' + request.auth.uid]);
+    }
+
     // طلبات الصداقة: المعرّف from_to. المرسل ينشئ، والطرفين يقرؤون ويحذفون (إلغاء / رفض / قبول)
     match /friendRequests/{rid} {
       allow get: if verified() && request.auth.uid in rid.split('_');

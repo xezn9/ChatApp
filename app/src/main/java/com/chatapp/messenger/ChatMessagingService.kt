@@ -53,6 +53,8 @@ class ChatMessagingService : FirebaseMessagingService() {
         ) return
 
         val from = d["from"] ?: return
+        // محادثة مكتومة: بدون إشعار
+        if (MuteStore.isMuted(applicationContext, from)) return
         val text = d["text"] ?: return
         var name = d["fromName"].orEmpty()
 

@@ -734,6 +734,25 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                 }
             }
 
+            // ----- مقدمة الدردشة: رسالة ترحيب الطرف الثاني، تبين بس إذا ما صار بينكم أي رسالة -----
+            var introReady by remember(other.uid) { mutableStateOf(false) }
+            LaunchedEffect(other.uid) { delay(900); introReady = true }
+            AnimatedVisibility(
+                visible = introReady && rawMsgs.isEmpty() && profile.introOn && !profile.restricted && other.uid != me,
+                modifier = Modifier.align(Alignment.Center)
+                    .padding(top = statusTop + 76.dp, bottom = listBottomPadding),
+                enter = fadeIn(tween(350)) + scaleIn(spring(0.85f, 380f), initialScale = 0.9f),
+                exit = fadeOut(tween(150))
+            ) {
+                ChatIntroCard(
+                    name = profile.name.ifBlank { other.name }.ifBlank { "مستخدم" },
+                    avatar = avatar,
+                    text = profile.intro,
+                    sticker = profile.introSticker,
+                    fg = fg
+                )
+            }
+
             // ----- مؤشر "يكتب": رسالة فيها ثلاث نقاط، بنفس شكل رسائل الشخص وعلى جهته -----
             if (otherTyping) {
                 Row(
