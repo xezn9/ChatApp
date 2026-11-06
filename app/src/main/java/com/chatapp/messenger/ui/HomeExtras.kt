@@ -410,3 +410,76 @@ private fun androidx.compose.foundation.lazy.LazyListScope.section(title: String
         Text(emptyText, fontSize = 14.sp, color = fg.copy(0.5f), modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
     }
 }
+
+
+// ============================================================================
+//  قائمة ⋮ بصفحة Home — Liquid Glass (تظهر تحت الزر من اليسار الفعلي)
+// ============================================================================
+@Composable
+internal fun HomeMoreMenu(
+    backdrop: Backdrop,
+    dark: Boolean,
+    onDismiss: () -> Unit,
+    onSelect: () -> Unit,
+    onIntro: () -> Unit,
+    onActivity: () -> Unit
+) {
+    val fg = glassFg(dark)
+    val enter = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { enter.animateTo(1f, spring(dampingRatio = 0.72f, stiffness = 480f)) }
+    val shape = RoundedCornerShape(26.dp)
+    val screenRtl = androidx.compose.ui.platform.LocalLayoutDirection.current ==
+        androidx.compose.ui.unit.LayoutDirection.Rtl
+    BackHandler(onBack = onDismiss)
+
+    // الموضع بالاتجاه الفعلي (يسار) حتى لو التطبيق RTL
+    androidx.compose.runtime.CompositionLocalProvider(
+        androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr
+    ) {
+        Box(
+            Modifier.fillMaxSize()
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss)
+        ) {
+            Column(
+                Modifier
+                    .statusBarsPadding()
+                    // تحت الزر: 10 (top) + 44 (الزر) + 8 فراغ
+                    .padding(start = 12.dp, top = 62.dp)
+                    .graphicsLayer {
+                        transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
+                        val sc = 0.55f + 0.45f * enter.value
+                        scaleX = sc; scaleY = sc
+                        alpha = enter.value.coerceIn(0f, 1f)
+                    }
+                    .width(230.dp)
+                    .glassSurface(backdrop, dark, shape, blurDp = 16f)
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
+                    .padding(8.dp)
+            ) {
+                // نص عربي: نرجّع RTL لمحتوى القائمة فقط
+                androidx.compose.runtime.CompositionLocalProvider(
+                    androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Rtl
+                ) {
+                    HomeMenuRow("☑️", "تحديد الدردشات", fg, onSelect)
+                    HomeMenuRow("👋", "مقدمة الدردشة", fg, onIntro)
+                    HomeMenuRow("📈", "النشاط", fg, onActivity)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeMenuRow(icon: String, label: String, color: Color, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().height(50.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(icon, fontSize = 20.sp)
+        Spacer(Modifier.width(14.dp))
+        Text(label, color = color, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+    }
+}

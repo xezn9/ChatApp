@@ -387,9 +387,13 @@ fun HomeTab(
     }
 
     // ⋮ (أعلى اليسار) أو أزرار التحديد المتعدد: دايماً بالجهة اليسرى الفعلية
+    // ملاحظة: align() يتحدد باتجاه الأب (RTL) مو باتجاه الـ Row، فنختار الطرف حسب اتجاه الشاشة الحقيقي
+    val screenRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val homeDark = isAppDark()
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
         Row(
-            Modifier.align(Alignment.TopStart).statusBarsPadding().padding(start = 12.dp, top = 10.dp),
+            Modifier.align(if (screenRtl) Alignment.TopEnd else Alignment.TopStart)
+                .statusBarsPadding().padding(start = 12.dp, end = 12.dp, top = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -404,33 +408,26 @@ fun HomeTab(
                 }
                 SelectPill("🗑️ حذف", Color(0xFFFF5A5F), enabled = selectedIds.isNotEmpty()) { bulkDelete = true }
             } else if (homeMode == 0 && !anyOverlay) {
-                Box {
-                    Box(
-                        Modifier.size(44.dp).clip(CircleShape).background(fgc.copy(0.12f)).clickable { showMenu = true },
-                        contentAlignment = Alignment.Center
-                    ) { Icon(Icons.Filled.MoreVert, "المزيد", tint = fgc, modifier = Modifier.size(24.dp)) }
-                    DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-                            DropdownMenuItem(
-                                text = { Text("تحديد الدردشات") },
-                                leadingIcon = { Text("☑️") },
-                                onClick = { showMenu = false; selecting = true; selectedIds = emptySet() }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("مقدمة الدردشة") },
-                                leadingIcon = { Text("👋") },
-                                onClick = { showMenu = false; showIntro = true }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("النشاط") },
-                                leadingIcon = { Text("📈") },
-                                onClick = { showMenu = false; showActivity = true }
-                            )
-                        }
-                    }
-                }
+                // زر ⋮ زجاجي (Liquid Glass)
+                com.chatapp.messenger.ui.glass.GlassButton(
+                    onClick = { showMenu = true },
+                    backdrop = bd,
+                    modifier = Modifier.size(44.dp)
+                ) { Icon(Icons.Filled.MoreVert, "المزيد", tint = fgc, modifier = Modifier.size(24.dp)) }
             }
         }
+    }
+
+    // قائمة ⋮ الزجاجية (تنرسم فوق كل شي، وتاخذ الخلفية من bd)
+    if (showMenu && homeMode == 0 && !selecting && !anyOverlay) {
+        HomeMoreMenu(
+            backdrop = bd,
+            dark = homeDark,
+            onDismiss = { showMenu = false },
+            onSelect = { showMenu = false; selecting = true; selectedIds = emptySet() },
+            onIntro = { showMenu = false; showIntro = true },
+            onActivity = { showMenu = false; showActivity = true }
+        )
     }
 
     // عارض القصص بملء الشاشة (يتنقل للقصة التالية تلقائياً)
