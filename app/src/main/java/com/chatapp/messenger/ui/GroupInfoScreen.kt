@@ -242,15 +242,17 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
                                     .padding(horizontal = 20.dp, vertical = 24.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                HeroAvatar(g.item.avatar, dark)
+                                HeroAvatar(g.item.avatar, dark, backdrop)
                                 Spacer(Modifier.height(14.dp))
                                 Text(g.item.name, color = fg, fontSize = 24.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                                 if (g.item.handle.isNotBlank()) {
                                     Spacer(Modifier.height(6.dp))
                                     Text(
                                         "@${g.item.handle}", color = AccentBlue, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-                                        modifier = Modifier.clip(CircleShape).background(AccentBlue.copy(alpha = 0.16f))
-                                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                                        modifier = Modifier
+                                            .clearGlass(backdrop, dark, CircleShape, blurDp = 1.5f, refractH = 10f, refractA = 20f, surfaceTint = AccentBlue.copy(alpha = 0.18f))
+                                            .clip(CircleShape)
+                                            .padding(horizontal = 14.dp, vertical = 5.dp)
                                     )
                                 }
                                 if (g.item.bio.isNotBlank()) {
@@ -347,7 +349,7 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
                                 )
                             }
                         }
-                        itemsIndexed(sorted, key = { _, uid -> uid }) { idx, uid ->
+                        itemsIndexed(sorted, key = { _, uid -> uid }) { _, uid ->
                             val label = when {
                                 uid == g.item.owner -> "المالك"
                                 uid in g.admins -> g.admins[uid]?.title?.ifBlank { "مشرف" } ?: "مشرف"
@@ -360,15 +362,7 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
                             }
                             val r = g.restricted[uid]
                             val restrictedNow = r != null && (r.until == 0L || r.until > now)
-                            val big = 24.dp
-                            val small = 6.dp
-                            val n = sorted.size
-                            val rowShape = when {
-                                n == 1 -> RoundedCornerShape(big)
-                                idx == 0 -> RoundedCornerShape(big, big, small, small)
-                                idx == n - 1 -> RoundedCornerShape(small, small, big, big)
-                                else -> RoundedCornerShape(small)
-                            }
+                            val rowShape = RoundedCornerShape(28.dp)
                             MemberRow(
                                 uid = uid,
                                 me = me,
@@ -473,7 +467,7 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
 
             if (showBanned) {
                 GlassDialog(
-                    backdrop = backdrop, dark = dark, title = "المحظورون",
+                    backdrop = backdrop, dark = dark, clear = true, title = "المحظورون",
                     onDismiss = { showBanned = false }
                 ) {
                     if (g.banned.isEmpty()) {
@@ -507,31 +501,31 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
                     val isAdminT = uid in g.admins
                     val hasRestriction = g.restricted[uid] != null
                     GlassDialog(
-                        backdrop = backdrop, dark = dark, title = nameOf(uid),
+                        backdrop = backdrop, dark = dark, clear = true, title = nameOf(uid),
                         onDismiss = { memberDialog = null }
                     ) {
                         Column {
                             if (a.isOwner) {
                                 if (isAdminT) {
-                                    MenuAction("تعديل صلاحيات المشرف") { memberDialog = null; adminDialog = uid }
-                                    MenuAction("إزالة من الإشراف") {
+                                    GlassAction("تعديل صلاحيات المشرف", icon = Icons.Filled.Settings) { memberDialog = null; adminDialog = uid }
+                                    GlassAction("إزالة من الإشراف", icon = AppIcons.Minus) {
                                         memberDialog = null
                                         act("تمت إزالته من الإشراف") { Repo.removeGroupAdmin(groupId, uid) }
                                     }
                                 } else {
-                                    MenuAction("تعيين كمشرف") { memberDialog = null; adminDialog = uid }
+                                    GlassAction("تعيين كمشرف", icon = Icons.Filled.Person) { memberDialog = null; adminDialog = uid }
                                 }
                             }
                             if (a.canBan) {
                                 if (hasRestriction) {
-                                    MenuAction("إلغاء التقييد") {
+                                    GlassAction("إلغاء التقييد", icon = AppIcons.Public) {
                                         memberDialog = null
                                         act("تم إلغاء التقييد") { Repo.unrestrictGroupMember(groupId, uid) }
                                     }
                                 } else {
-                                    MenuAction("تقييد (منعه من الإرسال)") { memberDialog = null; restrictDialog = uid }
+                                    GlassAction("تقييد (منعه من الإرسال)", icon = AppIcons.Lock) { memberDialog = null; restrictDialog = uid }
                                 }
-                                MenuAction("طرد من المجموعة", danger = true) {
+                                GlassAction("طرد من المجموعة", danger = true, icon = AppIcons.Logout) {
                                     memberDialog = null
                                     confirm = ConfirmSpec(
                                         "طرد ${nameOf(uid)}",
@@ -544,7 +538,7 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
                                         }
                                     }
                                 }
-                                MenuAction("حظر من المجموعة", danger = true) {
+                                GlassAction("حظر من المجموعة", danger = true, icon = AppIcons.Block) {
                                     memberDialog = null
                                     confirm = ConfirmSpec(
                                         "حظر ${nameOf(uid)}",
@@ -585,14 +579,14 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
                     "دائم" to 0L
                 )
                 GlassDialog(
-                    backdrop = backdrop, dark = dark, title = "تقييد ${nameOf(uid)}",
+                    backdrop = backdrop, dark = dark, clear = true, title = "تقييد ${nameOf(uid)}",
                     onDismiss = { restrictDialog = null }
                 ) {
                     Column {
                         Text("ما راح يقدر يرسل رسائل طول مدة التقييد.", color = fg.copy(alpha = 0.8f), fontSize = 13.sp)
                         Spacer(Modifier.height(6.dp))
                         options.forEach { (label, dur) ->
-                            MenuAction(label) {
+                            GlassAction(label, icon = AppIcons.Clock) {
                                 restrictDialog = null
                                 val until = if (dur == 0L) 0L else System.currentTimeMillis() + dur
                                 act("تم التقييد") { Repo.restrictGroupMember(groupId, uid, until) }
@@ -629,24 +623,21 @@ private fun Modifier.enterFx(p: Animatable<Float, *>): Modifier = graphicsLayer 
     scaleX = sc; scaleY = sc
 }
 
-/** صورة المجموعة بحلقة متدرجة تدور ببطء */
+/** صورة المجموعة داخل إطار Liquid Glass دائري (انكسار قوي على الحافة) مع طفو خفيف */
 @Composable
-private fun HeroAvatar(b64: String, dark: Boolean) {
-    val t = rememberInfiniteTransition(label = "ring")
-    val ang by t.animateFloat(
-        initialValue = 0f, targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(9000, easing = LinearEasing)), label = "ringAngle"
+private fun HeroAvatar(b64: String, dark: Boolean, backdrop: Backdrop) {
+    val t = rememberInfiniteTransition(label = "float")
+    val fy by t.animateFloat(
+        initialValue = -3f, targetValue = 3f,
+        animationSpec = infiniteRepeatable(tween(2600, easing = androidx.compose.animation.core.FastOutSlowInEasing), androidx.compose.animation.core.RepeatMode.Reverse),
+        label = "floatY"
     )
-    Box(Modifier.size(116.dp), contentAlignment = Alignment.Center) {
-        Box(
-            Modifier.fillMaxSize().graphicsLayer { rotationZ = ang }.clip(CircleShape)
-                .background(Brush.sweepGradient(listOf(AccentBlue, Color(0xFFFF4FA3), Color(0xFFFFB020), AccentBlue)))
-        )
-        Box(
-            Modifier.size(108.dp).clip(CircleShape).background(if (dark) Color(0xFF0B0F14) else Color.White),
-            contentAlignment = Alignment.Center
-        ) { GroupAvatar(b64, 102.dp) }
-    }
+    Box(
+        Modifier.size(132.dp)
+            .graphicsLayer { translationY = fy.dp.toPx() }
+            .clearGlass(backdrop, dark, CircleShape, blurDp = 2f, refractH = 28f, refractA = 56f, surfaceTint = AccentBlue.copy(alpha = 0.10f)),
+        contentAlignment = Alignment.Center
+    ) { GroupAvatar(b64, 108.dp) }
 }
 
 /**
@@ -655,7 +646,8 @@ private fun HeroAvatar(b64: String, dark: Boolean) {
  */
 private fun Modifier.clearGlass(
     backdrop: Backdrop, dark: Boolean, shape: Shape,
-    blurDp: Float = 2f, refractH: Float = 14f, refractA: Float = 28f
+    blurDp: Float = 2f, refractH: Float = 14f, refractA: Float = 28f,
+    surfaceTint: Color = Color.Unspecified
 ): Modifier = this
     .drawBackdrop(
         backdrop = backdrop,
@@ -666,7 +658,12 @@ private fun Modifier.clearGlass(
             lens((refractH.dp.toPx()) * GlassFx.refractK, (refractA.dp.toPx()) * GlassFx.refractK)
         },
         onDrawSurface = {
-            glassSurfaceLayer { drawRect(if (dark) Color.White.copy(0.07f) else Color.White.copy(0.28f)) }
+            glassSurfaceLayer {
+                drawRect(if (dark) Color.White.copy(0.08f) else Color.White.copy(0.28f))
+                if (surfaceTint != Color.Unspecified) drawRect(surfaceTint)
+                // لمعة خفيفة من فوق (انعكاس الزجاج)
+                drawRect(Brush.verticalGradient(listOf(Color.White.copy(0.10f), Color.Transparent), endY = size.height * 0.5f))
+            }
         }
     )
     .border(0.9.dp, glassBorderBrush(0.55f), shape)
@@ -751,21 +748,25 @@ private fun MemberRow(
     val prof by remember(uid) { Repo.basicProfileFlow(uid) }.collectAsState(initial = Profile())
     val avatar = rememberB64Image(prof.avatar)
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 1.dp)
-            .clearGlass(backdrop, dark, shape, blurDp = 2f, refractH = 10f, refractA = 20f)
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+            .clearGlass(
+                backdrop, dark, shape, blurDp = 2f, refractH = 14f, refractA = 28f,
+                // المالك/المشرف: صبغة خفيفة بلون دورهم
+                surfaceTint = roleColor?.copy(alpha = 0.10f) ?: Color.Unspecified
+            )
             .clip(shape)
             // الضغطة على العضو/المشرف تفتح حسابه (نفسك ما تفتح)
             .then(if (uid != me) Modifier.clickable { onOpenProfile(UserItem(uid, prof.name, "", prof.username)) } else Modifier)
-            .padding(horizontal = 12.dp, vertical = 9.dp),
+            .padding(start = 12.dp, end = 12.dp, top = 11.dp, bottom = 11.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
-            Modifier.size(48.dp).clip(CircleShape).background(Color(0xFF2B2F36))
-                .then(if (roleColor != null) Modifier.border(2.dp, roleColor, CircleShape) else Modifier),
+            Modifier.size(52.dp).clip(CircleShape).background(Color(0xFF2B2F36))
+                .then(if (roleColor != null) Modifier.border(2.dp, roleColor, CircleShape) else Modifier.border(0.8.dp, glassBorderBrush(0.5f), CircleShape)),
             contentAlignment = Alignment.Center
         ) {
             if (avatar != null) Image(avatar, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-            else Icon(Icons.Filled.Person, null, tint = Color(0xFF8A8F98), modifier = Modifier.size(24.dp))
+            else Icon(Icons.Filled.Person, null, tint = Color(0xFF8A8F98), modifier = Modifier.size(26.dp))
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
@@ -782,30 +783,56 @@ private fun MemberRow(
             }
         }
         if (restricted) {
-            Badge("مقيّد", DangerColor)
+            GlassBadge(backdrop, dark, "مقيّد", DangerColor)
             Spacer(Modifier.width(6.dp))
         }
-        if (label != null) Badge(label, roleColor ?: AccentBlue)
-        // أدوات الإدارة (طرد/تقييد/إشراف) بزر ⋮ منفصل حتى الضغطة على الصف تفتح الحساب
+        if (label != null) GlassBadge(backdrop, dark, label, roleColor ?: AccentBlue)
+        // أدوات الإدارة (طرد/تقييد/إشراف) بزر ⋮ زجاجي منفصل حتى الضغطة على الصف تفتح الحساب
         if (canManage) {
-            Spacer(Modifier.width(4.dp))
-            Box(
-                Modifier.size(36.dp).clip(CircleShape).background(fg.copy(alpha = 0.08f)).clickable(onClick = onManage),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Filled.MoreVert, null, tint = fg.copy(alpha = 0.75f), modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            GlassButton(onClick = onManage, backdrop = backdrop, pressScale = 1.12f, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Filled.MoreVert, null, tint = fg, modifier = Modifier.size(20.dp))
             }
         }
     }
 }
 
+/** شارة Liquid Glass ملوّنة (صبغة + انكسار + ضبابية قليلة) */
 @Composable
-private fun Badge(text: String, color: Color) {
+private fun GlassBadge(backdrop: Backdrop, dark: Boolean, text: String, color: Color) {
     Text(
-        text, color = color, fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(color.copy(alpha = 0.16f))
-            .padding(horizontal = 8.dp, vertical = 3.dp)
+        text, color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1,
+        modifier = Modifier
+            .clearGlass(backdrop, dark, CircleShape, blurDp = 1.5f, refractH = 8f, refractA = 16f, surfaceTint = color.copy(alpha = 0.22f))
+            .clip(CircleShape)
+            .padding(horizontal = 11.dp, vertical = 5.dp)
     )
+}
+
+/** خيار داخل نافذة زجاجية: كبسولة شفافة بأيقونة ملوّنة */
+@Composable
+private fun GlassAction(label: String, danger: Boolean = false, icon: ImageVector? = null, onClick: () -> Unit) {
+    val fg = androidx.compose.material3.LocalContentColor.current
+    val tint = if (danger) DangerColor else AccentBlue
+    val shape = RoundedCornerShape(20.dp)
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 3.dp)
+            .clip(shape)
+            .background(Brush.verticalGradient(listOf(fg.copy(alpha = 0.10f), fg.copy(alpha = 0.04f))))
+            .border(0.8.dp, glassBorderBrush(0.30f), shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (icon != null) {
+            Box(
+                Modifier.size(34.dp).clip(CircleShape).background(tint.copy(alpha = 0.20f)),
+                contentAlignment = Alignment.Center
+            ) { Icon(icon, null, tint = tint, modifier = Modifier.size(18.dp)) }
+            Spacer(Modifier.width(12.dp))
+        }
+        Text(label, color = if (danger) DangerColor else fg, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+    }
 }
 
 /** سطر صلاحية بمفتاح LiquidToggle + أيقونة ملوّنة. الضغط/السحب على المفتاح نفسه */
@@ -870,7 +897,7 @@ private fun EditGroupDialog(
     }
     Box(Modifier.fillMaxSize()) {
     GlassDialog(
-        backdrop = backdrop, dark = dark, title = "تعديل المجموعة",
+        backdrop = backdrop, dark = dark, clear = true, title = "تعديل المجموعة",
         onDismiss = onDismiss,
         confirmText = "حفظ",
         confirmEnabled = name.isNotBlank(),
@@ -900,7 +927,7 @@ private fun AddMembersDialog(g: GroupFull, backdrop: Backdrop, dark: Boolean, on
     val candidates = friends.filter { it !in g.members && it !in g.banned }
     var picked by remember { mutableStateOf(setOf<String>()) }
     GlassDialog(
-        backdrop = backdrop, dark = dark, title = "إضافة أعضاء",
+        backdrop = backdrop, dark = dark, clear = true, title = "إضافة أعضاء",
         onDismiss = onDismiss,
         confirmText = if (candidates.isEmpty()) null else if (picked.isEmpty()) "إضافة" else "إضافة (${picked.size})",
         confirmEnabled = picked.isNotEmpty(),
@@ -926,7 +953,7 @@ private fun SettingsDialog(current: GroupSettings, hasHandle: Boolean, backdrop:
     var s by remember { mutableStateOf(current) }
     val slowOptions = listOf(0 to "مطفي", 10 to "10 ث", 30 to "30 ث", 60 to "دقيقة", 300 to "5 د", 900 to "15 د", 3600 to "ساعة")
     GlassDialog(
-        backdrop = backdrop, dark = dark, title = "صلاحيات الأعضاء",
+        backdrop = backdrop, dark = dark, clear = true, title = "صلاحيات الأعضاء",
         onDismiss = onDismiss,
         confirmText = "حفظ",
         onConfirm = { onSave(s) }
@@ -990,7 +1017,7 @@ private fun AdminPermsDialog(
     var p by remember { mutableStateOf(existing?.perms ?: GroupPerms(deleteMessages = true, pinMessages = true)) }
     var title by remember { mutableStateOf(existing?.title ?: "") }
     GlassDialog(
-        backdrop = backdrop, dark = dark,
+        backdrop = backdrop, dark = dark, clear = true,
         title = if (existing == null) "تعيين $name كمشرف" else "صلاحيات $name",
         onDismiss = onDismiss,
         confirmText = if (existing == null) "تعيين" else "حفظ",

@@ -100,6 +100,8 @@ fun GlassDialog(
     confirmColor: Color = AccentBlue,
     dismissText: String = "إلغاء",
     onConfirm: () -> Unit = {},
+    // clear = زجاج صافي: ضبابية قليلة + انكسار أقوى + سطح شفاف (بدل الزجاج الكثيف)
+    clear: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val fg = glassFg(dark)
@@ -112,7 +114,7 @@ fun GlassDialog(
     Box(
         Modifier.fillMaxSize()
             .graphicsLayer { alpha = enter.value.coerceIn(0f, 1f) }
-            .background(Color.Black.copy(alpha = 0.40f))
+            .background(Color.Black.copy(alpha = if (clear) 0.28f else 0.40f))
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss)
             .imePadding(),
         contentAlignment = Alignment.Center
@@ -129,12 +131,26 @@ fun GlassDialog(
                     shape = { shape },
                     effects = {
                         vibrancy()
-                        blur((16f.dp.toPx()) * GlassFx.blurK)
-                        lens((12f.dp.toPx()) * GlassFx.refractK, (24f.dp.toPx()) * GlassFx.refractK)
+                        blur(((if (clear) 3f else 16f).dp.toPx()) * GlassFx.blurK)
+                        lens(((if (clear) 18f else 12f).dp.toPx()) * GlassFx.refractK, ((if (clear) 36f else 24f).dp.toPx()) * GlassFx.refractK)
                     },
-                    onDrawSurface = { glassSurfaceLayer { drawRect(if (dark) Color.Black.copy(0.42f) else Color.White.copy(0.55f)) } }
+                    onDrawSurface = {
+                        glassSurfaceLayer {
+                            if (clear) {
+                                drawRect(if (dark) Color.White.copy(0.08f) else Color.White.copy(0.30f))
+                                // لمعة خفيفة من فوق (انعكاس الزجاج)
+                                drawRect(
+                                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                                        listOf(Color.White.copy(0.10f), Color.Transparent), endY = size.height * 0.5f
+                                    )
+                                )
+                            } else {
+                                drawRect(if (dark) Color.Black.copy(0.42f) else Color.White.copy(0.55f))
+                            }
+                        }
+                    }
                 )
-                .border(0.8.dp, glassBorderBrush(0.45f), shape)
+                .border(0.8.dp, glassBorderBrush(if (clear) 0.65f else 0.45f), shape)
                 // يمنع الضغط داخل النافذة من إغلاقها
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                 .padding(20.dp)
