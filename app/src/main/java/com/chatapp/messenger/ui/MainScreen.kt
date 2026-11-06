@@ -154,12 +154,11 @@ private fun MainContent() {
     val iconColorFilter = ColorFilter.tint(contentColor)
     val tabs = listOf(
         rememberVectorPainter(Icons.Filled.Home) to "Home",
-        rememberVectorPainter(Icons.Filled.Star) to "BDF",
+        rememberVectorPainter(AppIcons.Group) to "Groups",
         rememberVectorPainter(Icons.Filled.Person) to "Account"
     )
     val modeTabs = listOf(
         rememberVectorPainter(AppIcons.ChatBubble) to "المحادثات",
-        rememberVectorPainter(AppIcons.GroupAdd) to "المجموعات",
         rememberVectorPainter(AppIcons.Inbox) to if (requestCount > 0) "الطلبات ($requestCount)" else "الطلبات"
     )
 
@@ -310,7 +309,10 @@ private fun MainContent() {
                                 onOpenGroup = { openGroupId = it.id; groupInfoOpen = false },
                                 onOpenSupport = { supportThread = it }
                             )
-                            1 -> BdfTab()
+                            1 -> GroupsTab(
+                                onOpenGroup = { openGroupId = it.id; groupInfoOpen = false },
+                                onRequestLogout = { confirmLogout = true }
+                            )
                             else -> AccountTab(
                                 onOverlayChange = { accountOverlay = it },
                                 onOpenProfile = { viewProfile = it },
@@ -388,7 +390,7 @@ private fun MainContent() {
         // زر إنشاء مجموعة (Liquid Glass دائري): خارج صندوق layerBackdrop عمداً،
         // لأن الزجاج ما ينفع يقرأ نفس الطبقة الي هو مرسوم داخلها (هذا كان سبب الكراش)
         AnimatedVisibility(
-            visible = tab == 0 && open == null && profileOpen == null && chatGroupId == null && supportThread == null && !overlayOpen,
+            visible = tab == 1 && open == null && profileOpen == null && chatGroupId == null && supportThread == null && !overlayOpen,
             modifier = Modifier.align(Alignment.BottomEnd),
             enter = slideInVertically(spring(0.8f, 380f)) { it } + fadeIn(tween(200)),
             exit = slideOutVertically(tween(220)) { it } + fadeOut(tween(160))
@@ -426,7 +428,6 @@ private fun MainContent() {
                     onCreated = {
                         // نسكّر النافذة ونروح لتبويب المجموعات حتى تشوف مجموعتها
                         groupOpen = false
-                        homeMode = 1
                     }
                 )
             }
@@ -555,10 +556,4 @@ private fun MainContent() {
             )
         }
     }
-}
-
-/** تبويب BDF: فارغ مؤقتاً */
-@Composable
-fun BdfTab() {
-    Box(Modifier.fillMaxSize())
 }

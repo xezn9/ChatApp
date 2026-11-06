@@ -109,7 +109,7 @@ fun HomeTab(
     onOpenChat: (UserItem) -> Unit, onOpenProfile: (UserItem) -> Unit, onRequestLogout: () -> Unit,
     onRequestDeleteChat: (uid: String, name: String, lastAt: Long) -> Unit = { _, _, _ -> },
     onOverlayChange: (Boolean) -> Unit = {},
-    // 0 = المحادثات العادية، 1 = المجموعات، 2 = طلبات الرسائل (المبدّل نفسه يرسم من MainScreen فوق هذي الصفحة)
+    // 0 = المحادثات العادية، 1 = طلبات الرسائل (المجموعات انتقلت لتبويب BDF) (المبدّل نفسه يرسم من MainScreen فوق هذي الصفحة)
     homeMode: Int = 0,
     // فتح محادثة مجموعة
     onOpenGroup: (GroupItem) -> Unit = {},
@@ -130,21 +130,6 @@ fun HomeTab(
     val previewOverrides by remember(myUid) { Repo.previewOverridesFlow(myUid) }.collectAsState(initial = emptyMap())
     // لكل واجهة بحثها المستقل (حتى ما يتلخبط البحث أثناء حركة التبديل)
     var queryChats by remember { mutableStateOf("") }
-    var queryGroups by remember { mutableStateOf("") }
-    // نتيجة البحث عن مجموعة (باليوزر) من كل المجموعات، مو بس مجموعاتي
-    var remoteGroup by remember { mutableStateOf<GroupPreview?>(null) }
-    var remoteSearching by remember { mutableStateOf(false) }
-    var joiningId by remember { mutableStateOf<String?>(null) }
-    val homeScope = rememberCoroutineScope()
-    LaunchedEffect(queryGroups) {
-        val h = queryGroups.trim().removePrefix("@").lowercase()
-        remoteGroup = null
-        if (!Repo.isValidUsername(h)) { remoteSearching = false; return@LaunchedEffect }
-        remoteSearching = true
-        kotlinx.coroutines.delay(400)
-        remoteGroup = try { Repo.findGroupByHandle(h) } catch (e: CancellationException) { throw e } catch (e: Exception) { null }
-        remoteSearching = false
-    }
     // قصص كل المستخدمين (مع قصتي أولاً)
     val stories by remember { Repo.activeStoriesFlow() }.collectAsState(initial = emptyList())
     var viewIndex by remember { mutableStateOf<Int?>(null) }
@@ -169,7 +154,6 @@ fun HomeTab(
         if (!clearedReady) emptyList() else chats.filter { it.req && it.lastAt > (cleared[it.uid] ?: 0L) }
     }
 
-    val groups by remember(myUid) { Repo.groupsFlow(myUid) }.collectAsState(initial = emptyList())
 
     // الدعم الفني: محادثتي مع "ChatApp" (إذا راسلت أو وصلني رد)، وللمطور صندوق دعم بكل المستخدمين
     val isDev = rememberIsDev()
@@ -200,7 +184,7 @@ fun HomeTab(
                                 (slideOutVertically(tween(160)) { -it / 2 } + fadeOut(tween(120)))
                         },
                         label = "homeTitle"
-                    ) { m -> Text(when (m) { 1 -> "المجموعات"; 2 -> "طلبات الرسائل"; else -> "المحادثات" }) }
+                    ) { m -> Text(when (m) { 1 -> "طلبات الرسائل"; else -> "المحادثات" }) }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 actions = { TextButton(onClick = onRequestLogout) { Text("تسجيل الخروج") } }
@@ -229,11 +213,8 @@ fun HomeTab(
                     transitionSpec = { spring(dampingRatio = 0.78f, stiffness = 240f) },
                     label = "homeFlip"
                 ) { st -> if (st == EnterExitState.Visible) 0f else side }
-                val query = if (mode == 1) queryGroups else queryChats
+                val query = queryChats
                 val q = query.trim().removePrefix("@").lowercase()
-                val shownGroups = if (q.isEmpty()) groups else groups.filter {
-                    it.name.lowercase().contains(q) || it.handle.lowercase().contains(q)
-                }
                 val results = if (q.isEmpty()) emptyList() else users.filter {
                     it.uid != myUid && (it.name.lowercase().contains(q) || it.username.lowercase().contains(q))
                 }
@@ -248,10 +229,7 @@ fun HomeTab(
                         scaleY = sc
                     }
                 ) {
-            if (mode != 2) SearchField(
-                query,
-                if (mode == 1) "ابحث عن مجموعة" else "ابحث بالاسم أو اليوزر"
-            ) { if (mode == 1) queryGroups = it else queryChats = it }
+            if (mode != 1) SearchField(query, "ابحث بالاسم أو اليوزر") { queryChats = it }
             if (q.isEmpty() && mode == 0) {
                 StoriesRow(stories, myUid) { i ->
                     storySnapshot = stories
@@ -261,7 +239,7 @@ fun HomeTab(
 
             when {
                 // واجهة طلبات الرسائل: أول رسائل الأشخاص الجدد (ضغطة تفتح الطلب وفيه قبول/حذف)
-                mode == 2 -> if (requests.isEmpty()) {
+                mode == 1 -> if (requests.isEmpty()) {
                     CenterText("ما عندك طلبات رسائل.\nإذا شغّلت \"طلبات الرسائل\" من الإعدادات > الخصوصية، رسائل الأشخاص الجدد تجيك هنا.")
                 } else {
                     LazyColumn(contentPadding = PaddingValues(bottom = 130.dp)) {
@@ -288,50 +266,6 @@ fun HomeTab(
                                 onClick = { p -> onOpenChat(toItem(p)) },
                                 onAvatarClick = { p -> onOpenProfile(toItem(p)) }
                             )
-                        }
-                    }
-                }
-                // واجهة المجموعات: مجموعاتي الحقيقية (من قاعدة البيانات)
-                mode == 1 -> {
-                    // المجموعة الي لقيتها باليوزر (إذا مو من مجموعاتي أصلاً)
-                    val remote = remoteGroup?.takeIf { r -> groups.none { it.id == r.id } }
-                    if (shownGroups.isEmpty() && remote == null) {
-                        CenterText(
-                            when {
-                                q.isEmpty() -> "ما عندك مجموعات بعد.\nاضغط زر إنشاء مجموعة حتى تبدأ أول مجموعة."
-                                remoteSearching -> "جاري البحث..."
-                                else -> "ما لقيت مجموعة بهذا الاسم أو اليوزر"
-                            }
-                        )
-                    } else {
-                        LazyColumn(contentPadding = PaddingValues(bottom = 130.dp)) {
-                            items(shownGroups, key = { it.id }) { g ->
-                                GroupRow(g, onClick = { onOpenGroup(g) })
-                            }
-                            if (remote != null) {
-                                item(key = "remote_" + remote.id) {
-                                    RemoteGroupRow(
-                                        r = remote,
-                                        joining = joiningId == remote.id,
-                                        onJoin = {
-                                            joiningId = remote.id
-                                            homeScope.launch {
-                                                try {
-                                                    Repo.joinGroup(remote.id)
-                                                    AppToast.show("انضممت للمجموعة")
-                                                    onOpenGroup(GroupItem(remote.id, remote.name, remote.handle, remote.bio, remote.avatar, "", 1, 0L))
-                                                } catch (e: CancellationException) {
-                                                    throw e
-                                                } catch (e: Exception) {
-                                                    AppToast.show(e.message?.takeIf { it.isNotBlank() } ?: "ما قدرت أنضم، جرّب مرة ثانية")
-                                                } finally {
-                                                    joiningId = null
-                                                }
-                                            }
-                                        }
-                                    )
-                                }
-                            }
                         }
                     }
                 }
@@ -439,6 +373,93 @@ fun HomeTab(
             }
         }
     }
+    }
+}
+
+/**
+ * تبويب BDF = المجموعات: مجموعاتي الحقيقية + بحث عن مجموعة (بالاسم أو اليوزر) + انضمام للمجموعات العامة.
+ * (زر إنشاء مجموعة ونافذته يرسمهم MainScreen فوق هذا التبويب)
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GroupsTab(onOpenGroup: (GroupItem) -> Unit, onRequestLogout: () -> Unit) {
+    val myUid = remember { Repo.auth.currentUser?.uid ?: "" }
+    val groups by remember(myUid) { Repo.groupsFlow(myUid) }.collectAsState(initial = emptyList())
+    var queryGroups by remember { mutableStateOf("") }
+    // نتيجة البحث عن مجموعة (باليوزر) من كل المجموعات، مو بس مجموعاتي
+    var remoteGroup by remember { mutableStateOf<GroupPreview?>(null) }
+    var remoteSearching by remember { mutableStateOf(false) }
+    var joiningId by remember { mutableStateOf<String?>(null) }
+    val homeScope = rememberCoroutineScope()
+    LaunchedEffect(queryGroups) {
+        val h = queryGroups.trim().removePrefix("@").lowercase()
+        remoteGroup = null
+        if (!Repo.isValidUsername(h)) { remoteSearching = false; return@LaunchedEffect }
+        remoteSearching = true
+        kotlinx.coroutines.delay(400)
+        remoteGroup = try { Repo.findGroupByHandle(h) } catch (e: CancellationException) { throw e } catch (e: Exception) { null }
+        remoteSearching = false
+    }
+    val q = queryGroups.trim().removePrefix("@").lowercase()
+    val shownGroups = if (q.isEmpty()) groups else groups.filter {
+        it.name.lowercase().contains(q) || it.handle.lowercase().contains(q)
+    }
+    Scaffold(
+        containerColor = Color.Transparent,
+        topBar = {
+            TopAppBar(
+                title = { Text("المجموعات") },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                actions = { TextButton(onClick = onRequestLogout) { Text("تسجيل الخروج") } }
+            )
+        }
+    ) { padding ->
+        Column(Modifier.padding(padding).fillMaxSize()) {
+            SearchField(queryGroups, "ابحث عن مجموعة") { queryGroups = it }
+            run {
+                    // المجموعة الي لقيتها باليوزر (إذا مو من مجموعاتي أصلاً)
+                    val remote = remoteGroup?.takeIf { r -> groups.none { it.id == r.id } }
+                    if (shownGroups.isEmpty() && remote == null) {
+                        CenterText(
+                            when {
+                                q.isEmpty() -> "ما عندك مجموعات بعد.\nاضغط زر إنشاء مجموعة حتى تبدأ أول مجموعة."
+                                remoteSearching -> "جاري البحث..."
+                                else -> "ما لقيت مجموعة بهذا الاسم أو اليوزر"
+                            }
+                        )
+                    } else {
+                        LazyColumn(contentPadding = PaddingValues(bottom = 130.dp)) {
+                            items(shownGroups, key = { it.id }) { g ->
+                                GroupRow(g, onClick = { onOpenGroup(g) })
+                            }
+                            if (remote != null) {
+                                item(key = "remote_" + remote.id) {
+                                    RemoteGroupRow(
+                                        r = remote,
+                                        joining = joiningId == remote.id,
+                                        onJoin = {
+                                            joiningId = remote.id
+                                            homeScope.launch {
+                                                try {
+                                                    Repo.joinGroup(remote.id)
+                                                    AppToast.show("انضممت للمجموعة")
+                                                    onOpenGroup(GroupItem(remote.id, remote.name, remote.handle, remote.bio, remote.avatar, "", 1, 0L))
+                                                } catch (e: CancellationException) {
+                                                    throw e
+                                                } catch (e: Exception) {
+                                                    AppToast.show(e.message?.takeIf { it.isNotBlank() } ?: "ما قدرت أنضم، جرّب مرة ثانية")
+                                                } finally {
+                                                    joiningId = null
+                                                }
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                            }
+        }
     }
 }
 
