@@ -22,7 +22,7 @@ import com.chatapp.messenger.ui.theme.appBackground
 
 /** ألوان كل تبويب: Home / BDF / Account. تتبدل بسلاسة عند التنقل */
 private val TabBlobs get() = listOf(
-    listOf(AccentBlue, Color(0xFF7A5CFF), Color(0xFF2EE6A8)), // Home
+    listOf(Color(0xFF1E4FD8), Color(0xFF2B6CB0), Color(0xFF3B4FA8)), // Home (درجات أزرق هادئة)
     listOf(Color(0xFFFF5C8A), Color(0xFFFFB347), Color(0xFF8A5CFF)), // BDF
     listOf(Color(0xFF2EE6A8), AccentBlue, Color(0xFFFFD166))  // Account
 )
@@ -44,7 +44,7 @@ fun AnimatedAppBackground(tab: Int, modifier: Modifier = Modifier) {
         infiniteRepeatable(tween(18000, easing = LinearEasing), RepeatMode.Reverse),
         label = "phase"
     )
-    val a = if (dark) 0.42f else 0.50f
+    val a = (if (dark) 0.42f else 0.50f) * (if (tab == 0) 0.8f else 1f)
 
     Box(
         modifier.background(appBackground()).drawBehind {
