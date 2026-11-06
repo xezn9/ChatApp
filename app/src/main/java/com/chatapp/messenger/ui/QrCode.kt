@@ -60,6 +60,13 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.runtime.mutableFloatStateOf
@@ -264,6 +271,23 @@ private object QrStyle {
 
     fun loadImgMode(ctx: Context): Int = sp(ctx).getInt("imgMode", 0).coerceIn(0, 1)
     fun saveImgMode(ctx: Context, m: Int) { sp(ctx).edit().putInt("imgMode", m).apply() }
+
+    // ───── ملصقات خلف الباركود (حتى 2) + مواضع السحب ─────
+    fun loadStickers(ctx: Context): List<String> =
+        (sp(ctx).getString("stickers", "") ?: "").split(",").filter { it.startsWith("s:") }.take(2)
+    fun saveStickers(ctx: Context, l: List<String>) { sp(ctx).edit().putString("stickers", l.joinToString(",")).apply() }
+
+    fun loadDrag(ctx: Context): Map<Int, Offset> =
+        (sp(ctx).getString("stDrag", "") ?: "").split(";").mapNotNull { e ->
+            val p = e.split(":")
+            val i = p.getOrNull(0)?.toIntOrNull()
+            val x = p.getOrNull(1)?.toFloatOrNull()
+            val y = p.getOrNull(2)?.toFloatOrNull()
+            if (i != null && x != null && y != null) i to Offset(x, y) else null
+        }.toMap()
+    fun saveDrag(ctx: Context, m: Map<Int, Offset>) {
+        sp(ctx).edit().putString("stDrag", m.entries.joinToString(";") { "${it.key}:${it.value.x}:${it.value.y}" }).apply()
+    }
 }
 
 /* ───────────────────────── خط الأسماء (ينزل مرة وحدة وينحفظ) ───────────────────────── */
@@ -930,12 +954,189 @@ private fun ShapeTab(fontFam: FontFamily, ui: ShapeUi) {
     }
 }
 
+/* ───────────────────────── ملصقات (رموز الاسم) خلف الباركود ───────────────────────── */
+
+private val StickerFaceIcon: androidx.compose.ui.graphics.vector.ImageVector by lazy {
+    androidx.compose.ui.graphics.vector.ImageVector.Builder("StickerFace", 24.dp, 24.dp, 24f, 24f).addPath(
+        pathData = androidx.compose.ui.graphics.vector.PathParser().parsePathString(
+            "M11.99,2C6.47,2 2,6.48 2,12s4.47,10 9.99,10C17.52,22 22,17.52 22,12S17.52,2 11.99,2zM12,20c-4.42,0 -8,-3.58 -8,-8s3.58,-8 8,-8 8,3.58 8,8 -3.58,8 -8,8zM15.5,11c0.83,0 1.5,-0.67 1.5,-1.5S16.33,8 15.5,8 14,8.67 14,9.5s0.67,1.5 1.5,1.5zM8.5,11c0.83,0 1.5,-0.67 1.5,-1.5S9.33,8 8.5,8 7,8.67 7,9.5 7.67,11 8.5,11zM12,17.5c2.33,0 4.31,-1.46 5.11,-3.5H6.89c0.8,2.04 2.78,3.5 5.11,3.5z"
+        ).toNodes(),
+        fill = androidx.compose.ui.graphics.SolidColor(Color.Black)
+    ).build()
+}
+
+/** مواصفات ملصق واحد من حقل الملصقات: موضع أساسي (نسبة من الشاشة) + حجم + مدى التعويم + طور الحركة */
+private class StickerSpec(val fx: Float, val fy: Float, val dp: Float, val amp: Float, val k: Int, val ph: Float, val ph2: Float, val rot: Float)
+
+private val stickerSpecs: List<StickerSpec> by lazy {
+    val rnd = Random(5)
+    val cols = 4
+    val rows = 6
+    buildList {
+        for (r in 0 until rows) for (c in 0 until cols) {
+            add(
+                StickerSpec(
+                    fx = ((c + 0.5f + (rnd.nextFloat() - 0.5f) * 0.7f) / cols).coerceIn(0.03f, 0.97f),
+                    fy = ((r + 0.5f + (rnd.nextFloat() - 0.5f) * 0.7f) / rows).coerceIn(0.03f, 0.97f),
+                    dp = 28f + rnd.nextFloat() * 42f, amp = 5f + rnd.nextFloat() * 11f, k = 1 + rnd.nextInt(2),
+                    ph = rnd.nextFloat(), ph2 = rnd.nextFloat(), rot = 8f + rnd.nextFloat() * 12f
+                )
+            )
+        }
+    }
+}
+
+/** مركز الملصق الحالي (بكسل): موضعه الأساسي + سحب المستخدم + تعويم دائم */
+private fun stickerCenter(sp: StickerSpec, t: Float, w: Float, h: Float, drag: Offset?, density: Float): Offset {
+    val a = sp.amp * density
+    val ang = 2f * PI.toFloat() * (sp.k * t + sp.ph)
+    return Offset(
+        sp.fx * w + (drag?.x ?: 0f) * w + sin(ang) * a,
+        sp.fy * h + (drag?.y ?: 0f) * h + cos(ang) * a
+    )
+}
+
+/** طبقة الملصقات خلف الباركود: تتحرك دائماً، وتنسحب باليد (السحب يعالجه الصندوق الأب) */
+@Composable
+private fun StickerField(
+    ids: List<String>, t: androidx.compose.runtime.State<Float>, drag: Map<Int, Offset>,
+    dragging: Int, field: androidx.compose.runtime.MutableState<IntSize>
+) {
+    if (ids.isEmpty()) return
+    val dens = androidx.compose.ui.platform.LocalDensity.current.density
+    Box(Modifier.fillMaxSize().onSizeChanged { field.value = it }) {
+        stickerSpecs.forEachIndexed { i, sp ->
+            val id = ids[i % ids.size]
+            val sz = sp.dp.dp
+            Box(
+                Modifier.size(sz).graphicsLayer {
+                    val f = field.value
+                    val c = stickerCenter(sp, t.value, f.width.toFloat(), f.height.toFloat(), drag[i], dens)
+                    translationX = c.x - size.width / 2f
+                    translationY = c.y - size.height / 2f
+                    rotationZ = sin(2f * PI.toFloat() * (t.value + sp.ph2)) * sp.rot
+                    val s = if (dragging == i) 1.18f else 1f
+                    scaleX = s; scaleY = s
+                }
+            ) { StickerBadgeView(id, sz) }
+        }
+    }
+}
+
+/** أول إطار من ملصق (للصورة المشاركة) */
+private class StickerFrame(val img: ImageBitmap, val off: IntOffset, val size: IntSize)
+
+private suspend fun loadStickerFrame(ctx: Context, id: String): StickerFrame? {
+    val parts = id.split(':')
+    if (parts.size != 3) return null
+    StickerRegistry.ensure(ctx)
+    val pack = StickerPacks.firstOrNull { it.id == parts[1] } ?: return null
+    val name = parts[2]
+    val res = if (isLottieSticker(pack, name)) StickerStore.lottieSheet(ctx, pack, name)
+    else {
+        val file = StickerRegistry.fileOf(pack.id, name) ?: return null
+        StickerStore.loadSheet(ctx, pack, file, name)
+    }
+    val (img, n) = res ?: return null
+    if (n <= 1) return StickerFrame(img, IntOffset.Zero, IntSize(img.width, img.height))
+    val px = img.width / minOf(6, n)
+    return StickerFrame(img, IntOffset.Zero, IntSize(px, px))
+}
+
+/** لوحة اختيار الملصقات: حتى نوعين، تضغط ملصق لإضافته/إزالته */
+@Composable
+private fun StickerSheet(
+    bd: com.kyant.backdrop.Backdrop, fontFam: FontFamily, selected: List<String>,
+    onPick: (String) -> Unit, onClear: () -> Unit, onDone: () -> Unit
+) {
+    val ctx = LocalContext.current
+    LaunchedEffect(Unit) { StickerStore.prewarm(ctx) }
+    StickerRegistry.ensure(ctx)
+    val packs = StickerPacks
+    var packId by remember { mutableStateOf(packs.firstOrNull()?.id ?: "") }
+    val pack = packs.firstOrNull { it.id == packId } ?: packs.firstOrNull()
+
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        repeat(2) { i ->
+            val id = selected.getOrNull(i)
+            Box(
+                Modifier.padding(end = 8.dp).size(46.dp).clip(RoundedCornerShape(15.dp))
+                    .background(Color.White.copy(0.12f))
+                    .border(1.dp, Color.White.copy(if (id != null) 0.8f else 0.25f), RoundedCornerShape(15.dp))
+                    .then(if (id != null) Modifier.clickable { onPick(id) } else Modifier),
+                contentAlignment = Alignment.Center
+            ) {
+                if (id != null) StickerBadgeView(id, 34.dp)
+                else Text("${i + 1}", color = Color.White.copy(0.4f), fontSize = 16.sp, fontFamily = fontFam, fontWeight = FontWeight.Bold)
+            }
+        }
+        if (selected.isNotEmpty()) {
+            Text(
+                "مسح", color = Color.White.copy(0.85f), fontSize = 13.sp, fontFamily = fontFam, fontWeight = FontWeight.Bold,
+                modifier = Modifier.clip(CircleShape).clickable { onClear() }.padding(horizontal = 10.dp, vertical = 8.dp)
+            )
+        }
+        Spacer(Modifier.weight(1f))
+        GlassButton(onClick = onDone, backdrop = bd, pressScale = 1.1f, modifier = Modifier.height(40.dp).width(72.dp)) {
+            Text("تم", color = Color.White, fontSize = 14.sp, fontFamily = fontFam, fontWeight = FontWeight.Bold)
+        }
+    }
+    Text(
+        "اختر ملصق أو ملصقين، وحرّكهم بإصبعك خلف الباركود", color = Color.White.copy(0.6f), fontSize = 11.5.sp, fontFamily = fontFam,
+        modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp)
+    )
+    if (packs.isEmpty() || pack == null) {
+        Text("ما كو ملصقات", color = Color.White.copy(0.7f), fontFamily = fontFam, modifier = Modifier.padding(18.dp))
+        return
+    }
+    LazyRow(
+        Modifier.fillMaxWidth(),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(packs.size) { i ->
+            val p = packs[i]
+            ShapeChip(StickerRegistry.titleOf(p), p.id == pack.id, fontFam) { packId = p.id }
+        }
+    }
+    Spacer(Modifier.height(10.dp))
+    val files = remember(pack.id) { StickerStore.files(ctx, pack) }
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(58.dp),
+        modifier = Modifier.fillMaxWidth().height(190.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(files.size) { i ->
+            val id = StickerStore.idOf(pack, files[i])
+            val idx = selected.indexOf(id)
+            val shape = RoundedCornerShape(16.dp)
+            Box(
+                Modifier.size(56.dp).springClickable(1.08f) { onPick(id) }.clip(shape)
+                    .background(Color.White.copy(0.10f))
+                    .border(if (idx >= 0) 2.dp else 0.8.dp, Color.White.copy(if (idx >= 0) 0.95f else 0.2f), shape),
+                contentAlignment = Alignment.Center
+            ) {
+                StickerBadgeView(id, 42.dp)
+                if (idx >= 0) {
+                    Box(
+                        Modifier.align(Alignment.TopStart).padding(3.dp).size(18.dp).clip(CircleShape).background(Color.White),
+                        contentAlignment = Alignment.Center
+                    ) { Text("${idx + 1}", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                }
+            }
+        }
+    }
+}
+
 /* ───────────────────────── صورة المشاركة ───────────────────────── */
 
 /** يرسم بطاقة الباركود كاملة كصورة PNG (نفس شكل الشاشة) */
 private fun renderShareImage(
     ctx: Context, matrix: Array<BooleanArray>, theme: QrTheme, bgKey: String, bgImg: ImageBitmap?,
-    avatar: ImageBitmap?, name: String, username: String, shape: QrShape = QrShape()
+    avatar: ImageBitmap?, name: String, username: String, shape: QrShape = QrShape(),
+    stickers: List<StickerFrame> = emptyList(), stDrag: Map<Int, Offset> = emptyMap()
 ): File? = runCatching {
     val w = 1080
     val h = 1700
@@ -946,6 +1147,27 @@ private fun renderShareImage(
     CanvasDrawScope().draw(Density(1f), LayoutDirection.Ltr, GCanvas(img), Size(w.toFloat(), h.toFloat())) {
         drawQrBackground(theme, theme, 1f, Offset.Zero)
         drawQrDecor(bgKey, bgImg)
+
+        // الملصقات خلف البطاقة (إطار ثابت لكل ملصق)
+        if (stickers.isNotEmpty()) {
+            val k = w / 390f
+            stickerSpecs.forEachIndexed { i, sp ->
+                val fr = stickers[i % stickers.size]
+                val d = stDrag[i]
+                val c = Offset((sp.fx + (d?.x ?: 0f)) * w, (sp.fy + (d?.y ?: 0f)) * h)
+                val box = sp.dp * k
+                val sc = minOf(box / fr.size.width, box / fr.size.height)
+                val dw = (fr.size.width * sc).roundToInt().coerceAtLeast(1)
+                val dh = (fr.size.height * sc).roundToInt().coerceAtLeast(1)
+                rotate(sin(2f * PI.toFloat() * sp.ph2) * sp.rot, pivot = c) {
+                    drawImage(
+                        fr.img, srcOffset = fr.off, srcSize = fr.size,
+                        dstOffset = IntOffset((c.x - dw / 2f).roundToInt(), (c.y - dh / 2f).roundToInt()), dstSize = IntSize(dw, dh),
+                        filterQuality = FilterQuality.Medium
+                    )
+                }
+            }
+        }
 
         val cardW = 820f
         val cardX = (w - cardW) / 2
@@ -1024,7 +1246,7 @@ private fun renderShareImage(
 
 /* ───────────────────────── الشاشة (الكرة الزجاجية) ───────────────────────── */
 
-private enum class QrSheet { None, Brush, Share }
+private enum class QrSheet { None, Brush, Share, Stickers }
 
 /** ضغطة بنابض (نفس إحساس GlassButton) */
 @Composable
@@ -1087,6 +1309,12 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
     var imgMode by remember { mutableIntStateOf(QrStyle.loadImgMode(ctx)) }
     var customShapes by remember { mutableStateOf(QrStyle.customShapes(ctx)) }
     var cropSrc by remember { mutableStateOf<Bitmap?>(null) }
+    var stickerIds by remember { mutableStateOf(QrStyle.loadStickers(ctx)) }
+    val stDrag = remember { mutableStateMapOf<Int, Offset>().apply { putAll(QrStyle.loadDrag(ctx)) } }
+    var stDragging by remember { mutableIntStateOf(-1) }
+    val stField = remember { mutableStateOf(IntSize.Zero) }
+    val blockedCoords = remember { mutableMapOf<String, LayoutCoordinates>() }
+    fun Modifier.blockSt(key: String): Modifier = this.onGloballyPositioned { blockedCoords[key] = it }
     var sheet by remember { mutableStateOf(QrSheet.None) }
     var lastSheet by remember { mutableStateOf(QrSheet.Brush) }
     if (sheet != QrSheet.None) lastSheet = sheet
@@ -1159,7 +1387,7 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
     val ePlate = remember { Animatable(0f) }
     val qrWave = remember { Animatable(0f) }
     val eHint = remember { Animatable(0f) }
-    val eBtn = remember { List(3) { Animatable(0f) } }
+    val eBtn = remember { List(4) { Animatable(0f) } }
     LaunchedEffect(Unit) {
         launch { eBadge.animateTo(1f, spring(0.52f, 170f)) }
         launch { delay(260); eAvatar.animateTo(1f, spring(0.45f, Spring.StiffnessLow)) }
@@ -1185,15 +1413,51 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
     val drift by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(16000, easing = LinearEasing), RepeatMode.Restart), label = "drift")
     val bob by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(3000, easing = LinearEasing), RepeatMode.Restart), label = "bob")
     val glint by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(5200, easing = LinearEasing), RepeatMode.Restart), label = "glint")
+    val stT = inf.animateFloat(0f, 1f, infiniteRepeatable(tween(22000, easing = LinearEasing), RepeatMode.Restart), label = "stT")
     val ringAngle by inf.animateFloat(0f, 360f, infiniteRepeatable(tween(7000, easing = LinearEasing), RepeatMode.Restart), label = "ring")
 
     val hl = remember(scope) { InteractiveHighlight(animationScope = scope) }
     val badgeHl = remember(scope) { InteractiveHighlight(animationScope = scope) }
 
-    Box(Modifier.fillMaxSize()) {
-        // الخلفية + كتل ضوء عايمة
+    Box(
+        Modifier.fillMaxSize().pointerInput(stickerIds) {
+            if (stickerIds.isEmpty()) return@pointerInput
+            // سحب الملصقات: نلتقط اللمسة أولاً (Initial) إذا نزلت على ملصق وبمكان ما فيه عنصر تفاعلي
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                val f = stField.value
+                if (f.width == 0 || f.height == 0) return@awaitEachGesture
+                val p = down.position
+                val rootP = p + bgPos
+                if (blockedCoords.values.any { it.isAttached && it.boundsInRoot().contains(rootP) }) return@awaitEachGesture
+                var hit = -1
+                for (i in stickerSpecs.indices.reversed()) {
+                    val sp = stickerSpecs[i]
+                    val c = stickerCenter(sp, stT.value, f.width.toFloat(), f.height.toFloat(), stDrag[i], density)
+                    if (hypot(p.x - c.x, p.y - c.y) <= sp.dp * density * 0.6f) { hit = i; break }
+                }
+                if (hit < 0) return@awaitEachGesture
+                down.consume()
+                stDragging = hit
+                var cur = stDrag[hit] ?: Offset.Zero
+                while (true) {
+                    val ev = awaitPointerEvent(PointerEventPass.Initial)
+                    val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                    if (!ch.pressed) { ch.consume(); break }
+                    val d = ch.positionChange()
+                    cur += Offset(d.x / f.width, d.y / f.height)
+                    stDrag[hit] = cur
+                    ch.consume()
+                }
+                stDragging = -1
+                QrStyle.saveDrag(ctx, stDrag)
+            }
+        }
+    ) {
+        // الخلفية + كتل ضوء عايمة (+ الملصقات) كلها داخل الـ backdrop حتى الزجاج يكسرها
+        Box(Modifier.fillMaxSize().layerBackdrop(bd)) {
         Canvas(
-            Modifier.fillMaxSize().layerBackdrop(bd).onGloballyPositioned {
+            Modifier.fillMaxSize().onGloballyPositioned {
                 bgPos = it.positionInRoot()
                 bgSize = Size(it.size.width.toFloat(), it.size.height.toFloat())
             }
@@ -1208,6 +1472,8 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
             blob(w * (0.22f + 0.14f * sin(tt)), h * (0.30f + 0.06f * cos(tt)), w * 0.60f, lerp(fto.bgTop, Color.White, 0.55f).copy(alpha = 0.60f))
             blob(w * (0.82f + 0.10f * cos(tt)), h * (0.52f + 0.08f * sin(tt)), w * 0.62f, lerp(fto.qrTop, Color.White, 0.25f).copy(alpha = 0.55f))
             blob(w * (0.45f + 0.16f * sin(tt + 2f)), h * (0.84f + 0.05f * cos(tt)), w * 0.55f, lerp(fto.bgTop, Color.White, 0.30f).copy(alpha = 0.45f))
+        }
+        StickerField(stickerIds, stT, stDrag, stDragging, stField)
         }
 
         Box(
@@ -1225,6 +1491,7 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                 // ───── الباج: صورة + اسم + يوزر بكبسولة زجاجية وحدها ─────
                 Box(
                     Modifier
+                        .blockSt("badge")
                         .graphicsLayer {
                             val e = eBadge.value
                             val p = badgeHl.pressProgress
@@ -1405,7 +1672,7 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
 
                         // الكرة الزجاجية: تنفجر من القطرة بارتداد جيلي، وشكلها يتنفس، وتميل مع إصبعك
                         Box(
-                            Modifier.size(d)
+                            Modifier.size(d).blockSt("orb")
                                 .graphicsLayer {
                                     val e = eOrb.value
                                     val p = hl.pressProgress
@@ -1525,12 +1792,13 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                 Spacer(Modifier.height(16.dp))
 
                 // ───── فقاعات زجاجية تطفو ─────
-                Row(horizontalArrangement = Arrangement.spacedBy(30.dp), verticalAlignment = Alignment.Top) {
+                Row(Modifier.blockSt("btns"), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.Top) {
                     OrbAction(AppIcons.PaintBrush, "التصميم", bd, fontFam, eBtn[0].value, bob, 0f) { sheet = QrSheet.Brush }
-                    OrbAction(AppIcons.Share, "مشاركة", bd, fontFam, eBtn[1].value, bob, 0.33f) { sheet = QrSheet.Share }
+                    OrbAction(StickerFaceIcon, "ملصقات", bd, fontFam, eBtn[1].value, bob, 0.25f) { sheet = QrSheet.Stickers }
+                    OrbAction(AppIcons.Share, "مشاركة", bd, fontFam, eBtn[2].value, bob, 0.5f) { sheet = QrSheet.Share }
                     OrbAction(
                         if (copied) Icons.Filled.Check else AppIcons.CopyIcon, if (copied) "اننسخ" else "نسخ", bd, fontFam,
-                        eBtn[2].value, bob, 0.66f, tint = if (copied) accent else Color.Unspecified
+                        eBtn[3].value, bob, 0.75f, tint = if (copied) accent else Color.Unspecified
                     ) {
                         val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         cm.setPrimaryClip(ClipData.newPlainText("link", link))
@@ -1548,7 +1816,7 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                 exit = slideOutVertically(tween(220)) { it } + fadeOut(tween(160))
             ) {
                 Column(
-                    Modifier.fillMaxWidth()
+                    Modifier.fillMaxWidth().blockSt("sheet")
                         .drawBackdrop(
                             backdrop = bd,
                             shape = { sheetShape },
@@ -1598,6 +1866,18 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                             },
                             onDone = { sheet = QrSheet.None }
                         )
+                    } else if (lastSheet == QrSheet.Stickers) {
+                        StickerSheet(
+                            bd = bd, fontFam = fontFam, selected = stickerIds,
+                            onPick = { id ->
+                                val cur = stickerIds
+                                val n = if (id in cur) cur - id else if (cur.size < 2) cur + id else listOf(cur[1], id)
+                                stickerIds = n
+                                QrStyle.saveStickers(ctx, n)
+                            },
+                            onClear = { stickerIds = emptyList(); QrStyle.saveStickers(ctx, emptyList()) },
+                            onDone = { sheet = QrSheet.None }
+                        )
                     } else {
                         ShareSheet(
                             fontFam = fontFam, busy = busyImage,
@@ -1613,8 +1893,10 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
                                 if (busyImage) return@ShareSheet
                                 busyImage = true
                                 scope.launch {
+                                    val frames = stickerIds.mapNotNull { loadStickerFrame(ctx, it) }
+                                    val dragCopy = stDrag.toMap()
                                     val f = withContext(Dispatchers.Default) {
-                                        renderShareImage(ctx, mx, themeAt(toIdx), bgKey, bgImage, avatarImg, name, username, qrShape)
+                                        renderShareImage(ctx, mx, themeAt(toIdx), bgKey, bgImage, avatarImg, name, username, qrShape, frames, dragCopy)
                                     }
                                     busyImage = false
                                     if (f == null) { AppToast.show("ما گدرت أجهز الصورة"); return@launch }
@@ -1644,7 +1926,7 @@ fun QrCodeScreen(name: String, username: String, avatar: String = "", onDismiss:
 
             GlassButton(
                 onClick = onDismiss, backdrop = bd, pressScale = 1.15f,
-                modifier = Modifier.align(Alignment.TopStart).padding(start = 14.dp, top = 10.dp).zIndex(10f).size(48.dp)
+                modifier = Modifier.align(Alignment.TopStart).padding(start = 14.dp, top = 10.dp).zIndex(10f).size(48.dp).blockSt("close")
             ) {
                 Icon(Icons.Filled.Close, null, tint = Color.White, modifier = Modifier.size(22.dp))
             }
