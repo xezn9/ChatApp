@@ -1,6 +1,12 @@
 package com.chatapp.messenger.ui
 
 import androidx.compose.foundation.Image
+import com.chatapp.messenger.ui.theme.GlassFx
+import com.chatapp.messenger.ui.theme.glassSurfaceLayer
+import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.effects.lens
+import com.kyant.backdrop.effects.vibrancy
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -222,12 +228,12 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
                             Column(
                                 Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
                                     .enterFx(enter[0])
-                                    .glassSurface(backdrop, dark, heroShape, blurDp = 12f)
+                                    .clearGlass(backdrop, dark, heroShape, blurDp = 3f, refractH = 20f, refractA = 40f)
                                     .clip(heroShape)
                                     .drawBehind {
                                         drawRect(
                                             Brush.radialGradient(
-                                                listOf(AccentBlue.copy(alpha = 0.30f), Color.Transparent),
+                                                listOf(AccentBlue.copy(alpha = 0.22f), Color.Transparent),
                                                 center = Offset(size.width / 2f, 120.dp.toPx()),
                                                 radius = size.width * 0.75f
                                             )
@@ -252,28 +258,32 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
                                     Text(g.item.bio, color = fg.copy(alpha = 0.78f), fontSize = 14.sp, textAlign = TextAlign.Center)
                                 }
                                 Spacer(Modifier.height(16.dp))
+                                val ownerUid = g.item.owner
+                                val ownerProf by remember(ownerUid) { Repo.basicProfileFlow(ownerUid) }.collectAsState(initial = Profile())
+                                val pub = g.settings.publicJoin && g.item.handle.isNotBlank()
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    StatPill("${g.item.memberCount} عضو", AccentBlue, fg) {
+                                    StatPill(backdrop, dark, "${g.item.memberCount} عضو", fg, null) {
                                         Icon(AppIcons.Group, null, tint = AccentBlue, modifier = Modifier.size(15.dp))
                                     }
-                                    val roleText = when {
-                                        a.isOwner -> "المالك"
-                                        a.isAdmin -> "مشرف"
-                                        a.isRestricted -> "مقيّد"
-                                        else -> "عضو"
-                                    }
-                                    val roleColor = when {
-                                        a.isOwner -> Color(0xFFFFB020)
-                                        a.isAdmin -> AccentBlue
-                                        a.isRestricted -> DangerColor
-                                        else -> fg.copy(alpha = 0.7f)
-                                    }
-                                    StatPill(roleText, roleColor, fg) { Text(if (a.isOwner) "👑" else if (a.isAdmin) "🛡️" else if (a.isRestricted) "🚫" else "👤", fontSize = 12.sp) }
-                                    val pub = g.settings.publicJoin && g.item.handle.isNotBlank()
-                                    StatPill(if (pub) "عامة" else "خاصة", if (pub) Color(0xFF34C759) else fg.copy(alpha = 0.7f), fg) {
+                                    // زر المالك: أي شخص يضغط عليه يفتح حساب مالك المجموعة
+                                    StatPill(
+                                        backdrop, dark, "المالك", fg,
+                                        { onOpenProfile(UserItem(ownerUid, ownerProf.name, "", ownerProf.username)) }
+                                    ) { Text("👑", fontSize = 12.sp) }
+                                    StatPill(backdrop, dark, if (pub) "عامة" else "خاصة", fg, null) {
                                         Icon(if (pub) AppIcons.Public else AppIcons.Lock, null, tint = if (pub) Color(0xFF34C759) else fg.copy(alpha = 0.7f), modifier = Modifier.size(15.dp))
                                     }
                                 }
+                                Spacer(Modifier.height(10.dp))
+                                Text(
+                                    when {
+                                        a.isOwner -> "أنت المالك"
+                                        a.isAdmin -> "أنت مشرف"
+                                        a.isRestricted -> "أنت مقيّد"
+                                        else -> "أنت عضو"
+                                    },
+                                    color = fg.copy(alpha = 0.55f), fontSize = 12.sp
+                                )
                             }
                         }
 
@@ -285,9 +295,9 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
                                     Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).enterFx(enter[1]),
                                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    if (a.canChangeInfo) QuickTile(Modifier.weight(1f), backdrop, dark, Icons.Filled.Edit, "تعديل", AccentBlue) { showEdit = true }
-                                    if (a.canInvite) QuickTile(Modifier.weight(1f), backdrop, dark, AppIcons.GroupAdd, "إضافة", Color(0xFFFFA62B)) { showAdd = true }
-                                    if (canShare) QuickTile(Modifier.weight(1f), backdrop, dark, Icons.Filled.Share, "مشاركة", Color(0xFF34C759)) {
+                                    if (a.canChangeInfo) QuickBtn(Modifier.weight(1f), backdrop, Icons.Filled.Edit, "تعديل", AccentBlue) { showEdit = true }
+                                    if (a.canInvite) QuickBtn(Modifier.weight(1f), backdrop, AppIcons.GroupAdd, "إضافة", Color(0xFFFF9500)) { showAdd = true }
+                                    if (canShare) QuickBtn(Modifier.weight(1f), backdrop, Icons.Filled.Share, "مشاركة", Color(0xFF34C759)) {
                                         // تطلع نافذة المشاركة بيوزر المجموعة (أي شخص يبحث عنه ينضم إذا المجموعة مشاركة)
                                         if (g.settings.publicJoin) {
                                             val text = "انضم لمجموعة «${g.item.name}» على ChatApp\n" +
@@ -312,7 +322,7 @@ fun GroupInfoScreen(groupId: String, onBack: () -> Unit, onGone: () -> Unit, onO
                                 Column(
                                     Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
                                         .enterFx(enter[2])
-                                        .glassSurface(backdrop, dark, cardShape, blurDp = 8f)
+                                        .clearGlass(backdrop, dark, cardShape, blurDp = 2f, refractH = 16f, refractA = 32f)
                                         .clip(cardShape)
                                 ) {
                                     SettingRow(Icons.Filled.Settings, "صلاحيات الأعضاء", "الإرسال، الدعوة، التثبيت، الوضع البطيء", Color(0xFF8A5CFF), null, fg) { showSettings = true }
@@ -639,49 +649,62 @@ private fun HeroAvatar(b64: String, dark: Boolean) {
     }
 }
 
-/** شارة صغيرة زجاجية (عدد الأعضاء / دوري / عامة-خاصة) */
+/**
+ * زجاج صافي: ضبابية قليلة + انكسار (lens) واضح + سطح شفاف جداً + حافة لامعة.
+ * (بدل glassSurface الي كان يغمّق الخلفية ويعتّمها)
+ */
+private fun Modifier.clearGlass(
+    backdrop: Backdrop, dark: Boolean, shape: Shape,
+    blurDp: Float = 2f, refractH: Float = 14f, refractA: Float = 28f
+): Modifier = this
+    .drawBackdrop(
+        backdrop = backdrop,
+        shape = { shape },
+        effects = {
+            vibrancy()
+            blur((blurDp.dp.toPx()) * GlassFx.blurK)
+            lens((refractH.dp.toPx()) * GlassFx.refractK, (refractA.dp.toPx()) * GlassFx.refractK)
+        },
+        onDrawSurface = {
+            glassSurfaceLayer { drawRect(if (dark) Color.White.copy(0.07f) else Color.White.copy(0.28f)) }
+        }
+    )
+    .border(0.9.dp, glassBorderBrush(0.55f), shape)
+
+/** شارة زجاجية صغيرة (كبسولة بانكسار). [onClick] اختياري، وإذا موجود تنضغط بنبضة */
 @Composable
-private fun StatPill(text: String, tint: Color, fg: Color, leading: @Composable () -> Unit) {
+private fun StatPill(
+    backdrop: Backdrop, dark: Boolean, text: String, fg: Color, onClick: (() -> Unit)?,
+    leading: @Composable () -> Unit
+) {
+    val src = remember { MutableInteractionSource() }
+    val pressed by src.collectIsPressedAsState()
+    val sc by animateFloatAsState(if (pressed && onClick != null) 1.1f else 1f, spring(0.5f, 400f), label = "pill")
     Row(
-        Modifier.clip(CircleShape).background(fg.copy(alpha = 0.08f))
-            .border(0.8.dp, glassBorderBrush(0.30f), CircleShape)
-            .padding(horizontal = 11.dp, vertical = 6.dp),
+        Modifier
+            .graphicsLayer { scaleX = sc; scaleY = sc }
+            .clearGlass(backdrop, dark, CircleShape, blurDp = 2f, refractH = 12f, refractA = 24f)
+            .clip(CircleShape)
+            .then(if (onClick != null) Modifier.clickable(interactionSource = src, indication = null, onClick = onClick) else Modifier)
+            .padding(horizontal = 13.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         leading()
         Spacer(Modifier.width(6.dp))
-        Text(text, color = if (tint == fg.copy(alpha = 0.7f)) fg else tint, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        Text(text, color = fg, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
     }
 }
 
-/** بلاطة إجراء سريع (زجاج + أيقونة ملوّنة + ضغطة نابضية) */
+/** زر إجراء ملوّن Liquid Glass (نفس شكل Red / Orange / Green): تلوين Hue + انكسار + ضبابية قليلة */
 @Composable
-private fun QuickTile(
-    modifier: Modifier, backdrop: Backdrop, dark: Boolean,
-    icon: ImageVector, label: String, tint: Color, onClick: () -> Unit
-) {
-    val fg = glassFg(dark)
-    val shape = RoundedCornerShape(26.dp)
-    val src = remember { MutableInteractionSource() }
-    val pressed by src.collectIsPressedAsState()
-    val sc by animateFloatAsState(if (pressed) 0.93f else 1f, spring(0.55f, 450f), label = "tile")
-    Column(
-        modifier
-            .graphicsLayer { scaleX = sc; scaleY = sc }
-            .glassSurface(backdrop, dark, shape, blurDp = 6f)
-            .clip(shape)
-            .clickable(interactionSource = src, indication = null, onClick = onClick)
-            .padding(vertical = 14.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+private fun QuickBtn(modifier: Modifier, backdrop: Backdrop, icon: ImageVector, label: String, tint: Color, onClick: () -> Unit) {
+    GlassButton(
+        onClick = onClick, backdrop = backdrop, tint = tint, pressScale = 1.08f,
+        modifier = modifier.height(52.dp)
     ) {
-        Box(
-            Modifier.size(46.dp).clip(CircleShape)
-                .background(Brush.verticalGradient(listOf(tint.copy(alpha = 0.40f), tint.copy(alpha = 0.16f))))
-                .border(0.8.dp, tint.copy(alpha = 0.40f), CircleShape),
-            contentAlignment = Alignment.Center
-        ) { Icon(icon, null, tint = tint, modifier = Modifier.size(23.dp)) }
-        Spacer(Modifier.height(8.dp))
-        Text(label, color = fg, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        Icon(icon, null, tint = Color.White, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(label, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
     }
 }
 
@@ -729,7 +752,7 @@ private fun MemberRow(
     val avatar = rememberB64Image(prof.avatar)
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 1.dp)
-            .glassSurface(backdrop, dark, shape, blurDp = 5f)
+            .clearGlass(backdrop, dark, shape, blurDp = 2f, refractH = 10f, refractA = 20f)
             .clip(shape)
             // الضغطة على العضو/المشرف تفتح حسابه (نفسك ما تفتح)
             .then(if (uid != me) Modifier.clickable { onOpenProfile(UserItem(uid, prof.name, "", prof.username)) } else Modifier)
