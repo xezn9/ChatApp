@@ -236,6 +236,14 @@ private class GroupMenuTarget(val msg: GroupMsg, val mine: Boolean, val bounds: 
 fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit, onOpenProfile: (UserItem) -> Unit = {}) {
     val me = remember { Repo.auth.currentUser?.uid ?: "" }
     val ctx = LocalContext.current
+    val onReactFail: (Exception) -> Unit = { e ->
+        AppToast.show(
+            if (e.message?.contains("permission", ignoreCase = true) == true)
+                "السيرفر رفض التفاعل: تأكد من نشر قواعد Realtime Database (database.rules.json)"
+            else "ما تم التفاعل، تأكد من الإنترنت",
+            long = true
+        )
+    }
     val st by remember(groupId) { Repo.groupFullFlow(groupId).map { GroupLoaded(it) } }
         .collectAsState(initial = null)
     val messages by remember(groupId) { Repo.groupMessagesFlow(groupId) }
@@ -840,7 +848,7 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                                 }
                             },
                             iLiked = m.reactions[me] == HEART,
-                            onHeart = { on -> Repo.setGroupMessageReaction(groupId, m.key, if (on) HEART else null) }
+                            onHeart = { on -> Repo.setGroupMessageReaction(groupId, m.key, if (on) HEART else null, onReactFail) }
                         )
                         }
                     }
@@ -1182,7 +1190,7 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                     myReaction = mm.reactions[me],
                     onReact = { e ->
                         menu = null
-                        Repo.setGroupMessageReaction(groupId, mm.id, if (mm.reactions[me] == e) null else e)
+                        Repo.setGroupMessageReaction(groupId, mm.id, if (mm.reactions[me] == e) null else e, onReactFail)
                     },
                     onDismiss = { menu = null }
                 ) {

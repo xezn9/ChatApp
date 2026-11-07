@@ -294,10 +294,9 @@ object Repo {
     private fun DataSnapshot.str(name: String): String = child(name).value as? String ?: ""
     private fun DataSnapshot.flag(name: String): Boolean = child(name).value == true
 
-    /** التفاعلات: reactions/<uid> = ايموجي (ويقرأ القلوب القديمة hearts/<uid> = true كـ ❤️) */
+    /** التفاعلات: reactions/<uid> = ايموجي */
     private fun DataSnapshot.readReactions(): Map<String, String> {
         val out = LinkedHashMap<String, String>()
-        child("hearts").children.forEach { c -> if (c.value == true) c.key?.let { out[it] = "❤️" } }
         child("reactions").children.forEach { c ->
             val k = c.key; val v = c.value as? String
             if (k != null && !v.isNullOrEmpty()) out[k] = v
