@@ -114,7 +114,6 @@ internal fun ChatActionSheet(
     onStar: () -> Unit,
     onMute: () -> Unit,
     onRestrict: () -> Unit,
-    onSelect: () -> Unit,
     onBlock: () -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit
@@ -144,13 +143,13 @@ internal fun ChatActionSheet(
                     shape = { shape },
                     effects = {
                         vibrancy()
-                        // ضبابية خفيفة + انكسار واضح عند الحواف
-                        blur((4f.dp.toPx()) * GlassFx.blurK)
-                        lens((16f.dp.toPx()) * GlassFx.refractK, (32f.dp.toPx()) * GlassFx.refractK)
+                        // ضبابية قوية (تخفي المحادثة الي وراها) + انكسار واضح عند الحواف
+                        blur((18f.dp.toPx()) * GlassFx.blurK)
+                        lens((24f.dp.toPx()) * GlassFx.refractK, (48f.dp.toPx()) * GlassFx.refractK)
                     },
                     onDrawSurface = {
                         glassSurfaceLayer {
-                            drawRect(if (dark) Color.White.copy(0.07f) else Color.White.copy(0.28f))
+                            drawRect(if (dark) Color.White.copy(0.08f) else Color.White.copy(0.30f))
                             drawRect(
                                 Brush.verticalGradient(
                                     listOf(Color.White.copy(0.10f), Color.Transparent), endY = size.height * 0.45f
@@ -174,7 +173,6 @@ internal fun ChatActionSheet(
                     iconTint = if (starred) Color(0xFFFFC107) else null) { onStar() }
                 SheetRow(if (muted) AppIcons.Bell else AppIcons.BellOff, if (muted) "إلغاء الكتم" else "كتم الإشعارات", fg) { onMute() }
                 SheetRow(AppIcons.Restrict, if (restricted) "إلغاء التقييد" else "تقييد", fg) { onRestrict() }
-                SheetRow(AppIcons.CheckBox, "تحديد", fg) { onSelect() }
                 SheetDivider(fg)
                 SheetRow(AppIcons.Block, if (blocked) "إلغاء الحظر" else "حظر", danger) { onBlock() }
                 SheetRow(AppIcons.Trash, "حذف المحادثة", danger) { onDelete() }

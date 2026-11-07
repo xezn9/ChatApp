@@ -506,7 +506,6 @@ fun HomeTab(
                 AppToast.show(if (now) "تم تقييد ${t.name}" else "تم إلغاء تقييد ${t.name}")
                 actionTarget = null
             },
-            onSelect = { selecting = true; selectedIds = setOf(t.uid); actionTarget = null },
             onBlock = {
                 if (isBlocked) {
                     Repo.setBlocked(t.uid, false)
