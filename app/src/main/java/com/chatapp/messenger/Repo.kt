@@ -819,6 +819,28 @@ object Repo {
             .addOnFailureListener { e -> onFail(e) }
     }
 
+    /** ملصق من صور المستخدم بالمجموعة (نفس فكرة المحادثة الخاصة: صورة صغيرة بحقل thumb بدون رفع ملف) */
+    fun sendGroupCustomSticker(
+        gid: String, thumb: String, w: Int, h: Int, onFail: (Exception) -> Unit,
+        replyId: String = "", replyText: String = "", replyFrom: String = ""
+    ) {
+        val me = auth.currentUser?.uid ?: return
+        val key = rtdb.getReference("groupChats/$gid/messages").push().key ?: return
+        val msg = hashMapOf<String, Any>(
+            "from" to me, "text" to com.chatapp.messenger.ui.CustomStickers.MARK,
+            "createdAt" to ServerValue.TIMESTAMP,
+            "mediaType" to "image", "mediaId" to "sticker", "thumb" to thumb, "mediaW" to w, "mediaH" to h
+        )
+        putGroupReply(msg, replyId, replyText, replyFrom)
+        val updates = hashMapOf<String, Any>(
+            "groupChats/$gid/messages/$key" to msg,
+            "groupChats/$gid/lastSent/$me" to ServerValue.TIMESTAMP
+        )
+        rtdb.reference.updateChildren(updates)
+            .addOnSuccessListener { Push.notifyGroup(gid, key) }
+            .addOnFailureListener { e -> onFail(e) }
+    }
+
     /** ملف بالمجموعة (بعد ما انرفع بنوع "file") */
     fun sendGroupFile(
         gid: String, mediaId: String, name: String, size: Long, onFail: (Exception) -> Unit,
@@ -1331,6 +1353,21 @@ object Repo {
             me, other, if (type == "video") "🎥 فيديو" else "📷 صورة",
             replyId, replyText, replyFrom, extra
         )
+    }
+
+    /**
+     * ملصق من صور المستخدم: يرسل كرسالة صورة صغيرة (mediaType = "image") بدون رفع ملف،
+     * والملصق نفسه (WebP شفاف صغير) بحقل thumb، ونص الرسالة علامة الملصق (تتعرف عليها الواجهة وتعرضه بدون فقاعة)
+     */
+    fun sendCustomSticker(
+        me: String, other: String, thumb: String, w: Int, h: Int,
+        replyId: String = "", replyText: String = "", replyFrom: String = ""
+    ) {
+        val extra = hashMapOf<String, Any>(
+            "mediaType" to "image", "mediaId" to "sticker", "thumb" to thumb,
+            "mediaW" to w, "mediaH" to h
+        )
+        send(me, other, com.chatapp.messenger.ui.CustomStickers.MARK, replyId, replyText, replyFrom, extra)
     }
 
     /** يرسل رسالة ملف (بعد ما انرفع الملف بنوع "file") */

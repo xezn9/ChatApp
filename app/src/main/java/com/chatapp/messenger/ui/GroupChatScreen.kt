@@ -40,6 +40,7 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -417,6 +418,14 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
         )
     }
 
+    var stickerOpen by remember { mutableStateOf(false) }
+    var stickerOrigin by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    val stickerCreator = rememberStickerCreator()
+    val keyboardCtl = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val focusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
+    // آخر ارتفاع للكيبورد: اللوحة تاخذ نفس الارتفاع حتى ما تقفز الشاشة
+    var lastKbDp by remember { mutableStateOf(300.dp) }
+
     /** إرسال ملصق بالمجموعة (نفس قيود الوضع البطيء) */
     fun sendSticker(id: String) {
         val gg = g ?: return
@@ -439,6 +448,53 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
         )
     }
 
+    /** إرسال ملصق من ملصقاتي بالمجموعة (نفس قيود الوضع البطيء) */
+    fun sendCustomSticker(file: java.io.File) {
+        val gg = g ?: return
+        val a = access ?: return
+        val slow = gg.settings.slowMode
+        val now = System.currentTimeMillis()
+        if (!a.isAdmin && slow > 0 && now - lastSentAt < slow * 1000L) {
+            val left = (slow * 1000L - (now - lastSentAt)) / 1000 + 1
+            AppToast.show("الوضع البطيء: انتظر $left ثانية")
+            return
+        }
+        scope.launch {
+            val d = CustomStickers.readForSend(file)
+            if (d == null) { AppToast.show("تعذّر إرسال الملصق"); return@launch }
+            lastSentAt = System.currentTimeMillis()
+            val rep = replyTo
+            replyTo = null
+            Repo.sendGroupCustomSticker(
+                groupId, d.first, d.second, d.third,
+                onFail = { AppToast.show("ما انرسلت الرسالة: ممنوع عليك الإرسال هسه") },
+                replyId = rep?.id ?: "", replyText = rep?.let { ChatSticker.preview(it.text).take(100) } ?: "", replyFrom = rep?.from ?: ""
+            )
+        }
+    }
+
+    // ---- لوحة الملصقات تحل مكان الكيبورد ----
+    val imePxNow = WindowInsets.ime.getBottom(density)
+    val navPxNow = WindowInsets.navigationBars.getBottom(density)
+    LaunchedEffect(imePxNow) {
+        if (imePxNow > 0) {
+            val d = with(density) { (imePxNow - navPxNow).toDp() }
+            if (d > 180.dp) lastKbDp = d
+        }
+    }
+    val stickerPanelH = lastKbDp.coerceIn(240.dp, 460.dp)
+    fun closeStickerPanel(showKeyboard: Boolean) {
+        stickerOpen = false
+        if (showKeyboard) scope.launch {
+            runCatching { focusRequester.requestFocus() }
+            keyboardCtl?.show()
+        }
+    }
+    fun toggleStickerPanel() {
+        if (stickerOpen) closeStickerPanel(showKeyboard = true)
+        else { stickerOpen = true; keyboardCtl?.hide() }
+    }
+
     // ---- رسالة صوتية: ضغطة مطولة على المايك = تسجيل، وبعدها تسمعها أو تحذفها أو ترسلها ----
     var mediaStatus by remember { mutableStateOf<String?>(null) }
     var mediaProgress by remember { mutableFloatStateOf(-1f) }
@@ -447,8 +503,6 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
     var viewVideo by remember { mutableStateOf<java.io.File?>(null) }
     var pending by remember { mutableStateOf<PendingAttachment?>(null) }
     var showAttach by remember { mutableStateOf(false) }
-    var stickerOpen by remember { mutableStateOf(false) }
-    var stickerOrigin by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
     val mediaPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null && mediaStatus == null) {
             val isVideo = (ctx.contentResolver.getType(uri) ?: "").startsWith("video")
@@ -805,6 +859,8 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
         }
     }
     val imeShown = WindowInsets.ime.getBottom(density) > 0
+    // انفتح الكيبورد (ضغطت على مربع الكتابة) واللوحة مفتوحة: نسكّر اللوحة
+    LaunchedEffect(imeShown) { if (imeShown && stickerOpen) stickerOpen = false }
     LaunchedEffect(imeShown) {
         if (imeShown && listState.firstVisibleItemIndex <= 1) listState.scrollToItem(0)
     }
@@ -1092,10 +1148,6 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                                         onPickFile = {
                                                 showAttach = false
                                                 filePicker.launch(arrayOf("*/*"))
-                                            },
-                                        onPickSticker = {
-                                                showAttach = false
-                                                stickerOpen = true
                                             }
                                     )
                             }
@@ -1128,14 +1180,29 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                                     maxLines = 4,
                                     textStyle = TextStyle(fontFamily = AppFont, color = fg, fontSize = 16.sp),
                                     cursorBrush = SolidColor(AccentBlue),
-                                    modifier = Modifier.fillMaxWidth().padding(end = 40.dp)
+                                    modifier = Modifier.fillMaxWidth().padding(end = 40.dp).focusRequester(focusRequester)
                                 )
                                         // زر الملصقات: واضح داخل مربع الكتابة
                                         Box(
                                             Modifier.align(Alignment.CenterEnd).size(36.dp).clip(CircleShape)
-                                                .clickable { stickerOpen = true },
+                                                .clickable { toggleStickerPanel() },
                                             contentAlignment = Alignment.Center
-                                        ) { Icon(AppIcons.Sticker, null, tint = fg.copy(alpha = 0.85f), modifier = Modifier.size(24.dp)) }
+                                        ) {
+                                            // لوحة الملصقات مفتوحة = زر كيبورد (يرجّع الكيبورد)، وإلا زر الملصقات
+                                            androidx.compose.animation.AnimatedContent(
+                                                targetState = stickerOpen,
+                                                transitionSpec = {
+                                                    (androidx.compose.animation.scaleIn(spring(0.6f, 500f), initialScale = 0.5f) + fadeIn(tween(140))) togetherWith
+                                                        (androidx.compose.animation.scaleOut(tween(90), targetScale = 0.5f) + fadeOut(tween(90)))
+                                                },
+                                                label = "stickerKbIcon"
+                                            ) { open ->
+                                                Icon(
+                                                    if (open) AppIcons.Keyboard else AppIcons.Sticker, null,
+                                                    tint = fg.copy(alpha = 0.85f), modifier = Modifier.size(24.dp)
+                                                )
+                                            }
+                                        }
                             }
                             }
                             // الكتابة فاضية = زر المايك (ضغطة مطولة تسجل)، فيه نص = زر الإرسال، وبالمراجعة = إرسال التسجيل
@@ -1168,6 +1235,15 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                                 )
                             }
                         }
+                        // ----- ملصقات: لوحة تحل مكان الكيبورد تحت مربع الكتابة -----
+                        ChatStickerPanel(
+                            open = stickerOpen, dark = dark, backdrop = contentBackdrop,
+                            height = stickerPanelH,
+                            onDismiss = { closeStickerPanel(showKeyboard = false) },
+                            onPick = { if (it.isNotBlank()) sendSticker(it) },
+                            onPickCustom = { sendCustomSticker(it) },
+                            onCreate = { stickerCreator.launchPicker() }
+                        )
                     } else {
                         Box(
                             Modifier.fillMaxWidth().heightIn(min = 52.dp)
@@ -1198,13 +1274,8 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                 AttachmentPreviewScreen(pa, sending = mediaStatus != null, onSend = { sendPending() }, onCancel = { cancelPending() })
             }
 
-            // ----- ملصقات -----
-            BackHandler(enabled = stickerOpen) { stickerOpen = false }
-            ChatStickerPanel(
-                open = stickerOpen, dark = dark, backdrop = contentBackdrop,
-                onDismiss = { stickerOpen = false },
-                onPick = { if (it.isNotBlank()) sendSticker(it) }
-            )
+            // ----- شاشة إنشاء ملصق (اختيار صورة + قص) -----
+            StickerCreatorHost(stickerCreator)
 
             // ----- إعدادات المجموعة: خلفية + فقاعات (نفس لوحة المحادثة العادية) -----
             AnimatedVisibility(
@@ -1489,15 +1560,17 @@ private fun GroupMessageRow(
                 if (m.reactions.isNotEmpty()) 10.dp else 0.dp, spring(0.7f, 500f), label = "reactPad"
             ).value
             val stickerId = if (m.mediaType.isEmpty()) ChatSticker.parse(m.text) else null
+            val customStk = CustomStickers.isCustom(m.mediaType, m.text, m.thumb)
+            var showSaveStk by remember(m.id) { mutableStateOf(false) }
             Box(Modifier.padding(bottom = reactPad.coerceAtLeast(0.dp))) {
-              if (stickerId != null) {
+              if (stickerId != null || customStk) {
                 // رسالة ملصق: الملصق كبير وبدون فقاعة
                 Column(
                     Modifier.widthIn(max = 260.dp)
                         .onGloballyPositioned { boundsHolder[0] = it.boundsInRoot() }
                         .graphicsLayer { scaleX = pulse.value; scaleY = pulse.value }
                         .pointerInput(m.id) {
-                            detectTapGestures(onDoubleTap = { fireDoubleTap() }, onLongPress = { fireLongPress() })
+                            detectTapGestures(onTap = { if (customStk) showSaveStk = true }, onDoubleTap = { fireDoubleTap() }, onLongPress = { fireLongPress() })
                         }
                 ) {
                     if (m.replyId.isNotEmpty()) {
@@ -1507,7 +1580,8 @@ private fun GroupMessageRow(
                             onDoubleTap = { fireDoubleTap() }
                         )
                     }
-                    StickerMessage(stickerId, 132.dp)
+                    if (customStk) CustomStickerImage(m.thumb, 140.dp) else StickerMessage(stickerId!!, 132.dp)
+                    if (customStk && showSaveStk) SaveStickerPopup(m.thumb) { showSaveStk = false }
                 }
               } else {
                 StyledBubble(

@@ -364,6 +364,10 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
     // ملصقات المحادثة: نافذة الاختيار + نقطة انبثاقها (زر +)
     var stickerOpen by remember { mutableStateOf(false) }
     var stickerOrigin by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    val stickerCreator = rememberStickerCreator()
+    val keyboardCtl = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    // آخر ارتفاع للكيبورد: اللوحة تاخذ نفس الارتفاع حتى ما تقفز الشاشة
+    var lastKbDp by remember { mutableStateOf(300.dp) }
     val mediaPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null && mediaStatus == null) {
             val isVideo = (ctx.contentResolver.getType(uri) ?: "").startsWith("video")
@@ -667,6 +671,47 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
         replyTo = null
         scope.launch { listState.scrollToItem(0) }
     }
+
+    /** إرسال ملصق من ملصقاتي (صورة صغيرة شفافة تنرسل بحقل thumb) */
+    fun sendCustomSticker(file: java.io.File) {
+        scope.launch {
+            val d = CustomStickers.readForSend(file)
+            if (d == null) { AppToast.show("تعذّر إرسال الملصق"); return@launch }
+            val r = replyTo
+            Repo.sendCustomSticker(
+                me, other.uid, d.first, d.second, d.third,
+                replyId = r?.id ?: "",
+                replyText = r?.let { msgPreview(it, 100) } ?: "",
+                replyFrom = r?.from ?: ""
+            )
+            replyTo = null
+            listState.scrollToItem(0)
+        }
+    }
+
+    // ---- لوحة الملصقات تحل مكان الكيبورد ----
+    val imePxNow = WindowInsets.ime.getBottom(density)
+    val navPxNow = WindowInsets.navigationBars.getBottom(density)
+    LaunchedEffect(imePxNow) {
+        if (imePxNow > 0) {
+            val d = with(density) { (imePxNow - navPxNow).toDp() }
+            if (d > 180.dp) lastKbDp = d
+        }
+    }
+    val stickerPanelH = lastKbDp.coerceIn(240.dp, 460.dp)
+    fun closeStickerPanel(showKeyboard: Boolean) {
+        stickerOpen = false
+        if (showKeyboard) scope.launch {
+            runCatching { focusRequester.requestFocus() }
+            keyboardCtl?.show()
+        }
+    }
+    fun toggleStickerPanel() {
+        if (stickerOpen) closeStickerPanel(showKeyboard = true)
+        else { stickerOpen = true; keyboardCtl?.hide() }
+    }
+    // انفتح الكيبورد (ضغطت على مربع الكتابة) واللوحة مفتوحة: نسكّر اللوحة
+    LaunchedEffect(imeShown) { if (imeShown && stickerOpen) stickerOpen = false }
 
     // عند الرد أو التعديل افتح الكيبورد على مربع الكتابة
     LaunchedEffect(replyTo?.id, editing?.id) {
@@ -1012,10 +1057,6 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                                 onPickFile = {
                                         showAttach = false
                                         filePicker.launch(arrayOf("*/*"))
-                                    },
-                                onPickSticker = {
-                                        showAttach = false
-                                        stickerOpen = true
                                     }
                             )
                     }
@@ -1051,9 +1092,24 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                                 // زر الملصقات: واضح داخل مربع الكتابة
                                 if (editing == null) Box(
                                     Modifier.align(Alignment.CenterEnd).size(36.dp).clip(CircleShape)
-                                        .clickable { stickerOpen = true },
+                                        .clickable { toggleStickerPanel() },
                                     contentAlignment = Alignment.Center
-                                ) { Icon(AppIcons.Sticker, null, tint = fg.copy(alpha = 0.85f), modifier = Modifier.size(24.dp)) }
+                                ) {
+                                    // لوحة الملصقات مفتوحة = زر كيبورد (يرجّع الكيبورد)، وإلا زر الملصقات
+                                    AnimatedContent(
+                                        targetState = stickerOpen,
+                                        transitionSpec = {
+                                            (scaleIn(spring(0.6f, 500f), initialScale = 0.5f) + fadeIn(tween(140))) togetherWith
+                                                (scaleOut(tween(90), targetScale = 0.5f) + fadeOut(tween(90)))
+                                        },
+                                        label = "stickerKbIcon"
+                                    ) { open ->
+                                        Icon(
+                                            if (open) AppIcons.Keyboard else AppIcons.Sticker, null,
+                                            tint = fg.copy(alpha = 0.85f), modifier = Modifier.size(24.dp)
+                                        )
+                                    }
+                                }
                     }
                     }
                     val rtlNow = LocalLayoutDirection.current == LayoutDirection.Rtl
@@ -1102,6 +1158,15 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                     }
                 }
             }
+            // ----- ملصقات: لوحة تحل مكان الكيبورد تحت مربع الكتابة -----
+            ChatStickerPanel(
+                open = stickerOpen && !(blockedByMe || blockedMe), dark = dark, backdrop = contentBackdrop,
+                height = stickerPanelH,
+                onDismiss = { closeStickerPanel(showKeyboard = false) },
+                onPick = { if (it.isNotBlank()) sendSticker(it) },
+                onPickCustom = { sendCustomSticker(it) },
+                onCreate = { stickerCreator.launchPicker() }
+            )
             }
         AnimatedVisibility(
             visible = showSettings,
@@ -1246,13 +1311,8 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
             AttachmentPreviewScreen(pa, sending = mediaStatus != null, onSend = { sendPending() }, onCancel = { cancelPending() })
         }
 
-        // ----- ملصقات -----
-        BackHandler(enabled = stickerOpen) { stickerOpen = false }
-        ChatStickerPanel(
-            open = stickerOpen, dark = dark, backdrop = contentBackdrop,
-            onDismiss = { stickerOpen = false },
-            onPick = { if (it.isNotBlank()) sendSticker(it) }
-        )
+        // ----- شاشة إنشاء ملصق (اختيار صورة + قص) -----
+        StickerCreatorHost(stickerCreator)
         }
     }
 }
@@ -1563,8 +1623,10 @@ private fun MessageRow(
             if (m.reactions.isNotEmpty() && !m.deleted) 10.dp else 0.dp, spring(0.7f, 500f), label = "reactPad"
         ).value
         val stickerId = if (!m.deleted && m.mediaType.isEmpty()) ChatSticker.parse(m.text) else null
+        val customStk = !m.deleted && CustomStickers.isCustom(m.mediaType, m.text, m.thumb)
+        var showSaveStk by remember(m.id) { mutableStateOf(false) }
         Box(Modifier.padding(bottom = reactPad.coerceAtLeast(0.dp))) {
-          if (stickerId != null) {
+          if (stickerId != null || customStk) {
             // رسالة ملصق: الملصق كبير وبدون فقاعة
             Column(
                 Modifier.widthIn(max = 260.dp)
@@ -1572,6 +1634,7 @@ private fun MessageRow(
                     .graphicsLayer { scaleX = pulse.value; scaleY = pulse.value }
                     .pointerInput(m.id) {
                         detectTapGestures(
+                            onTap = { if (customStk) showSaveStk = true },
                             onDoubleTap = { fireDoubleTap() },
                             onLongPress = { fireLongPress() }
                         )
@@ -1585,7 +1648,8 @@ private fun MessageRow(
                         onDoubleTap = { fireDoubleTap() }
                     )
                 }
-                StickerMessage(stickerId, 132.dp)
+                if (customStk) CustomStickerImage(m.thumb, 140.dp) else StickerMessage(stickerId!!, 132.dp)
+                if (customStk && showSaveStk) SaveStickerPopup(m.thumb) { showSaveStk = false }
             }
           } else {
             StyledBubble(
