@@ -730,8 +730,8 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                             onLongPress = { rect -> menu = MenuTarget(m, mine, rect) },
                             onOpenMedia = { openMedia(m) },
                             onAvatarClick = if (mine) null else onOpenProfile,
-                            iLiked = me in m.hearts,
-                            onHeart = { on -> Repo.setMessageHeart(me, other.uid, m.id, on, onWriteFail) }
+                            iLiked = m.reactions[me] == HEART,
+                            onHeart = { on -> Repo.setMessageReaction(me, other.uid, m.id, if (on) HEART else null, onWriteFail) }
                         )
                     }
                 }
@@ -1170,6 +1170,12 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                 anchorStart = mt.bounds.left, anchorEnd = mt.bounds.right,
                 screenWidth = rootSize.width.toFloat(), screenHeight = rootSize.height.toFloat(),
                 actions = actions,
+                reactions = if (mm.deleted) emptyList() else REACTION_EMOJIS,
+                myReaction = mm.reactions[me],
+                onReact = { e ->
+                    menu = null
+                    Repo.setMessageReaction(me, other.uid, mm.id, if (mm.reactions[me] == e) null else e, onWriteFail)
+                },
                 onDismiss = { menu = null }
             ) {
                 StyledBubble(
@@ -1514,7 +1520,10 @@ private fun MessageRow(
         }
     }
     val bubble = @Composable {
-        Box(Modifier.padding(bottom = if (m.hearts.isNotEmpty() && !m.deleted) 10.dp else 0.dp)) {
+        val reactPad = androidx.compose.animation.core.animateDpAsState(
+            if (m.reactions.isNotEmpty() && !m.deleted) 10.dp else 0.dp, spring(0.7f, 500f), label = "reactPad"
+        ).value
+        Box(Modifier.padding(bottom = reactPad)) {
             StyledBubble(
                 style = style, mine = mine, dark = dark, fg = fg, backdrop = backdrop,
                 modifier = Modifier.widthIn(max = 260.dp)
@@ -1534,37 +1543,11 @@ private fun MessageRow(
                     onDoubleTap = { fireDoubleTap() }
                 )
             }
-            // قلب كبير ينبض وسط الفقاعة عند التفاعل
-            if (burst.value > 0f && burst.value < 1f) {
-                val p = burst.value
-                Text(
-                    "❤️",
-                    fontSize = 56.sp,
-                    modifier = Modifier.align(Alignment.Center).graphicsLayer {
-                        val sc = if (p < 0.3f) 0.3f + (p / 0.3f) * 1.0f else 1.3f - (p - 0.3f) * 0.3f
-                        scaleX = sc; scaleY = sc
-                        alpha = if (p < 0.6f) 1f else (1f - (p - 0.6f) / 0.4f).coerceIn(0f, 1f)
-                        translationY = -p * 18.dp.toPx()
-                    }
-                )
-            }
-            // شارة القلب تحت الفقاعة
-            if (m.hearts.isNotEmpty() && !m.deleted) {
-                Row(
-                    Modifier.align(Alignment.BottomEnd).padding(end = 10.dp).offset(y = 10.dp)
-                        .clip(CircleShape)
-                        .background(if (dark) Color(0xFF2A2F3A) else Color.White)
-                        .border(0.8.dp, fg.copy(alpha = 0.15f), CircleShape)
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("❤️", fontSize = 13.sp)
-                    if (m.hearts.size > 1) {
-                        Spacer(Modifier.width(3.dp))
-                        Text("${m.hearts.size}", fontSize = 11.sp, color = fg.copy(alpha = 0.8f))
-                    }
-                }
-            }
+            ReactionBurst(burst.value)
+            ReactionBadge(
+                reactions = if (m.deleted) emptyMap() else m.reactions, dark = dark, fg = fg,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 10.dp).offset(y = 10.dp)
+            )
         }
     }
 

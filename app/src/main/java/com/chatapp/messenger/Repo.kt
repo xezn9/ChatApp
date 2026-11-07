@@ -110,8 +110,8 @@ data class GroupMsg(
     val fileName: String = "", val fileSize: Long = 0L,
     /** رد على رسالة: معرّفها + نص مقتبس + صاحبها (نفس المحادثة الخاصة) */
     val replyId: String = "", val replyText: String = "", val replyFrom: String = "",
-    /** من تفاعل بقلب ❤️ (ضغطتين على الرسالة) */
-    val hearts: Set<String> = emptySet()
+    /** التفاعلات: uid -> ايموجي (ضغطتين = ❤️، ضغطة مطولة = اختيار ايموجي) */
+    val reactions: Map<String, String> = emptyMap()
 )
 
 /** كل بيانات المجموعة بنفس اللحظة (للأعضاء فقط) */
@@ -162,8 +162,8 @@ data class Msg(
     /** مثبتة بأعلى المحادثة (تظهر للطرفين) */
     val pinned: Boolean = false,
     val pinnedAt: Long = 0L,
-    /** من تفاعل بقلب ❤️ (ضغطتين على الرسالة) */
-    val hearts: Set<String> = emptySet(),
+    /** التفاعلات: uid -> ايموجي (ضغطتين = ❤️، ضغطة مطولة = اختيار ايموجي) */
+    val reactions: Map<String, String> = emptyMap(),
     /** الرد: معرّف الرسالة الأصلية + نص مختصر + صاحبها */
     val replyId: String = "",
     val replyText: String = "",
@@ -294,6 +294,17 @@ object Repo {
     private fun DataSnapshot.str(name: String): String = child(name).value as? String ?: ""
     private fun DataSnapshot.flag(name: String): Boolean = child(name).value == true
 
+    /** التفاعلات: reactions/<uid> = ايموجي (ويقرأ القلوب القديمة hearts/<uid> = true كـ ❤️) */
+    private fun DataSnapshot.readReactions(): Map<String, String> {
+        val out = LinkedHashMap<String, String>()
+        child("hearts").children.forEach { c -> if (c.value == true) c.key?.let { out[it] = "❤️" } }
+        child("reactions").children.forEach { c ->
+            val k = c.key; val v = c.value as? String
+            if (k != null && !v.isNullOrEmpty()) out[k] = v
+        }
+        return out
+    }
+
     /** يحول أي استعلام Realtime Database إلى Flow (يتحدث فوراً مع كل تغيير) */
     private fun <T> rtFlow(q: com.google.firebase.database.Query, map: (DataSnapshot) -> T): Flow<T> = callbackFlow {
         val l = object : ValueEventListener {
@@ -386,7 +397,7 @@ object Repo {
         edited = flag("edited"),
         pinned = flag("pinned"),
         pinnedAt = num("pinnedAt"),
-        hearts = child("hearts").children.filter { it.value == true }.mapNotNull { it.key }.toSet(),
+        reactions = readReactions(),
         replyId = str("replyId"),
         replyText = str("replyText"),
         replyFrom = str("replyFrom"),
@@ -444,9 +455,9 @@ object Repo {
         if (isLast) updateLastText(me, other, newText)
     }
 
-    /** تفاعل بقلب ❤️ على رسالة (لأي طرف). on=false يشيل تفاعلي */
-    fun setMessageHeart(me: String, other: String, id: String, on: Boolean, onFail: (Exception) -> Unit = {}) {
-        msgRef(me, other, id).child("hearts").child(me).setValue(if (on) true else null)
+    /** تفاعل بايموجي على رسالة (لأي طرف). emoji=null يشيل تفاعلي */
+    fun setMessageReaction(me: String, other: String, id: String, emoji: String?, onFail: (Exception) -> Unit = {}) {
+        msgRef(me, other, id).child("reactions").child(me).setValue(emoji)
             .addOnFailureListener(onFail)
     }
 
@@ -645,15 +656,15 @@ object Repo {
             thumb = str("thumb"), mediaW = num("mediaW").toInt(), mediaH = num("mediaH").toInt(),
             fileName = str("fileName"), fileSize = num("fileSize"),
             replyId = str("replyId"), replyText = str("replyText"), replyFrom = str("replyFrom"),
-            hearts = child("hearts").children.filter { it.value == true }.mapNotNull { it.key }.toSet()
+            reactions = readReactions()
         )
     }
 
-    /** تفاعل بقلب ❤️ على رسالة مجموعة. on=false يشيل تفاعلي */
-    fun setGroupMessageHeart(gid: String, mid: String, on: Boolean, onFail: (Exception) -> Unit = {}) {
+    /** تفاعل بايموجي على رسالة مجموعة. emoji=null يشيل تفاعلي */
+    fun setGroupMessageReaction(gid: String, mid: String, emoji: String?, onFail: (Exception) -> Unit = {}) {
         val me = auth.currentUser?.uid ?: return
-        rtdb.getReference("groupChats/$gid/messages/$mid/hearts/$me")
-            .setValue(if (on) true else null)
+        rtdb.getReference("groupChats/$gid/messages/$mid/reactions/$me")
+            .setValue(emoji)
             .addOnFailureListener(onFail)
     }
 

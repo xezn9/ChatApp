@@ -839,8 +839,8 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                                     menu = GroupMenuTarget(m, mine, rect)
                                 }
                             },
-                            iLiked = me in m.hearts,
-                            onHeart = { on -> Repo.setGroupMessageHeart(groupId, m.key, on) }
+                            iLiked = m.reactions[me] == HEART,
+                            onHeart = { on -> Repo.setGroupMessageReaction(groupId, m.key, if (on) HEART else null) }
                         )
                         }
                     }
@@ -1178,6 +1178,12 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                     anchorStart = mt.bounds.left, anchorEnd = mt.bounds.right,
                     screenWidth = rootSize.width.toFloat(), screenHeight = rootSize.height.toFloat(),
                     actions = actions,
+                    reactions = REACTION_EMOJIS,
+                    myReaction = mm.reactions[me],
+                    onReact = { e ->
+                        menu = null
+                        Repo.setGroupMessageReaction(groupId, mm.id, if (mm.reactions[me] == e) null else e)
+                    },
                     onDismiss = { menu = null }
                 ) {
                     StyledBubble(
@@ -1368,7 +1374,10 @@ private fun GroupMessageRow(
                 SenderAvatar(avatar, onClick = onAvatarClick)
                 Spacer(Modifier.width(8.dp))
             }
-            Box(Modifier.padding(bottom = if (m.hearts.isNotEmpty()) 10.dp else 0.dp)) {
+            val reactPad = androidx.compose.animation.core.animateDpAsState(
+                if (m.reactions.isNotEmpty()) 10.dp else 0.dp, spring(0.7f, 500f), label = "reactPad"
+            ).value
+            Box(Modifier.padding(bottom = reactPad)) {
                 StyledBubble(
                     style = style, mine = mine, dark = dark, fg = fg, backdrop = backdrop,
                     modifier = Modifier.widthIn(max = 260.dp)
@@ -1411,37 +1420,11 @@ private fun GroupMessageRow(
                     }
                   }
                 }
-                // قلب كبير ينبض وسط الفقاعة عند التفاعل
-                if (burst.value > 0f && burst.value < 1f) {
-                    val p = burst.value
-                    Text(
-                        "❤️",
-                        fontSize = 56.sp,
-                        modifier = Modifier.align(Alignment.Center).graphicsLayer {
-                            val sc = if (p < 0.3f) 0.3f + (p / 0.3f) * 1.0f else 1.3f - (p - 0.3f) * 0.3f
-                            scaleX = sc; scaleY = sc
-                            alpha = if (p < 0.6f) 1f else (1f - (p - 0.6f) / 0.4f).coerceIn(0f, 1f)
-                            translationY = -p * 18.dp.toPx()
-                        }
-                    )
-                }
-                // شارة القلب تحت الفقاعة
-                if (m.hearts.isNotEmpty()) {
-                    Row(
-                        Modifier.align(Alignment.BottomEnd).padding(end = 10.dp).offset(y = 10.dp)
-                            .clip(CircleShape)
-                            .background(if (dark) Color(0xFF2A2F3A) else Color.White)
-                            .border(0.8.dp, fg.copy(alpha = 0.15f), CircleShape)
-                            .padding(horizontal = 6.dp, vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("❤️", fontSize = 13.sp)
-                        if (m.hearts.size > 1) {
-                            Spacer(Modifier.width(3.dp))
-                            Text("${m.hearts.size}", fontSize = 11.sp, color = fg.copy(alpha = 0.8f))
-                        }
-                    }
-                }
+                ReactionBurst(burst.value)
+                ReactionBadge(
+                    reactions = m.reactions, dark = dark, fg = fg,
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(end = 10.dp).offset(y = 10.dp)
+                )
             }
             if (mine) {
                 Spacer(Modifier.width(8.dp))

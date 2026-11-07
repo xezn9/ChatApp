@@ -166,6 +166,9 @@ fun GlassMessageMenu(
     screenHeight: Float,
     actions: List<MsgAction>,
     onDismiss: () -> Unit,
+    reactions: List<String> = emptyList(),
+    myReaction: String? = null,
+    onReact: (String) -> Unit = {},
     bubble: @Composable () -> Unit
 ) {
     val fg = if (dark) Color.White else Color(0xFF101418)
@@ -174,8 +177,10 @@ fun GlassMessageMenu(
     val density = androidx.compose.ui.platform.LocalDensity.current
     val shape = RoundedCornerShape(26.dp)
 
-    val menuW = with(density) { 230.dp.toPx() }
-    val menuH = with(density) { (actions.size * 52 + 16).dp.toPx() }
+    val hasReacts = reactions.isNotEmpty()
+    val menuWdp = if (hasReacts) 280 else 230
+    val menuW = with(density) { menuWdp.dp.toPx() }
+    val menuH = with(density) { (actions.size * 52 + 16 + (if (hasReacts) 58 else 0)).dp.toPx() }
     val gap = with(density) { 10.dp.toPx() }
     val margin = with(density) { 12.dp.toPx() }
     val below = anchorBottom + gap + menuH <= screenHeight - margin
@@ -219,7 +224,7 @@ fun GlassMessageMenu(
                     scaleX = s; scaleY = s
                     alpha = enter.value.coerceIn(0f, 1f)
                 }
-                .width(230.dp)
+                .width(menuWdp.dp)
                 .drawBackdrop(
                     backdrop = backdrop,
                     shape = { shape },
@@ -239,6 +244,24 @@ fun GlassMessageMenu(
                 .padding(8.dp)
         ) {
           CompositionLocalProvider(LocalLayoutDirection provides realDir) {
+            // صف ايموجيات التفاعل
+            if (hasReacts) {
+                Row(
+                    Modifier.fillMaxWidth().height(52.dp),
+                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    reactions.forEachIndexed { i, e ->
+                        ReactionPick(e, selected = e == myReaction, delayMs = 70L + i * 40L, fg = fg) {
+                            scope.launch {
+                                enter.animateTo(0f, tween(120))
+                                onReact(e)
+                            }
+                        }
+                    }
+                }
+                Box(Modifier.padding(horizontal = 10.dp, vertical = 3.dp).fillMaxWidth().height(0.7.dp).background(fg.copy(alpha = 0.14f)))
+            }
             actions.forEach { a ->
                 Row(
                     Modifier.fillMaxWidth().height(52.dp)
