@@ -1,6 +1,15 @@
 package com.chatapp.messenger.ui
 
 import androidx.activity.compose.BackHandler
+import com.chatapp.messenger.ui.theme.GlassFx
+import com.chatapp.messenger.ui.theme.glassSurfaceLayer
+import com.kyant.backdrop.Backdrop
+import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.effects.lens
+import com.kyant.backdrop.effects.vibrancy
+import androidx.compose.foundation.border
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -57,14 +66,16 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 // ============================================================================
 //  لوحة ملصقات الدردشة (على طريقة تيك توك):
 //  - تنزل من تحت نص الشاشة، فيها كل الملصقات بشبكة وحدة بدون أقسام
-//  - الضغط على ملصق يرسله فوراً واللوحة تبقى مفتوحة (ترسل أكثر من ملصق)
+//  - الضغط على ملصق يرسله وتنسد اللوحة
 //  - تسكّر بالضغط برا اللوحة أو زر الرجوع أو ✕
+//  - الخلفية Liquid Glass (نفس زجاج قائمة الرسالة)
 //  - الملصقات تنزل تلقائياً من Stickers.zip وتنحفظ بمجلد منفصل عن رموز الاسم
 // ============================================================================
 @Composable
 internal fun ChatStickerPanel(
     open: Boolean,
     dark: Boolean,
+    backdrop: Backdrop,
     onDismiss: () -> Unit,
     onPick: (String) -> Unit
 ) {
@@ -94,10 +105,24 @@ internal fun ChatStickerPanel(
             enter = slideInVertically(spring(0.85f, 380f)) { it } + fadeIn(tween(120)),
             exit = slideOutVertically(tween(200)) { it } + fadeOut(tween(160))
         ) {
+            val sheetShape = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp)
             Column(
                 Modifier.fillMaxWidth().fillMaxHeight(0.58f)
-                    .clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp))
-                    .background(if (dark) Color(0xF2141820) else Color(0xF2F7F8FA))
+                    .drawBackdrop(
+                        backdrop = backdrop,
+                        shape = { sheetShape },
+                        effects = {
+                            vibrancy()
+                            blur((18f.dp.toPx()) * GlassFx.blurK)
+                            lens((12f.dp.toPx()) * GlassFx.refractK, (24f.dp.toPx()) * GlassFx.refractK)
+                        },
+                        onDrawSurface = { glassSurfaceLayer { drawRect(if (dark) Color.Black.copy(0.38f) else Color.White.copy(0.50f)) } }
+                    )
+                    .border(
+                        0.8.dp,
+                        Brush.verticalGradient(listOf(Color.White.copy(0.45f), Color.White.copy(0.06f))),
+                        sheetShape
+                    )
                     .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                     .navigationBarsPadding()
             ) {
@@ -155,6 +180,7 @@ internal fun ChatStickerPanel(
                             ChatStickerCell(id) {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                 onPick(id)
+                                onDismiss()
                             }
                         }
                     }

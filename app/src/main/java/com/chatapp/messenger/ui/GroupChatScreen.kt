@@ -1135,7 +1135,7 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                                             Modifier.align(Alignment.CenterEnd).size(36.dp).clip(CircleShape)
                                                 .clickable { stickerOpen = true },
                                             contentAlignment = Alignment.Center
-                                        ) { Text("🎭", fontSize = 22.sp) }
+                                        ) { Icon(AppIcons.Sticker, null, tint = fg.copy(alpha = 0.85f), modifier = Modifier.size(24.dp)) }
                             }
                             }
                             // الكتابة فاضية = زر المايك (ضغطة مطولة تسجل)، فيه نص = زر الإرسال، وبالمراجعة = إرسال التسجيل
@@ -1201,7 +1201,7 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
             // ----- ملصقات -----
             BackHandler(enabled = stickerOpen) { stickerOpen = false }
             ChatStickerPanel(
-                open = stickerOpen, dark = dark,
+                open = stickerOpen, dark = dark, backdrop = contentBackdrop,
                 onDismiss = { stickerOpen = false },
                 onPick = { if (it.isNotBlank()) sendSticker(it) }
             )
