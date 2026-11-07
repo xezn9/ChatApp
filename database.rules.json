@@ -611,6 +611,40 @@
           ".validate": false
         }
       }
+    },
+    "storyMedia": {
+      "$uid": {
+        ".read": "auth != null && auth.token.email_verified === true",
+        ".write": "auth != null && auth.token.email_verified === true && auth.uid === $uid && (!newData.exists() || !root.child('bans').child(auth.uid).exists() || root.child('bans').child(auth.uid).child('until').val() < now)",
+        "$mediaId": {
+          "meta": {
+            ".validate": "newData.hasChildren(['from', 'type', 'n', 'size'])",
+            "from": {
+              ".validate": "newData.val() === $uid"
+            },
+            "type": {
+              ".validate": "newData.val() === 'video' || newData.val() === 'audio'"
+            },
+            "n": {
+              ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 30"
+            },
+            "size": {
+              ".validate": "newData.isNumber() && newData.val() <= 11000000"
+            },
+            "$other": {
+              ".validate": false
+            }
+          },
+          "c": {
+            "$i": {
+              ".validate": "newData.isString() && newData.val().length <= 500000"
+            }
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      }
     }
   }
 }
