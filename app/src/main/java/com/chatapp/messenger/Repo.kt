@@ -109,7 +109,9 @@ data class GroupMsg(
     val thumb: String = "", val mediaW: Int = 0, val mediaH: Int = 0,
     val fileName: String = "", val fileSize: Long = 0L,
     /** رد على رسالة: معرّفها + نص مقتبس + صاحبها (نفس المحادثة الخاصة) */
-    val replyId: String = "", val replyText: String = "", val replyFrom: String = ""
+    val replyId: String = "", val replyText: String = "", val replyFrom: String = "",
+    /** من تفاعل بقلب ❤️ (ضغطتين على الرسالة) */
+    val hearts: Set<String> = emptySet()
 )
 
 /** كل بيانات المجموعة بنفس اللحظة (للأعضاء فقط) */
@@ -160,6 +162,8 @@ data class Msg(
     /** مثبتة بأعلى المحادثة (تظهر للطرفين) */
     val pinned: Boolean = false,
     val pinnedAt: Long = 0L,
+    /** من تفاعل بقلب ❤️ (ضغطتين على الرسالة) */
+    val hearts: Set<String> = emptySet(),
     /** الرد: معرّف الرسالة الأصلية + نص مختصر + صاحبها */
     val replyId: String = "",
     val replyText: String = "",
@@ -382,6 +386,7 @@ object Repo {
         edited = flag("edited"),
         pinned = flag("pinned"),
         pinnedAt = num("pinnedAt"),
+        hearts = child("hearts").children.filter { it.value == true }.mapNotNull { it.key }.toSet(),
         replyId = str("replyId"),
         replyText = str("replyText"),
         replyFrom = str("replyFrom"),
@@ -437,6 +442,12 @@ object Repo {
         msgRef(me, other, id).updateChildren(mapOf<String, Any>("text" to newText, "edited" to true))
             .addOnFailureListener(onFail)
         if (isLast) updateLastText(me, other, newText)
+    }
+
+    /** تفاعل بقلب ❤️ على رسالة (لأي طرف). on=false يشيل تفاعلي */
+    fun setMessageHeart(me: String, other: String, id: String, on: Boolean, onFail: (Exception) -> Unit = {}) {
+        msgRef(me, other, id).child("hearts").child(me).setValue(if (on) true else null)
+            .addOnFailureListener(onFail)
     }
 
     fun setMessagePinned(me: String, other: String, id: String, pinned: Boolean, onFail: (Exception) -> Unit = {}) {
@@ -633,8 +644,17 @@ object Repo {
             mediaDur = num("mediaDur").toInt(), wave = str("wave"),
             thumb = str("thumb"), mediaW = num("mediaW").toInt(), mediaH = num("mediaH").toInt(),
             fileName = str("fileName"), fileSize = num("fileSize"),
-            replyId = str("replyId"), replyText = str("replyText"), replyFrom = str("replyFrom")
+            replyId = str("replyId"), replyText = str("replyText"), replyFrom = str("replyFrom"),
+            hearts = child("hearts").children.filter { it.value == true }.mapNotNull { it.key }.toSet()
         )
+    }
+
+    /** تفاعل بقلب ❤️ على رسالة مجموعة. on=false يشيل تفاعلي */
+    fun setGroupMessageHeart(gid: String, mid: String, on: Boolean, onFail: (Exception) -> Unit = {}) {
+        val me = auth.currentUser?.uid ?: return
+        rtdb.getReference("groupChats/$gid/messages/$mid/hearts/$me")
+            .setValue(if (on) true else null)
+            .addOnFailureListener(onFail)
     }
 
     /** يضيف حقول الرد لرسالة مجموعة (إذا كانت ردّاً) */

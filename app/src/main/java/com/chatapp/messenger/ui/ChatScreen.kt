@@ -82,6 +82,7 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -728,7 +729,9 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                             },
                             onLongPress = { rect -> menu = MenuTarget(m, mine, rect) },
                             onOpenMedia = { openMedia(m) },
-                            onAvatarClick = if (mine) null else onOpenProfile
+                            onAvatarClick = if (mine) null else onOpenProfile,
+                            iLiked = me in m.hearts,
+                            onHeart = { on -> Repo.setMessageHeart(me, other.uid, m.id, on, onWriteFail) }
                         )
                     }
                 }
@@ -1274,7 +1277,8 @@ internal fun ReplyQuoteBlock(
     replyText: String,
     textColor: Color,
     onJump: (String) -> Unit,
-    onLongPress: () -> Unit
+    onLongPress: () -> Unit,
+    onDoubleTap: () -> Unit = {}
 ) {
     Row(
         Modifier.padding(bottom = 6.dp)
@@ -1282,7 +1286,7 @@ internal fun ReplyQuoteBlock(
             .clip(RoundedCornerShape(10.dp))
             .background(textColor.copy(alpha = 0.12f))
             .pointerInput(msgId) {
-                detectTapGestures(onTap = { onJump(replyId) }, onLongPress = { onLongPress() })
+                detectTapGestures(onTap = { onJump(replyId) }, onDoubleTap = { onDoubleTap() }, onLongPress = { onLongPress() })
             }
     ) {
         Box(Modifier.width(3.dp).fillMaxHeight().background(textColor.copy(alpha = 0.7f)))
@@ -1306,7 +1310,8 @@ private fun BubbleBody(
     replyDeleted: Boolean,
     onJump: (String) -> Unit,
     onLongPress: () -> Unit,
-    onOpenMedia: () -> Unit = {}
+    onOpenMedia: () -> Unit = {},
+    onDoubleTap: () -> Unit = {}
 ) {
     Column(Modifier.animateContentSize(spring(0.85f, 400f))) {
         if (m.replyId.isNotEmpty() && !m.deleted) {
@@ -1316,7 +1321,7 @@ private fun BubbleBody(
                     .clip(RoundedCornerShape(10.dp))
                     .background(textColor.copy(alpha = 0.12f))
                     .pointerInput(m.id) {
-                        detectTapGestures(onTap = { onJump(m.replyId) }, onLongPress = { onLongPress() })
+                        detectTapGestures(onTap = { onJump(m.replyId) }, onDoubleTap = { onDoubleTap() }, onLongPress = { onLongPress() })
                     }
             ) {
                 Box(Modifier.width(3.dp).fillMaxHeight().background(textColor.copy(alpha = 0.7f)))
@@ -1335,9 +1340,9 @@ private fun BubbleBody(
         // صورة/فيديو: صورة مصغّرة، والضغط يفتحها بملء الشاشة
         val isMedia = m.mediaType.isNotEmpty() && !m.deleted
         // تعديل/حذف: النص يتبدل بتلاشي ناعم
-        if (isMedia && m.mediaType == "audio") VoiceBubble(m, textColor, onOpenMedia, onLongPress)
-        else if (isMedia && m.mediaType == "file") FileBubble(m, textColor, onOpenMedia, onLongPress)
-        else if (isMedia) MediaThumb(m, textColor, onOpenMedia, onLongPress) else AnimatedContent(
+        if (isMedia && m.mediaType == "audio") VoiceBubble(m, textColor, onOpenMedia, onLongPress, onDoubleTap)
+        else if (isMedia && m.mediaType == "file") FileBubble(m, textColor, onOpenMedia, onLongPress, onDoubleTap)
+        else if (isMedia) MediaThumb(m, textColor, onOpenMedia, onLongPress, onDoubleTap) else AnimatedContent(
             targetState = if (m.deleted) null else m.text,
             transitionSpec = { fadeIn(tween(240)) togetherWith fadeOut(tween(160)) },
             label = "bubbleText"
@@ -1404,7 +1409,9 @@ private fun MessageRow(
     onJump: (String) -> Unit = {},
     onLongPress: (Rect) -> Unit = {},
     onOpenMedia: () -> Unit = {},
-    onAvatarClick: (() -> Unit)? = null
+    onAvatarClick: (() -> Unit)? = null,
+    iLiked: Boolean = false,
+    onHeart: (Boolean) -> Unit = {}
 ) {
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
@@ -1471,6 +1478,23 @@ private fun MessageRow(
         onLongState.value(boundsHolder[0])
     }
 
+    // ضغطتين = تفاعل بقلب أحمر (ضغطتين ثانية تشيله)
+    val burst = remember { Animatable(0f) }
+    val onHeartState = rememberUpdatedState(onHeart)
+    val iLikedState = rememberUpdatedState(iLiked)
+    fun fireDoubleTap() {
+        if (m.deleted) return
+        val now = !iLikedState.value
+        onHeartState.value(now)
+        if (now) {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            scope.launch {
+                burst.snapTo(0f)
+                burst.animateTo(1f, tween(650))
+            }
+        }
+    }
+
     val avatarSlot = @Composable {
         // نحجز مكان الصورة دائماً حتى تبقى الفقاعات بنفس المحاذاة
         Box(
@@ -1490,20 +1514,57 @@ private fun MessageRow(
         }
     }
     val bubble = @Composable {
-        StyledBubble(
-            style = style, mine = mine, dark = dark, fg = fg, backdrop = backdrop,
-            modifier = Modifier.widthIn(max = 260.dp)
-                .onGloballyPositioned { boundsHolder[0] = it.boundsInRoot() }
-                .graphicsLayer { scaleX = pulse.value; scaleY = pulse.value }
-                // الضغطة المطولة تشتغل حتى على "رسالة مَحذوفة" (فيها خيار "حذف من عندي" فقط)
-                .pointerInput(m.id) {
-                    detectTapGestures(onLongPress = { fireLongPress() })
+        Box(Modifier.padding(bottom = if (m.hearts.isNotEmpty() && !m.deleted) 10.dp else 0.dp)) {
+            StyledBubble(
+                style = style, mine = mine, dark = dark, fg = fg, backdrop = backdrop,
+                modifier = Modifier.widthIn(max = 260.dp)
+                    .onGloballyPositioned { boundsHolder[0] = it.boundsInRoot() }
+                    .graphicsLayer { scaleX = pulse.value; scaleY = pulse.value }
+                    // الضغطة المطولة تشتغل حتى على "رسالة مَحذوفة" (فيها خيار "حذف من عندي" فقط)
+                    .pointerInput(m.id) {
+                        detectTapGestures(
+                            onDoubleTap = { fireDoubleTap() },
+                            onLongPress = { fireLongPress() }
+                        )
+                    }
+            ) { textColor ->
+                BubbleBody(
+                    m = m, textColor = textColor, replyName = replyName, replyDeleted = replyDeleted,
+                    onJump = onJump, onLongPress = { fireLongPress() }, onOpenMedia = onOpenMedia,
+                    onDoubleTap = { fireDoubleTap() }
+                )
+            }
+            // قلب كبير ينبض وسط الفقاعة عند التفاعل
+            if (burst.value > 0f && burst.value < 1f) {
+                val p = burst.value
+                Text(
+                    "❤️",
+                    fontSize = 56.sp,
+                    modifier = Modifier.align(Alignment.Center).graphicsLayer {
+                        val sc = if (p < 0.3f) 0.3f + (p / 0.3f) * 1.0f else 1.3f - (p - 0.3f) * 0.3f
+                        scaleX = sc; scaleY = sc
+                        alpha = if (p < 0.6f) 1f else (1f - (p - 0.6f) / 0.4f).coerceIn(0f, 1f)
+                        translationY = -p * 18.dp.toPx()
+                    }
+                )
+            }
+            // شارة القلب تحت الفقاعة
+            if (m.hearts.isNotEmpty() && !m.deleted) {
+                Row(
+                    Modifier.align(Alignment.BottomEnd).padding(end = 10.dp).offset(y = 10.dp)
+                        .clip(CircleShape)
+                        .background(if (dark) Color(0xFF2A2F3A) else Color.White)
+                        .border(0.8.dp, fg.copy(alpha = 0.15f), CircleShape)
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("❤️", fontSize = 13.sp)
+                    if (m.hearts.size > 1) {
+                        Spacer(Modifier.width(3.dp))
+                        Text("${m.hearts.size}", fontSize = 11.sp, color = fg.copy(alpha = 0.8f))
+                    }
                 }
-        ) { textColor ->
-            BubbleBody(
-                m = m, textColor = textColor, replyName = replyName, replyDeleted = replyDeleted,
-                onJump = onJump, onLongPress = { fireLongPress() }, onOpenMedia = onOpenMedia
-            )
+            }
         }
     }
 
@@ -1576,12 +1637,12 @@ private fun MessageRow(
 
 /** بطاقة ملف: أيقونة + الاسم + الحجم، والضغط يحمّله ويفتحه */
 @Composable
-internal fun FileBubble(m: Msg, textColor: Color, onOpen: () -> Unit, onLongPress: () -> Unit) {
+internal fun FileBubble(m: Msg, textColor: Color, onOpen: () -> Unit, onLongPress: () -> Unit, onDoubleTap: () -> Unit = {}) {
     Row(
         Modifier.widthIn(min = 180.dp, max = 240.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(textColor.copy(alpha = 0.10f))
-            .pointerInput(m.id) { detectTapGestures(onTap = { onOpen() }, onLongPress = { onLongPress() }) }
+            .pointerInput(m.id) { detectTapGestures(onTap = { onOpen() }, onDoubleTap = { onDoubleTap() }, onLongPress = { onLongPress() }) }
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1604,14 +1665,14 @@ internal fun FileBubble(m: Msg, textColor: Color, onOpen: () -> Unit, onLongPres
 
 /** صورة مصغّرة لرسالة وسائط: صورة أو فيديو (مع زر تشغيل والمدة) */
 @Composable
-internal fun MediaThumb(m: Msg, textColor: Color, onOpen: () -> Unit, onLongPress: () -> Unit) {
+internal fun MediaThumb(m: Msg, textColor: Color, onOpen: () -> Unit, onLongPress: () -> Unit, onDoubleTap: () -> Unit = {}) {
     val img = rememberB64Image(m.thumb)
     val ratio = if (m.mediaW > 0 && m.mediaH > 0) (m.mediaW.toFloat() / m.mediaH).coerceIn(0.6f, 1.8f) else 1f
     Box(
         Modifier.width(220.dp).aspectRatio(ratio)
             .clip(RoundedCornerShape(14.dp))
             .background(textColor.copy(alpha = 0.12f))
-            .pointerInput(m.id) { detectTapGestures(onTap = { onOpen() }, onLongPress = { onLongPress() }) },
+            .pointerInput(m.id) { detectTapGestures(onTap = { onOpen() }, onDoubleTap = { onDoubleTap() }, onLongPress = { onLongPress() }) },
         contentAlignment = Alignment.Center
     ) {
         if (img != null) Image(img, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)

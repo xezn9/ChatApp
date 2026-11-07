@@ -49,6 +49,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import com.chatapp.messenger.ui.theme.isAppDark
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -837,7 +838,9 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                                 if (a != null && (a.canSend || a.canPin || mine || a.canDelete)) {
                                     menu = GroupMenuTarget(m, mine, rect)
                                 }
-                            }
+                            },
+                            iLiked = me in m.hearts,
+                            onHeart = { on -> Repo.setGroupMessageHeart(groupId, m.key, on) }
                         )
                         }
                     }
@@ -1232,7 +1235,9 @@ private fun GroupMessageRow(
     canReply: Boolean = false,
     onReply: () -> Unit = {},
     onJump: (String) -> Unit = {},
-    onLongPress: (Rect) -> Unit = {}
+    onLongPress: (Rect) -> Unit = {},
+    iLiked: Boolean = false,
+    onHeart: (Boolean) -> Unit = {}
 ) {
     val haptic = LocalHapticFeedback.current
     val boundsHolder = remember { arrayOf(Rect.Zero) }
@@ -1273,6 +1278,22 @@ private fun GroupMessageRow(
     fun fireLongPress() {
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         onLongPress(boundsHolder[0])
+    }
+
+    // ضغطتين = تفاعل بقلب أحمر (ضغطتين ثانية تشيله)
+    val burst = remember { Animatable(0f) }
+    val onHeartState = rememberUpdatedState(onHeart)
+    val iLikedState = rememberUpdatedState(iLiked)
+    fun fireDoubleTap() {
+        val now = !iLikedState.value
+        onHeartState.value(now)
+        if (now) {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            rowScope.launch {
+                burst.snapTo(0f)
+                burst.animateTo(1f, tween(650))
+            }
+        }
     }
 
     // ظهور رسالة جديدة: تطلع من تحت بتكبير نابضي
@@ -1347,46 +1368,80 @@ private fun GroupMessageRow(
                 SenderAvatar(avatar, onClick = onAvatarClick)
                 Spacer(Modifier.width(8.dp))
             }
-            StyledBubble(
-                style = style, mine = mine, dark = dark, fg = fg, backdrop = backdrop,
-                modifier = Modifier.widthIn(max = 260.dp)
-                    .onGloballyPositioned { boundsHolder[0] = it.boundsInRoot() }
-                    .graphicsLayer { scaleX = pulse.value; scaleY = pulse.value }
-                    .pointerInput(m.id) {
-                        detectTapGestures(onLongPress = { fireLongPress() })
+            Box(Modifier.padding(bottom = if (m.hearts.isNotEmpty()) 10.dp else 0.dp)) {
+                StyledBubble(
+                    style = style, mine = mine, dark = dark, fg = fg, backdrop = backdrop,
+                    modifier = Modifier.widthIn(max = 260.dp)
+                        .onGloballyPositioned { boundsHolder[0] = it.boundsInRoot() }
+                        .graphicsLayer { scaleX = pulse.value; scaleY = pulse.value }
+                        .pointerInput(m.id) {
+                            detectTapGestures(onDoubleTap = { fireDoubleTap() }, onLongPress = { fireLongPress() })
+                        }
+                ) { textColor ->
+                  Column {
+                    // اقتباس الرد (إذا هذي الرسالة ردّ على رسالة ثانية)
+                    if (m.replyId.isNotEmpty()) {
+                        ReplyQuoteBlock(
+                            msgId = m.id, replyId = m.replyId, replyName = replyName, replyText = m.replyText,
+                            textColor = textColor, onJump = onJump, onLongPress = { fireLongPress() },
+                            onDoubleTap = { fireDoubleTap() }
+                        )
                     }
-            ) { textColor ->
-              Column {
-                // اقتباس الرد (إذا هذي الرسالة ردّ على رسالة ثانية)
-                if (m.replyId.isNotEmpty()) {
-                    ReplyQuoteBlock(
-                        msgId = m.id, replyId = m.replyId, replyName = replyName, replyText = m.replyText,
-                        textColor = textColor, onJump = onJump, onLongPress = { fireLongPress() }
+                    // الاسم ما يظهر بالفقاعة: بس صورة المرسل جنبها (ضغطة عليها تفتح حسابه)
+                    if (m.mediaType == "audio") {
+                        VoiceBubble(
+                            id = m.id, durSec = m.mediaDur, wave = m.wave, textColor = textColor,
+                            onToggle = onToggleVoice, onLongPress = { fireLongPress() }, onDoubleTap = { fireDoubleTap() }
+                        )
+                    } else if (m.mediaType == "image" || m.mediaType == "video" || m.mediaType == "file") {
+                        // نفس فقاعات المحادثة الخاصة (نحوّل الرسالة لشكل Msg)
+                        val asMsg = Msg(
+                            id = m.id, from = m.from, text = m.text, createdAt = m.createdAt,
+                            mediaType = m.mediaType, mediaId = m.mediaId, thumb = m.thumb,
+                            mediaW = m.mediaW, mediaH = m.mediaH, mediaDur = m.mediaDur,
+                            fileName = m.fileName, fileSize = m.fileSize
+                        )
+                        if (m.mediaType == "file") FileBubble(asMsg, textColor, onOpenMedia, { fireLongPress() }, { fireDoubleTap() })
+                        else MediaThumb(asMsg, textColor, onOpenMedia, { fireLongPress() }, { fireDoubleTap() })
+                    } else {
+                        Column {
+                            Text(m.text, color = textColor, fontSize = 16.sp)
+                            TranslationBlock(m.id, textColor)
+                        }
+                    }
+                  }
+                }
+                // قلب كبير ينبض وسط الفقاعة عند التفاعل
+                if (burst.value > 0f && burst.value < 1f) {
+                    val p = burst.value
+                    Text(
+                        "❤️",
+                        fontSize = 56.sp,
+                        modifier = Modifier.align(Alignment.Center).graphicsLayer {
+                            val sc = if (p < 0.3f) 0.3f + (p / 0.3f) * 1.0f else 1.3f - (p - 0.3f) * 0.3f
+                            scaleX = sc; scaleY = sc
+                            alpha = if (p < 0.6f) 1f else (1f - (p - 0.6f) / 0.4f).coerceIn(0f, 1f)
+                            translationY = -p * 18.dp.toPx()
+                        }
                     )
                 }
-                // الاسم ما يظهر بالفقاعة: بس صورة المرسل جنبها (ضغطة عليها تفتح حسابه)
-                if (m.mediaType == "audio") {
-                    VoiceBubble(
-                        id = m.id, durSec = m.mediaDur, wave = m.wave, textColor = textColor,
-                        onToggle = onToggleVoice, onLongPress = { fireLongPress() }
-                    )
-                } else if (m.mediaType == "image" || m.mediaType == "video" || m.mediaType == "file") {
-                    // نفس فقاعات المحادثة الخاصة (نحوّل الرسالة لشكل Msg)
-                    val asMsg = Msg(
-                        id = m.id, from = m.from, text = m.text, createdAt = m.createdAt,
-                        mediaType = m.mediaType, mediaId = m.mediaId, thumb = m.thumb,
-                        mediaW = m.mediaW, mediaH = m.mediaH, mediaDur = m.mediaDur,
-                        fileName = m.fileName, fileSize = m.fileSize
-                    )
-                    if (m.mediaType == "file") FileBubble(asMsg, textColor, onOpenMedia, { fireLongPress() })
-                    else MediaThumb(asMsg, textColor, onOpenMedia, { fireLongPress() })
-                } else {
-                    Column {
-                        Text(m.text, color = textColor, fontSize = 16.sp)
-                        TranslationBlock(m.id, textColor)
+                // شارة القلب تحت الفقاعة
+                if (m.hearts.isNotEmpty()) {
+                    Row(
+                        Modifier.align(Alignment.BottomEnd).padding(end = 10.dp).offset(y = 10.dp)
+                            .clip(CircleShape)
+                            .background(if (dark) Color(0xFF2A2F3A) else Color.White)
+                            .border(0.8.dp, fg.copy(alpha = 0.15f), CircleShape)
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("❤️", fontSize = 13.sp)
+                        if (m.hearts.size > 1) {
+                            Spacer(Modifier.width(3.dp))
+                            Text("${m.hearts.size}", fontSize = 11.sp, color = fg.copy(alpha = 0.8f))
+                        }
                     }
                 }
-              }
             }
             if (mine) {
                 Spacer(Modifier.width(8.dp))

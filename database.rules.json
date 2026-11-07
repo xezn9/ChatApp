@@ -40,6 +40,11 @@
             "pinnedBy": {
               ".validate": "newData.isString()"
             },
+            "hearts": {
+              "$uid": {
+                ".validate": "$uid === auth.uid && newData.isBoolean()"
+              }
+            },
             "replyId": {
               ".validate": "newData.isString() && newData.val().length <= 100"
             },
@@ -509,6 +514,12 @@
             },
             "replyFrom": {
               ".validate": "newData.isString() && newData.val().length <= 100"
+            },
+            "hearts": {
+              "$uid": {
+                ".write": "auth != null && auth.token.email_verified === true && $uid === auth.uid && root.child('groups').child($gid).child('members').child(auth.uid).exists()",
+                ".validate": "newData.isBoolean() && newData.val() === true"
+              }
             },
             "$other": {
               ".validate": false

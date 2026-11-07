@@ -316,13 +316,13 @@ fun VoiceReviewBar(
 
 /** فقاعة رسالة صوتية: زر تشغيل/إيقاف + موجة تتلوّن أثناء التشغيل + المدة */
 @Composable
-fun VoiceBubble(m: Msg, textColor: Color, onToggle: () -> Unit, onLongPress: () -> Unit) {
-    VoiceBubble(m.id, m.mediaDur, m.wave, textColor, onToggle, onLongPress)
+fun VoiceBubble(m: Msg, textColor: Color, onToggle: () -> Unit, onLongPress: () -> Unit, onDoubleTap: () -> Unit = {}) {
+    VoiceBubble(m.id, m.mediaDur, m.wave, textColor, onToggle, onLongPress, onDoubleTap)
 }
 
 /** نفس الفقاعة لأي رسالة صوتية (محادثة عادية أو مجموعة): معرّف التشغيل + المدة بالثواني + الموجة */
 @Composable
-fun VoiceBubble(id: String, durSec: Int, wave: String, textColor: Color, onToggle: () -> Unit, onLongPress: () -> Unit) {
+fun VoiceBubble(id: String, durSec: Int, wave: String, textColor: Color, onToggle: () -> Unit, onLongPress: () -> Unit, onDoubleTap: () -> Unit = {}) {
     val active = VoicePlayer.playingId == id
     val playing = active && VoicePlayer.isPlaying
     val total = durSec * 1000L
@@ -331,7 +331,7 @@ fun VoiceBubble(id: String, durSec: Int, wave: String, textColor: Color, onToggl
     val progress = if (dur > 0L) (pos.toFloat() / dur).coerceIn(0f, 1f) else 0f
     Row(
         Modifier.width(220.dp)
-            .pointerInput(id) { detectTapGestures(onTap = { onToggle() }, onLongPress = { onLongPress() }) },
+            .pointerInput(id) { detectTapGestures(onTap = { onToggle() }, onDoubleTap = { onDoubleTap() }, onLongPress = { onLongPress() }) },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
