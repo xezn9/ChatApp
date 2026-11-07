@@ -26,7 +26,9 @@ data class UpdateInfo(
     val apkUrl: String,
     val notes: String,
     /** true = المستخدم ما يگدر يتجاوز التحديث */
-    val force: Boolean
+    val force: Boolean,
+    /** رابط صورة إعلان التحديث (اختياري، https). فاضي = ما تظهر صورة */
+    val imageUrl: String = ""
 )
 
 /** نتيجة محاولة فتح المثبّت */
@@ -64,7 +66,8 @@ object Updater {
                 versionName = snap.getString("versionName").orEmpty(),
                 apkUrl = url,
                 notes = snap.getString("notes").orEmpty(),
-                force = snap.getBoolean("force") == true
+                force = snap.getBoolean("force") == true,
+                imageUrl = snap.getString("imageUrl")?.trim().orEmpty().takeIf { it.startsWith("https://") }.orEmpty()
             )
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e

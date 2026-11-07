@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,11 +29,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.chatapp.messenger.InstallResult
 import com.chatapp.messenger.UpdateInfo
 import com.chatapp.messenger.Updater
@@ -57,6 +61,7 @@ fun UpdatePrompt() {
     var apk by remember { mutableStateOf<File?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
     var job by remember { mutableStateOf<Job?>(null) }
+    var imageFailed by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { info = Updater.check(ctx) }
 
@@ -101,11 +106,27 @@ fun UpdatePrompt() {
     GlassAuthScaffold { backdrop, dark ->
         val fg = glassFg(dark)
 
-        Box(
-            Modifier.size(88.dp).glassCircle(backdrop, dark),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(AppIcons.Download, null, tint = GlassAccent, modifier = Modifier.size(42.dp))
+        if (i.imageUrl.isNotBlank() && !imageFailed) {
+            // صورة إعلان التحديث: رابطها من Firestore (الحقل imageUrl) فتتبدل مع كل إصدار بدون بناء جديد
+            AsyncImage(
+                model = i.imageUrl,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                onError = { imageFailed = true },
+                modifier = Modifier
+                    .widthIn(max = 300.dp)
+                    .fillMaxWidth()
+                    .aspectRatio(4f / 5f)
+                    .clip(RoundedCornerShape(28.dp))
+                    .background(fg.copy(alpha = 0.06f))
+            )
+        } else {
+            Box(
+                Modifier.size(88.dp).glassCircle(backdrop, dark),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(AppIcons.Download, null, tint = GlassAccent, modifier = Modifier.size(42.dp))
+            }
         }
         Spacer(Modifier.height(18.dp))
         Text("تحديث جديد متوفر", color = fg, fontSize = 26.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
