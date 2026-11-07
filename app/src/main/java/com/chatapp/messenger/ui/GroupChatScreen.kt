@@ -847,7 +847,7 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                                     menu = GroupMenuTarget(m, mine, rect)
                                 }
                             },
-                            iLiked = m.reactions[me] == HEART,
+                            iLiked = m.reactions[me] != null,
                             onHeart = { on -> Repo.setGroupMessageReaction(groupId, m.key, if (on) HEART else null, onReactFail) }
                         )
                         }
@@ -1385,7 +1385,7 @@ private fun GroupMessageRow(
             val reactPad = androidx.compose.animation.core.animateDpAsState(
                 if (m.reactions.isNotEmpty()) 10.dp else 0.dp, spring(0.7f, 500f), label = "reactPad"
             ).value
-            Box(Modifier.padding(bottom = reactPad)) {
+            Box(Modifier.padding(bottom = reactPad.coerceAtLeast(0.dp))) {
                 StyledBubble(
                     style = style, mine = mine, dark = dark, fg = fg, backdrop = backdrop,
                     modifier = Modifier.widthIn(max = 260.dp)

@@ -730,7 +730,7 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                             onLongPress = { rect -> menu = MenuTarget(m, mine, rect) },
                             onOpenMedia = { openMedia(m) },
                             onAvatarClick = if (mine) null else onOpenProfile,
-                            iLiked = m.reactions[me] == HEART,
+                            iLiked = m.reactions[me] != null,
                             onHeart = { on -> Repo.setMessageReaction(me, other.uid, m.id, if (on) HEART else null, onWriteFail) }
                         )
                     }
@@ -1523,7 +1523,7 @@ private fun MessageRow(
         val reactPad = androidx.compose.animation.core.animateDpAsState(
             if (m.reactions.isNotEmpty() && !m.deleted) 10.dp else 0.dp, spring(0.7f, 500f), label = "reactPad"
         ).value
-        Box(Modifier.padding(bottom = reactPad)) {
+        Box(Modifier.padding(bottom = reactPad.coerceAtLeast(0.dp))) {
             StyledBubble(
                 style = style, mine = mine, dark = dark, fg = fg, backdrop = backdrop,
                 modifier = Modifier.widthIn(max = 260.dp)
