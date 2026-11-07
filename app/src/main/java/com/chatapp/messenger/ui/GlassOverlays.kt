@@ -23,6 +23,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -169,6 +180,7 @@ fun GlassMessageMenu(
     reactions: List<String> = emptyList(),
     myReaction: String? = null,
     onReact: (String) -> Unit = {},
+    onClearReact: () -> Unit = {},
     bubble: @Composable () -> Unit
 ) {
     val fg = if (dark) Color.White else Color(0xFF101418)
@@ -178,9 +190,15 @@ fun GlassMessageMenu(
     val shape = RoundedCornerShape(26.dp)
 
     val hasReacts = reactions.isNotEmpty()
-    val menuWdp = if (hasReacts) 280 else 230
+    // زر + يفتح شبكة بكل الايموجيات بدل الخيارات
+    var showAll by remember { mutableStateOf(false) }
+    val menuWdp = if (hasReacts) 330 else 230
+    val gridHdp = 230
     val menuW = with(density) { menuWdp.dp.toPx() }
-    val menuH = with(density) { (actions.size * 52 + 16 + (if (hasReacts) 58 else 0)).dp.toPx() }
+    val menuH = with(density) {
+        (if (hasReacts && showAll) 16 + 58 + gridHdp
+         else actions.size * 52 + 16 + (if (hasReacts) 58 else 0)).dp.toPx()
+    }
     val gap = with(density) { 10.dp.toPx() }
     val margin = with(density) { 12.dp.toPx() }
     val below = anchorBottom + gap + menuH <= screenHeight - margin
@@ -252,7 +270,51 @@ fun GlassMessageMenu(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     reactions.forEachIndexed { i, e ->
-                        ReactionPick(e, selected = e == myReaction, delayMs = 70L + i * 40L, fg = fg) {
+                        ReactionPick(
+                            e, selected = e == myReaction, delayMs = 70L + i * 40L, fg = fg,
+                            onDoubleClick = {
+                                scope.launch {
+                                    enter.animateTo(0f, tween(120))
+                                    onClearReact()
+                                }
+                            }
+                        ) {
+                            scope.launch {
+                                enter.animateTo(0f, tween(120))
+                                onReact(e)
+                            }
+                        }
+                    }
+                    // زر + : كل الايموجيات
+                    Box(
+                        Modifier.size(34.dp).clip(CircleShape)
+                            .background(fg.copy(alpha = if (showAll) 0.22f else 0.12f))
+                            .clickable { showAll = !showAll },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            if (showAll) Icons.Filled.Close else Icons.Filled.Add, null,
+                            tint = fg, modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                Box(Modifier.padding(horizontal = 10.dp, vertical = 3.dp).fillMaxWidth().height(0.7.dp).background(fg.copy(alpha = 0.14f)))
+            }
+            if (hasReacts && showAll) {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(44.dp),
+                    modifier = Modifier.fillMaxWidth().height(gridHdp.dp)
+                ) {
+                    items(ALL_EMOJIS) { e ->
+                        ReactionPick(
+                            e, selected = e == myReaction, delayMs = 0L, fg = fg, animate = false,
+                            onDoubleClick = {
+                                scope.launch {
+                                    enter.animateTo(0f, tween(120))
+                                    onClearReact()
+                                }
+                            }
+                        ) {
                             scope.launch {
                                 enter.animateTo(0f, tween(120))
                                 onReact(e)
@@ -260,8 +322,7 @@ fun GlassMessageMenu(
                         }
                     }
                 }
-                Box(Modifier.padding(horizontal = 10.dp, vertical = 3.dp).fillMaxWidth().height(0.7.dp).background(fg.copy(alpha = 0.14f)))
-            }
+            } else
             actions.forEach { a ->
                 Row(
                     Modifier.fillMaxWidth().height(52.dp)

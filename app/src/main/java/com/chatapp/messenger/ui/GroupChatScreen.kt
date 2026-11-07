@@ -1286,6 +1286,10 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                         menu = null
                         Repo.setGroupMessageReaction(groupId, mm.id, if (mm.reactions[me] == e) null else e, onReactFail)
                     },
+                    onClearReact = {
+                        menu = null
+                        if (mm.reactions[me] != null) Repo.setGroupMessageReaction(groupId, mm.id, null, onReactFail)
+                    },
                     onDismiss = { menu = null }
                 ) {
                     StyledBubble(

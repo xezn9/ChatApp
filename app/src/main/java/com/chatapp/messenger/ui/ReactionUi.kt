@@ -13,9 +13,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
@@ -37,12 +35,25 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 
 /** ايموجيات التفاعل (تطلع بالضغطة المطولة) */
 internal val REACTION_EMOJIS = listOf("❤️", "👍", "😂", "😮", "😢", "🔥")
+
+/** كل الايموجيات (تطلع بزر +) */
+internal val ALL_EMOJIS: List<String> = (
+    "😀 😃 😄 😁 😆 😅 🤣 😂 🙂 🙃 😉 😊 😇 🥰 😍 🤩 😘 😗 😚 😙 😋 😛 😜 🤪 😝 🤑 🤗 🤭 🤫 🤔 " +
+    "🤐 🤨 😐 😑 😶 😏 😒 🙄 😬 🤥 😌 😔 😪 🤤 😴 😷 🤒 🤕 🤢 🤮 🤧 🥵 🥶 🥴 😵 🤯 🤠 🥳 😎 🤓 " +
+    "🧐 😕 😟 🙁 ☹️ 😮 😯 😲 😳 🥺 😦 😧 😨 😰 😥 😢 😭 😱 😖 😣 😞 😓 😩 😫 🥱 😤 😡 😠 🤬 😈 " +
+    "👿 💀 ☠️ 💩 🤡 👹 👺 👻 👽 👾 🤖 🙈 🙉 🙊 💋 💌 💘 💝 💖 💗 💓 💞 💕 💟 ❣️ 💔 ❤️ 🧡 💛 " +
+    "💚 💙 💜 🤎 🖤 🤍 💯 💢 💥 💫 💦 💨 🕳️ 💬 💭 💤 👋 🤚 🖐️ ✋ 🖖 👌 🤌 🤏 ✌️ 🤞 🤟 🤘 🤙 " +
+    "👈 👉 👆 👇 ☝️ 👍 👎 ✊ 👊 🤛 🤜 👏 🙌 👐 🤲 🤝 🙏 ✍️ 💅 🤳 💪 🦾 👀 👁️ 👅 👄 🧠 🫀 " +
+    "🔥 ✨ ⭐ 🌟 ⚡ ☀️ 🌈 ☁️ ❄️ 🌹 🌸 🍀 🎉 🎊 🎈 🎁 🏆 🥇 ⚽ 🏀 🎮 🎵 🎶 🎤 🍕 🍔 🍟 🍩 🍫 " +
+    "☕ 🍉 🍓 🐶 🐱 🐼 🦁 🐸 🦋 🌙 🌍 🚀 💎 👑 💸 📌 ✅ ❌ ⚠️ ❓ ❗ 💡 🔔 🎯 🫡 🫶 🥹 🫠 🤝"
+    ).split(" ").filter { it.isNotBlank() }.distinct()
 
 /** تفاعل الضغطتين */
 internal const val HEART = "❤️"
@@ -114,22 +125,28 @@ internal fun BoxScope.ReactionBurst(p: Float, emoji: String = HEART) {
     )
 }
 
-/** زر ايموجي بصف التفاعلات: يطلع بالتتابع بارتداد، ويكبر عند الضغط */
+/**
+ * زر ايموجي بصف التفاعلات: يطلع بالتتابع بارتداد، ويكبر عند الضغط.
+ * [onDoubleClick]: الضغطتين على اي ايموجي يلغي تفاعلي (اذا انعطت)
+ */
 @Composable
 internal fun ReactionPick(
     emoji: String,
     selected: Boolean,
     delayMs: Long,
     fg: Color,
+    animate: Boolean = true,
+    onDoubleClick: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
-    val appear = remember { Animatable(0f) }
-    LaunchedEffect(Unit) {
-        delay(delayMs)
-        appear.animateTo(1f, spring(dampingRatio = 0.4f, stiffness = 380f))
+    val appear = remember { Animatable(if (animate) 0f else 1f) }
+    if (animate) {
+        LaunchedEffect(Unit) {
+            delay(delayMs)
+            appear.animateTo(1f, spring(dampingRatio = 0.4f, stiffness = 380f))
+        }
     }
-    val src = remember { MutableInteractionSource() }
-    val pressed by src.collectIsPressedAsState()
+    var pressed by remember { mutableStateOf(false) }
     val press by animateFloatAsState(if (pressed) 1.4f else 1f, spring(0.5f, 500f), label = "reactionPress")
     Box(
         Modifier.size(42.dp)
@@ -141,7 +158,17 @@ internal fun ReactionPick(
             }
             .clip(CircleShape)
             .background(if (selected) fg.copy(alpha = 0.18f) else Color.Transparent)
-            .clickable(interactionSource = src, indication = null, onClick = onClick),
+            .pointerInput(onDoubleClick) {
+                detectTapGestures(
+                    onPress = {
+                        pressed = true
+                        tryAwaitRelease()
+                        pressed = false
+                    },
+                    onDoubleTap = onDoubleClick?.let { cb -> { _: androidx.compose.ui.geometry.Offset -> cb() } },
+                    onTap = { onClick() }
+                )
+            },
         contentAlignment = Alignment.Center
     ) {
         Text(emoji, fontSize = 24.sp)

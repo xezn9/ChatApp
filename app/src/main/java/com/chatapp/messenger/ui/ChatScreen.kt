@@ -1197,6 +1197,10 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                     menu = null
                     Repo.setMessageReaction(me, other.uid, mm.id, if (mm.reactions[me] == e) null else e, onWriteFail)
                 },
+                onClearReact = {
+                    menu = null
+                    if (mm.reactions[me] != null) Repo.setMessageReaction(me, other.uid, mm.id, null, onWriteFail)
+                },
                 onDismiss = { menu = null }
             ) {
                 StyledBubble(
