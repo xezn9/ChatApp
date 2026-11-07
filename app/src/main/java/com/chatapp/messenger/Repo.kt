@@ -225,6 +225,9 @@ data class Story(
     val musicStart: Int = 0,
     /** نهاية الجزء المحدد من الأغنية بالثواني (0 = بداية + مدة القصة) */
     val musicEnd: Int = 0,
+    /** معرّف فيديو القصة (فاضي = قصة صورة). الملف مخزّن بمسار storyMedia/<uid>/<id> والصورة هي الغلاف */
+    val videoId: String = "",
+    val videoDur: Int = 0,
     /** true = عامة (تطلع لكل المستخدمين)، false = خاصة (للأصدقاء فقط) */
     val isPublic: Boolean = false
 ) {
@@ -1605,6 +1608,8 @@ object Repo {
         musicCover = it["musicCover"] as? String ?: "",
         musicStart = (it["musicStart"] as? Number)?.toInt() ?: 0,
         musicEnd = (it["musicEnd"] as? Number)?.toInt() ?: 0,
+        videoId = it["videoId"] as? String ?: "",
+        videoDur = (it["videoDur"] as? Number)?.toInt() ?: 0,
         isPublic = it["public"] as? Boolean ?: false
     )
 
@@ -1819,6 +1824,7 @@ object Repo {
             "bg" to st.bg, "filter" to st.filter,
             "musicUrl" to st.musicUrl, "musicTitle" to st.musicTitle, "musicArtist" to st.musicArtist,
             "musicCover" to st.musicCover, "musicStart" to st.musicStart, "musicEnd" to st.musicEnd,
+            "videoId" to st.videoId, "videoDur" to st.videoDur,
             "public" to st.isPublic
         )
         db.batch()
@@ -1829,6 +1835,28 @@ object Repo {
             .commit().await()
         // مشاهدات/إعجابات القصة القديمة تنمسح (القصة الجديدة تبدأ من الصفر)
         runCatching { clearStoryViews(keepStoryAt = st.createdAt) }
+    }
+
+    /** رفع فيديو/صوت القصة (يتخزن مقسّم بـ RTDB مثل وسائط المحادثة) */
+    suspend fun uploadStoryMedia(file: java.io.File, type: String, onProgress: (Float) -> Unit): String {
+        val u = auth.currentUser?.uid ?: throw IllegalStateException("سجّل الدخول أول")
+        return uploadMediaAt("storyMedia/$u", u, file, type, onProgress)
+    }
+
+    suspend fun downloadStoryMedia(owner: String, id: String, dest: java.io.File, onProgress: (Float) -> Unit = {}) =
+        downloadMediaFrom(rtdb.getReference("storyMedia/$owner/$id"), dest, onProgress)
+
+    /** يمسح ملفات القصص القديمة ويخلي بس المعرّفات بـ [keep] (فاضي = يمسح الكل) */
+    suspend fun cleanupStoryMedia(keep: Set<String>) {
+        val u = auth.currentUser?.uid ?: return
+        runCatching {
+            val ref = rtdb.getReference("storyMedia/$u")
+            val snap = withTimeout(30_000) { ref.get().await() }
+            for (c in snap.children) {
+                val k = c.key ?: continue
+                if (k !in keep) ref.child(k).removeValue().await()
+            }
+        }
     }
 
     /** الحالة النصية (فقاعة فوق الصورة) */
@@ -1863,6 +1891,7 @@ object Repo {
 
     suspend fun deleteStory() {
         val u = auth.currentUser ?: return
+        cleanupStoryMedia(emptySet())
         runCatching { clearStoryViews(keepStoryAt = -1L) }
         db.batch()
             .delete(db.collection("storyData").document(u.uid))

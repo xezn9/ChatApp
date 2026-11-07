@@ -179,6 +179,16 @@ import java.net.URLEncoder
 /** أقصى مدة للقصة بالثواني (وأقصى مدة للموسيقى عليها) */
 const val STORY_SECONDS = 15
 
+/**
+ * مدة عرض القصة بالثواني: إذا فيها صوت مقصوص تتبع طول الصوت (لين دقيقة)،
+ * وإذا فيديو بدون صوت إضافي تتبع طول الفيديو، وغير هيج 15 ثانية.
+ */
+internal fun storyLenSec(s: Story): Int = when {
+    s.musicUrl.isNotBlank() && s.musicEnd > s.musicStart -> (s.musicEnd - s.musicStart).coerceIn(1, StoryMedia.MAX_SECONDS)
+    s.videoId.isNotBlank() && s.videoDur > 0 -> s.videoDur.coerceIn(1, StoryMedia.MAX_SECONDS)
+    else -> STORY_SECONDS
+}
+
 // ======================= الخلفيات والنص =======================
 
 /** خلفيات القصة النصية (تدرجات). رقم الخلفية يتخزن بالقصة بحقل bg */
@@ -440,7 +450,26 @@ class StoryPlayer(private val cacheDir: java.io.File? = null, private val appCon
             var headers: Map<String, String>? = null
             val isYt = url.startsWith(YouTubeMusic.PREFIX)
             val f = cacheFile(url)
-            if (isYt) {
+            if (url.startsWith(StoryMedia.AUDIO_PREFIX)) {
+                // صوت مرفوع مع القصة: ننزّله مرة وحدة للكاش (story:<uid>/<id>)
+                val spec = url.removePrefix(StoryMedia.AUDIO_PREFIX)
+                val owner = spec.substringBefore('/')
+                val id = spec.substringAfter('/')
+                val sf = cacheDir?.let { java.io.File(it, "story_audio_$id.m4a") }
+                val ok = sf != null && runCatching {
+                    if (!sf.exists() || sf.length() < 512) {
+                        kotlinx.coroutines.runBlocking { Repo.downloadStoryMedia(owner, id, sf) }
+                    }
+                    sf.exists()
+                }.getOrDefault(false)
+                if (!ok || sf == null) {
+                    handler.post { if (myGen == gen) stop() }
+                    return@Thread
+                }
+                source = sf.path
+            } else if (url.startsWith("content:")) {
+                source = url   // ملف من معرض الجهاز (معاينة بالمحرر)
+            } else if (isYt) {
                 // البداية (ثانية 0) = ملف محلي صغير جاهز أو ننزّله هسه (أسرع بكثير من بث HTTP). غير البداية = بث مباشر
                 val head = if (startSec == 0) headFile(url) else null
                 if (head != null && head.exists() && head.length() > 4096) {
@@ -479,7 +508,7 @@ class StoryPlayer(private val cacheDir: java.io.File? = null, private val appCon
                             .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                             .setUsage(AudioAttributes.USAGE_MEDIA).build()
                     )
-                    if (headers != null && appContext != null) {
+                    if ((headers != null || source.startsWith("content:")) && appContext != null) {
                         p.setDataSource(appContext, android.net.Uri.parse(source), headers)
                     } else {
                         p.setDataSource(source)
@@ -655,10 +684,26 @@ internal fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
         )
     }
     var musicCover by remember { mutableStateOf("") }
-    var musicDur by remember { mutableStateOf(if ((existing?.musicUrl ?: "").startsWith(YouTubeMusic.PREFIX)) 60 else 30) }
+    var musicDur by remember {
+        val em = existing?.musicUrl ?: ""
+        mutableStateOf(
+            when {
+                em.startsWith(StoryMedia.AUDIO_PREFIX) -> ((existing?.musicEnd ?: 0) - (existing?.musicStart ?: 0)).coerceAtLeast(1)
+                em.startsWith(YouTubeMusic.PREFIX) -> 60
+                else -> 30
+            }
+        )
+    }
+    // فيديو القصة: ملف جديد جاهز للرفع، أو معرّف فيديو موجود (عند التعديل)
+    var videoFile by remember { mutableStateOf<java.io.File?>(null) }
+    var videoId by remember { mutableStateOf(existing?.videoId ?: "") }
+    var videoDur by remember { mutableStateOf(existing?.videoDur ?: 0) }
+    var pubStatus by remember { mutableStateOf("") }
+    var pubProgress by remember { mutableStateOf(0f) }
+    val isVideoStory = videoFile != null || videoId.isNotEmpty()
     var chipSel by remember { mutableStateOf("الأكثر رواجاً") }
     // 0 = اللوحة مسكرة (البطاقة كبيرة)، 1 = فلاتر، 2 = موسيقى
-    var tab by remember { mutableStateOf(if (existing == null) 0 else 1) }
+    var tab by remember { mutableStateOf(if (existing == null || existing.videoId.isNotEmpty()) 0 else 1) }
     var kindSel by remember { mutableStateOf(0) }   // 0 الكل، 1 أغاني، 2 Shorts
     var lastTab by remember { mutableStateOf(1) }
     if (tab != 0) lastTab = tab
@@ -701,7 +746,58 @@ internal fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
         }
     }
 
-    val pickImage = rememberImagePicker(maxSide = 1200, quality = 70) { imageB64 = it }
+    // صورة أو فيديو من المعرض
+    val mediaLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) scope.launch {
+            val isVid = (ctx.contentResolver.getType(uri) ?: "").startsWith("video")
+            try {
+                if (isVid) {
+                    busy = true; pubStatus = "تجهيز"; pubProgress = 0f
+                    val p = MediaUtil.prepareVideo(ctx, uri) { pubProgress = it }
+                    val poster = StoryMedia.posterOf(p.file)
+                    videoFile?.delete()
+                    videoFile = p.file; videoDur = p.durSec; videoId = ""; imageB64 = poster; filterId = ""
+                    if (tab == 1) tab = 0
+                } else {
+                    val b64 = ImageUtil.uriToB64(ctx, uri, 1200, 70)
+                    if (b64 != null) {
+                        imageB64 = b64; videoFile?.delete(); videoFile = null; videoId = ""; videoDur = 0
+                    } else AppToast.show("تعذّر قراءة الصورة")
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppToast.show(e.message ?: "تعذّر تجهيز الملف", long = true)
+            } finally {
+                busy = false; pubStatus = ""
+            }
+        }
+    }
+    val pickImage: () -> Unit = {
+        mediaLauncher.launch(
+            androidx.activity.result.PickVisualMediaRequest(
+                androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageAndVideo
+            )
+        )
+    }
+    // صوت من المعرض: فيديو (ناخذ صوته بس) أو ملف صوت. بعدها نختار الجزء ونقصه
+    val audioLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) scope.launch {
+            val info = StoryMedia.probeAudio(ctx, uri)
+            if (info == null || info.durSec <= 0) { AppToast.show("تعذّر قراءة الملف"); return@launch }
+            if (!info.hasAudio) { AppToast.show("هذا الملف ما بيه صوت"); return@launch }
+            player.stop()
+            musicUrl = uri.toString(); musicTitle = StoryMedia.displayName(ctx, uri); musicArtist = "من المعرض"
+            musicCover = ""; musicDur = info.durSec; startF = 0f; changing = false
+            val len = minOf(info.durSec, 30)
+            endF = len.toFloat()
+            player.play(musicUrl, 0, len)
+        }
+    }
     val image = rememberB64Image(imageB64)
     val canPublish = !busy && imageB64.isNotEmpty()
 
@@ -740,30 +836,70 @@ internal fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
                                 busy = true
                                 scope.launch {
                                     try {
+                                        val myUid = Repo.auth.currentUser?.uid ?: throw IllegalStateException("سجّل الدخول أول")
+                                        var vId = videoId
+                                        var mUrl = musicUrl
+                                        var mStart = startF.roundToInt()
+                                        var mEnd = endF.roundToInt()
+                                        // صوت من المعرض: ناخذ الصوت بس، نقص الجزء المحدد، ونرفعه
+                                        if (mUrl.startsWith("content:")) {
+                                            pubStatus = "قص الصوت"; pubProgress = 0f
+                                            val tmp = java.io.File(MediaUtil.mediaDir(ctx), "story_audio_${System.nanoTime()}.m4a")
+                                            val ok = StoryMedia.trimAudio(
+                                                ctx, android.net.Uri.parse(mUrl), mStart * 1000L, mEnd * 1000L, tmp
+                                            ) { pubProgress = it }
+                                            if (!ok) { tmp.delete(); throw IllegalStateException("تعذّر قص الصوت، جرّب ملف ثاني") }
+                                            pubStatus = "رفع الصوت"; pubProgress = 0f
+                                            val aId = try {
+                                                Repo.uploadStoryMedia(tmp, "audio") { pubProgress = it }
+                                            } finally {
+                                                tmp.delete()
+                                            }
+                                            mUrl = StoryMedia.AUDIO_PREFIX + myUid + "/" + aId
+                                            mEnd = (mEnd - mStart).coerceAtLeast(1); mStart = 0
+                                        }
+                                        val vf = videoFile
+                                        if (vf != null) {
+                                            pubStatus = "رفع الفيديو"; pubProgress = 0f
+                                            vId = Repo.uploadStoryMedia(vf, "video") { pubProgress = it }
+                                            // نخلي نسخة محلية حتى ما ينزّلها صاحب القصة من جديد
+                                            vf.renameTo(java.io.File(MediaUtil.mediaDir(ctx), "story_$vId.mp4"))
+                                        }
+                                        pubStatus = "نشر"; pubProgress = 0f
                                         // كل نشر (جديد أو تعديل) يبدأ مدة 24 ساعة من الآن
                                         Repo.saveStory(
                                             Story(
                                                 text = "", color = -1, image = imageB64,
                                                 createdAt = System.currentTimeMillis(), bg = 0,
-                                                filter = filterId,
-                                                musicUrl = musicUrl, musicTitle = musicTitle, musicArtist = musicArtist,
-                                                musicCover = "", musicStart = startF.roundToInt(), musicEnd = endF.roundToInt(),
+                                                filter = if (vId.isNotEmpty()) "" else filterId,
+                                                musicUrl = mUrl, musicTitle = musicTitle, musicArtist = musicArtist,
+                                                musicCover = "", musicStart = mStart, musicEnd = mEnd,
+                                                videoId = vId, videoDur = if (vId.isNotEmpty()) videoDur else 0,
                                                 isPublic = existing?.isPublic ?: false
                                             )
                                         )
+                                        val keep = HashSet<String>()
+                                        if (vId.isNotEmpty()) keep.add(vId)
+                                        if (mUrl.startsWith(StoryMedia.AUDIO_PREFIX)) keep.add(mUrl.substringAfterLast('/'))
+                                        Repo.cleanupStoryMedia(keep)
                                         player.stop()
                                         onDismiss()
+                                    } catch (e: kotlinx.coroutines.CancellationException) {
+                                        throw e
                                     } catch (e: Exception) {
-                                        busy = false
+                                        busy = false; pubStatus = ""
                                         AppToast.show("فشل النشر: ${e.message}", long = true)
                                     }
                                 }
                             }
                         ) {
                             Text(
-                                if (busy) "..." else if (existing == null) "نشر" else "نشر من جديد",
+                                if (busy) {
+                                    if (pubStatus.isEmpty()) "..."
+                                    else pubStatus + (if (pubProgress > 0f && pubProgress < 1f) " ${(pubProgress * 100).roundToInt()}%" else "")
+                                } else if (existing == null) "نشر" else "نشر من جديد",
                                 color = Color.White, fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(horizontal = 26.dp)
+                                modifier = Modifier.padding(horizontal = if (busy) 14.dp else 26.dp)
                             )
                         }
                     }
@@ -825,9 +961,22 @@ internal fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
                                         Icon(Icons.Filled.Add, null, tint = Color.White, modifier = Modifier.size(44.dp))
                                     }
                                     Spacer(Modifier.height(16.dp))
-                                    Text("اختر صورة قصتك", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                                    Text("اختر صورة أو فيديو لقصتك", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                                     Spacer(Modifier.height(4.dp))
                                     Text("ثم أضف فلتر وموسيقى", color = Color.White.copy(0.6f), fontSize = 13.sp, textAlign = TextAlign.Center)
+                                }
+                            }
+
+                            if (isVideoStory && image != null) {
+                                Row(
+                                    Modifier.align(Alignment.TopStart).padding(12.dp)
+                                        .glassPill(bd, CircleShape, Color.Transparent, dark)
+                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("فيديو ${videoDur}ث", color = Color.White, fontSize = 12.sp)
                                 }
                             }
 
@@ -862,7 +1011,10 @@ internal fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
                             verticalArrangement = Arrangement.spacedBy(if (tab != 0) 10.dp else 14.dp)
                         ) {
                             StoryToolButton(AppIcons.Image, "صورة", false, fg, bd, dark, 0, tab == 0) { pickImage() }
-                            StoryToolButton(AppIcons.Sparkles, "فلاتر", tab == 1, fg, bd, dark, 1, tab == 0) { player.stop(); tab = if (tab == 1) 0 else 1 }
+                            StoryToolButton(AppIcons.Sparkles, "فلاتر", tab == 1, fg, bd, dark, 1, tab == 0) {
+                                if (isVideoStory) AppToast.show("الفلاتر للصور فقط")
+                                else { player.stop(); tab = if (tab == 1) 0 else 1 }
+                            }
                             StoryToolButton(AppIcons.MusicNote, "موسيقى", tab == 2 || musicUrl.isNotEmpty(), fg, bd, dark, 2, tab == 0) { tab = if (tab == 2) 0 else 2 }
                         }
 
@@ -949,6 +1101,8 @@ internal fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
                                     onSearch = { chipSel = ""; loadMusic(query.trim()) },
                                     results = results, loading = loading, failed = failed,
                                     kindSel = kindSel, onKind = { kindSel = it },
+                                    maxLen = if (musicUrl.startsWith("content:") || musicUrl.startsWith(StoryMedia.AUDIO_PREFIX)) StoryMedia.MAX_SECONDS else STORY_SECONDS,
+                                    onPickFile = { audioLauncher.launch(arrayOf("audio/*", "video/*")) },
                                     onPick = { t ->
                                         musicUrl = t.previewUrl; musicTitle = t.title; musicArtist = t.artist
                                         musicCover = t.cover; musicDur = t.durationSec; startF = 0f; changing = false
@@ -1359,7 +1513,8 @@ private fun MusicPanel(
     chipSel: String, onChip: (String, String) -> Unit, onSearch: () -> Unit,
     results: List<MusicTrack>, loading: Boolean, failed: Boolean,
     kindSel: Int, onKind: (Int) -> Unit,
-    onPick: (MusicTrack) -> Unit, onClear: () -> Unit
+    onPick: (MusicTrack) -> Unit, onClear: () -> Unit,
+    maxLen: Int = STORY_SECONDS, onPickFile: () -> Unit = {}
 ) {
     val dark = isAppDark()
     if (musicUrl.isNotEmpty() && !changing) {
@@ -1422,7 +1577,7 @@ private fun MusicPanel(
                     )
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                         // طول الجزء (الزر المختار يكبر بارتداد)
-                        listOf(5, 10, STORY_SECONDS).filter { it <= total }.forEach { l ->
+                        listOf(5, 10, 15, 30, 60).filter { it <= total && it <= maxLen }.forEach { l ->
                             val sel = len == l
                             val sc by animateFloatAsState(
                                 if (sel) 1.1f else 1f,
@@ -1473,6 +1628,17 @@ private fun MusicPanel(
         else -> results
     }
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        // صوت من المعرض (فيديو أو ملف صوت)
+        Row(
+            Modifier.fillMaxWidth().bounceClick(0.97f) { onPickFile() }
+                .softGlass(RoundedCornerShape(18.dp), AccentBlue.copy(0.25f), dark)
+                .padding(horizontal = 14.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(AppIcons.Image, null, tint = AccentBlue, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(10.dp))
+            Text("من المعرض: فيديو أو ملف صوت", color = fg, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        }
         Row(
             Modifier.fillMaxWidth().softGlass(RoundedCornerShape(18.dp), Color.Transparent, dark)
                 .padding(horizontal = 14.dp, vertical = 11.dp),
@@ -1664,7 +1830,23 @@ fun StoryViewerScreen(
     // القصة تنتظر الأغنية تجهز (بحد أقصى 6 ثواني) حتى تبدأ الأغنية والقصة سوا من البداية
     var musicTimeout by remember(story.createdAt) { mutableStateOf(false) }
     val musicLoading = story.musicUrl.isNotBlank() && !player.ready && !musicTimeout
-    val paused = menuOpen || confirmDelete || replyFocused || holding || viewersOpen || shareOpen || musicLoading
+    // فيديو القصة: ينزّل مرة وحدة للكاش، والقصة تنتظره يجهز
+    val storySec = remember(story) { storyLenSec(story) }
+    val isVideo = story.videoId.isNotBlank()
+    val hasMusic = story.musicUrl.isNotBlank()
+    var videoFile by remember(story.videoId) { mutableStateOf<java.io.File?>(null) }
+    var videoReady by remember(story.videoId) { mutableStateOf(!isVideo) }
+    val videoRef = remember { arrayOfNulls<android.widget.VideoView>(1) }
+    LaunchedEffect(story.videoId) {
+        if (isVideo) {
+            val f = java.io.File(MediaUtil.mediaDir(ctx), "story_${story.videoId}.mp4")
+            val ok = (f.exists() && f.length() > 1024) ||
+                runCatching { Repo.downloadStoryMedia(realOwner, story.videoId, f) }.isSuccess
+            if (ok && f.exists()) videoFile = f else { videoReady = true; AppToast.show("تعذّر تحميل الفيديو") }
+        }
+    }
+    DisposableEffect(Unit) { onDispose { runCatching { videoRef[0]?.stopPlayback() } } }
+    val paused = menuOpen || confirmDelete || replyFocused || holding || viewersOpen || shareOpen || musicLoading || !videoReady
     // الإعجاب: أي صديق يگدر يعجب بقصة صاحبه. العدد والمشاهدين يظهرون لصاحب القصة فقط
     val liked by remember(realOwner, story.createdAt, mine) {
         if (!mine && realOwner.isNotBlank()) Repo.myStoryLikeFlow(realOwner, story.createdAt)
@@ -1687,11 +1869,8 @@ fun StoryViewerScreen(
     }
     LaunchedEffect(story.musicUrl) {
         if (story.musicUrl.isNotBlank()) {
-            player.play(
-                story.musicUrl, story.musicStart,
-                if (story.musicEnd > story.musicStart) minOf(story.musicEnd - story.musicStart, STORY_SECONDS) else STORY_SECONDS
-            )
-            delay(6_000)
+            player.play(story.musicUrl, story.musicStart, storySec)
+            delay(if (story.musicUrl.startsWith(StoryMedia.AUDIO_PREFIX)) 20_000 else 6_000)
             musicTimeout = true
         }
     }
@@ -1699,9 +1878,11 @@ fun StoryViewerScreen(
     LaunchedEffect(paused) {
         if (paused) {
             player.pause()
+            runCatching { videoRef[0]?.pause() }
         } else {
             player.resume()
-            val leftMs = ((1f - prog.value) * STORY_SECONDS * 1000).toInt().coerceAtLeast(1)
+            runCatching { videoRef[0]?.start() }
+            val leftMs = ((1f - prog.value) * storySec * 1000).toInt().coerceAtLeast(1)
             prog.animateTo(1f, tween(leftMs, easing = LinearEasing))
             finishedCb()
         }
@@ -1764,6 +1945,34 @@ fun StoryViewerScreen(
                     image, null, Modifier.fillMaxSize().storyGrain(story.filter),
                     contentScale = ContentScale.Fit,
                     colorFilter = storyColorFilter(story.filter)
+                )
+            }
+            val vf = videoFile
+            if (vf != null) {
+                androidx.compose.ui.viewinterop.AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { c ->
+                        val vv = android.widget.VideoView(c)
+                        vv.setVideoPath(vf.path)
+                        vv.setOnPreparedListener { mp ->
+                            mp.isLooping = true
+                            // إذا القصة إلها أغنية، صوت الفيديو الأصلي ينكتم
+                            if (hasMusic) mp.setVolume(0f, 0f)
+                            videoReady = true
+                        }
+                        vv.setOnErrorListener { _, _, _ -> videoReady = true; AppToast.show("تعذّر تشغيل الفيديو"); true }
+                        videoRef[0] = vv
+                        android.widget.FrameLayout(c).also {
+                            it.addView(
+                                vv,
+                                android.widget.FrameLayout.LayoutParams(
+                                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                                    android.view.Gravity.CENTER
+                                )
+                            )
+                        }
+                    }
                 )
             }
             if (story.text.isNotBlank()) {
