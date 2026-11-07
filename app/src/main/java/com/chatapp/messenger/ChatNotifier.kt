@@ -18,6 +18,7 @@ import android.util.Base64
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.Person
+import androidx.core.app.RemoteInput
 import androidx.core.graphics.drawable.IconCompat
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.async
@@ -67,6 +68,26 @@ object ChatNotifier {
         return i
     }
 
+    /** زر "رد" بالإشعار: يكتب المستخدم ويرسل بدون فتح التطبيق. kind = chat/group، target = uid الطرف أو id المجموعة */
+    fun replyAction(ctx: Context, kind: String, target: String, notifId: Int): NotificationCompat.Action {
+        val ri = RemoteInput.Builder(NotifReplyReceiver.KEY_TEXT).setLabel("اكتب ردك...").build()
+        val i = Intent(ctx, NotifReplyReceiver::class.java).apply {
+            putExtra(NotifReplyReceiver.EXTRA_KIND, kind)
+            putExtra(NotifReplyReceiver.EXTRA_TARGET, target)
+            putExtra(NotifReplyReceiver.EXTRA_NOTIF_ID, notifId)
+        }
+        // RemoteInput يحتاج PendingIntent قابل للتعديل (MUTABLE)
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+            (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
+        val pi = PendingIntent.getBroadcast(ctx, notifId, i, flags)
+        return NotificationCompat.Action.Builder(R.drawable.ic_notification, "رد", pi)
+            .addRemoteInput(ri)
+            .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
+            .setShowsUserInterface(false)
+            .setAllowGeneratedReplies(true)
+            .build()
+    }
+
     suspend fun show(ctx: Context, from: String, rawText: String) {
         val text = com.chatapp.messenger.ui.ChatSticker.preview(rawText)
         // محادثة مكتومة: بدون إشعار
@@ -108,6 +129,7 @@ object ChatNotifier {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .setContentIntent(pi)
+            .addAction(replyAction(ctx, NotifReplyReceiver.KIND_CHAT, from, id))
             .build()
         @Suppress("MissingPermission")
         NotificationManagerCompat.from(ctx).notify(id, n)
@@ -216,6 +238,7 @@ object ChatNotifier {
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setAutoCancel(true)
                 .setContentIntent(pi)
+                .addAction(replyAction(ctx, NotifReplyReceiver.KIND_GROUP, gid, id))
                 .build()
             @Suppress("MissingPermission")
             NotificationManagerCompat.from(ctx).notify(id, n)

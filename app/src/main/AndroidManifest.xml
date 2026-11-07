@@ -145,6 +145,11 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- الرد على الرسائل من الإشعار -->
+        <receiver
+            android:name=".NotifReplyReceiver"
+            android:exported="false" />
+
         <receiver
             android:name=".BootReceiver"
             android:exported="true">

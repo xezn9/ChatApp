@@ -48,6 +48,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -66,6 +68,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.paint
 import androidx.compose.ui.graphics.Color
@@ -76,6 +79,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.chatapp.messenger.AppState
 import com.chatapp.messenger.PrivacyState
+import com.chatapp.messenger.GroupUnread
 import com.chatapp.messenger.Repo
 import com.chatapp.messenger.UserItem
 import com.chatapp.messenger.ui.glass.GlassButton
@@ -162,6 +166,11 @@ private fun MainContent() {
         rememberVectorPainter(AppIcons.Group) to "Groups",
         rememberVectorPainter(Icons.Filled.Person) to "Account"
     )
+    // شارات عدد الرسائل غير المقروءة: Groups = رسائل المجموعات، Home = المحادثات + المجموعات
+    val groupUnread by remember(myUid) { GroupUnread.totalFlow(ctx, myUid) }.collectAsState(initial = 0)
+    val chatItems by remember(myUid) { Repo.chatsFlow(myUid) }.collectAsState(initial = emptyList())
+    val chatUnread = chatItems.filter { !it.req }.sumOf { it.unread }
+    val tabBadges = listOf(chatUnread + groupUnread, groupUnread, 0)
     val modeTabs = listOf(
         rememberVectorPainter(AppIcons.ChatBubble) to "المحادثات",
         rememberVectorPainter(AppIcons.Inbox) to if (requestCount > 0) "الطلبات ($requestCount)" else "الطلبات"
@@ -366,11 +375,22 @@ private fun MainContent() {
                 // نفس تركيبة الكتالوج: Box + paint بدل Icon، والنص 12sp
                 tabs.forEachIndexed { index, (painter, label) ->
                     LiquidBottomTab({ tab = index }) {
-                        Box(
-                            Modifier
-                                .size(28f.dp)
-                                .paint(painter, colorFilter = iconColorFilter)
-                        )
+                        // LTR حتى تكون الشارة دائماً أعلى يمين الأيقونة (التطبيق RTL)
+                        androidx.compose.runtime.CompositionLocalProvider(
+                            androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr
+                        ) {
+                            Box(Modifier.size(28f.dp)) {
+                                Box(
+                                    Modifier
+                                        .fillMaxSize()
+                                        .paint(painter, colorFilter = iconColorFilter)
+                                )
+                                TabBadge(
+                                    tabBadges.getOrElse(index) { 0 },
+                                    Modifier.align(Alignment.TopEnd).offset(x = 10.dp, y = (-4).dp)
+                                )
+                            }
+                        }
                         BasicText(label, style = TextStyle(contentColor, 12f.sp, fontFamily = AppFont))
                     }
                 }
@@ -603,5 +623,29 @@ private fun MainContent() {
                 onDismiss = { confirmLogout = false }
             )
         }
+    }
+}
+
+
+/** شارة حمراء بعدد الرسائل غير المقروءة (تختفي إذا العدد 0) */
+@Composable
+private fun TabBadge(count: Int, modifier: Modifier = Modifier) {
+    if (count <= 0) return
+    Box(
+        modifier
+            .defaultMinSize(minWidth = 18.dp, minHeight = 18.dp)
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .background(Color(0xFFFF3B5C))
+            .padding(horizontal = 5.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        BasicText(
+            if (count > 99) "99+" else count.toString(),
+            style = TextStyle(
+                Color.White, 11f.sp,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                fontFamily = AppFont
+            )
+        )
     }
 }

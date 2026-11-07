@@ -107,6 +107,7 @@ class ChatMessagingService : FirebaseMessagingService() {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .setContentIntent(pi)
+            .addAction(ChatNotifier.replyAction(this, NotifReplyReceiver.KIND_CHAT, from, id))
             .build()
         @Suppress("MissingPermission")
         NotificationManagerCompat.from(this).notify(id, n)
