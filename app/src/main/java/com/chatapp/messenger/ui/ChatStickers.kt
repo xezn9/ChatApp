@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -40,7 +41,9 @@ internal fun StickerMessage(id: String, size: Dp = 132.dp, modifier: Modifier = 
     @Suppress("UNUSED_VARIABLE") val rev = StickerDownloader.version   // يعيد الرسم بعد تنزيل الحزم
     StickerRegistry.ensure(ctx)
     val packId = id.split(':').getOrNull(1).orEmpty()
-    val known = StickerPacks.any { it.id == packId } || packId.startsWith("tg_")
+    val known = StickerRegistry.packById(packId) != null || packId.startsWith("tg_")
+    // ملصق دردشة وما نزلت الملصقات عندي بعد: نبدأ التنزيل
+    if (packId == CHAT_PACK_ID && !known) LaunchedEffect(Unit) { StickerDownloader.start(ctx, immediate = true) }
     Box(modifier.size(size), contentAlignment = Alignment.Center) {
         if (known) StickerBadgeView(id, size) else Text("🎭", fontSize = (size.value / 2.4f).sp)
     }

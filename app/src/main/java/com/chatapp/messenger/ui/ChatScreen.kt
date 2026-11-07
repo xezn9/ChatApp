@@ -1039,15 +1039,21 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                             .padding(horizontal = 20.dp, vertical = 14.dp),
                         contentAlignment = Alignment.CenterStart
                     ) {
-                        if (text.isEmpty()) Text("اكتب رسالة", color = fg.copy(alpha = 0.5f), fontSize = 16.sp)
+                        if (text.isEmpty()) Text("اكتب رسالة", color = fg.copy(alpha = 0.5f), fontSize = 16.sp, modifier = Modifier.padding(end = 40.dp))
                         BasicTextField(
                             value = text,
                             onValueChange = { text = it },
                             maxLines = 4,
                             textStyle = TextStyle(fontFamily = AppFont, color = fg, fontSize = 16.sp),
                             cursorBrush = SolidColor(Blue),
-                            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
+                            modifier = Modifier.fillMaxWidth().padding(end = 40.dp).focusRequester(focusRequester)
                         )
+                                // زر الملصقات: واضح داخل مربع الكتابة
+                                if (editing == null) Box(
+                                    Modifier.align(Alignment.CenterEnd).size(36.dp).clip(CircleShape)
+                                        .clickable { stickerOpen = true },
+                                    contentAlignment = Alignment.Center
+                                ) { Text("🎭", fontSize = 22.sp) }
                     }
                     }
                     val rtlNow = LocalLayoutDirection.current == LayoutDirection.Rtl
@@ -1242,12 +1248,10 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
 
         // ----- ملصقات -----
         BackHandler(enabled = stickerOpen) { stickerOpen = false }
-        BadgePopup(
-            open = stickerOpen, origin = stickerOrigin, dark = dark, backdrop = contentBackdrop,
+        ChatStickerPanel(
+            open = stickerOpen, dark = dark,
             onDismiss = { stickerOpen = false },
-            onPick = { if (it.isNotBlank()) sendSticker(it) },
-            heading = "الملصقات",
-            subheading = "اختر ملصق وينرسل بالمحادثة"
+            onPick = { if (it.isNotBlank()) sendSticker(it) }
         )
         }
     }

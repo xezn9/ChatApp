@@ -117,6 +117,8 @@ import kotlin.math.roundToInt
 //  حزم معروفة تحتفظ بترتيبها وألوانها، والباقي يترتب أبجدياً ويتولّد له لون واسم تلقائي.
 // ============================================================================
 
+internal const val CHAT_PACK_ID = "chat"
+
 internal class StickerPack(val id: String, val title: String, val color: Color, val dir: File? = null) {
     /** حزمة منزّلة من تيليجرام (ملفاتها بذاكرة الجهاز مو بالـ assets) */
     val downloaded: Boolean get() = dir != null
@@ -140,6 +142,13 @@ internal object StickerRegistry {
     @Volatile private var fileMap: Map<String, Map<String, String>> = emptyMap()   // pack -> (name -> fileName)
 
     val packs: List<StickerPack> get() = packList
+
+    /** ملصقات الدردشة (من الزيب): منفصلة عن أقسام رموز الاسم، ما تظهر بقائمتها */
+    @Volatile private var chatPackRef: StickerPack? = null
+    val chat: StickerPack? get() = chatPackRef
+    /** كل الحزم للرسم (تشمل ملصقات الدردشة) */
+    fun packById(id: String): StickerPack? = if (id == CHAT_PACK_ID) chatPackRef else packList.firstOrNull { it.id == id }
+    fun allPacks(): List<StickerPack> = packList + listOfNotNull(chatPackRef)
 
     // أسماء الأقسام المخصّصة (يحددها المستخدم): packId -> الاسم
     @Volatile private var custom: Map<String, String> = emptyMap()
@@ -175,7 +184,7 @@ internal object StickerRegistry {
             if (byName.isNotEmpty()) map[d] = byName
         }
         val known = KnownPacks.filter { map.containsKey(it.id) }
-        val extra = map.keys.filter { k -> KnownPacks.none { it.id == k } }.sortedBy { it.lowercase() }.map { autoPack(it) }
+        val extra = map.keys.filter { k -> k != CHAT_PACK_ID && KnownPacks.none { it.id == k } }.sortedBy { it.lowercase() }.map { autoPack(it) }
         // الحزم المنزّلة من تيليجرام: files/tgpacks/tg_<اسم>/
         val dl = ArrayList<StickerPack>()
         TelegramStickers.root(ctx).listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") && !it.name.contains(':') }
@@ -193,6 +202,17 @@ internal object StickerRegistry {
                     dl += StickerPack(d.name, title.ifBlank { d.name.removePrefix("tg_") }, auto.color, d)
                 }
             }
+        // ملصقات الدردشة: files/chat_stickers/ (مجلد واحد بدون أقسام)
+        val chatDir = File(ctx.filesDir, "chat_stickers")
+        val chatNames = LinkedHashMap<String, String>()
+        (chatDir.list()?.toList() ?: emptyList())
+            .filter { it.substringAfterLast('.', "").lowercase() in EXTS && !it.substringBeforeLast('.').contains(':') }
+            .sortedBy { EXTS.indexOf(it.substringAfterLast('.').lowercase()) }
+            .forEach { chatNames.putIfAbsent(it.substringBeforeLast('.'), it) }
+        if (chatNames.isNotEmpty()) {
+            map[CHAT_PACK_ID] = chatNames
+            chatPackRef = StickerPack(CHAT_PACK_ID, "ملصقات الدردشة", Color(0xFFFF2D92), chatDir)
+        } else chatPackRef = null
         fileMap = map
         packList = known + extra + dl
         scanned = true
@@ -365,7 +385,7 @@ internal object StickerStore {
         StickerRegistry.ensure(app)
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
             try { Thread.currentThread().priority = Thread.MIN_PRIORITY } catch (_: Exception) {}
-            for (pack in StickerPacks) {
+            for (pack in StickerRegistry.allPacks()) {
                 val dir = cacheDir(app, pack)
                 for (file in files(app, pack).filter { it.endsWith(".tgs", ignoreCase = true) }) {
                     val name = file.substringBeforeLast('.')
@@ -421,7 +441,7 @@ internal fun StickerBadgeView(id: String, size: Dp, modifier: Modifier = Modifie
     StickerRegistry.ensure(LocalContext.current)
     val parts = remember(id) { id.split(':') }
     if (parts.size != 3) return
-    val pack = StickerPacks.firstOrNull { it.id == parts[1] }
+    val pack = StickerRegistry.packById(parts[1])
     if (pack == null) {
         // حزمة منزّلة من تيليجرام وما موجودة عندي: أسحب الرمز من السيرفر (رفعه صاحبه)
         if (parts[1].startsWith("tg_")) RemoteSticker(id, size, modifier)

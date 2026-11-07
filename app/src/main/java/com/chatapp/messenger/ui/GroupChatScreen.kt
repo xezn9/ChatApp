@@ -1118,7 +1118,8 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                                 if (text.isEmpty()) {
                                     Text(
                                         if (slow > 0 && !access.isAdmin) "اكتب رسالة (الوضع البطيء: $slow ث)" else "اكتب رسالة",
-                                        color = fg.copy(alpha = 0.5f), fontSize = 16.sp
+                                        color = fg.copy(alpha = 0.5f), fontSize = 16.sp,
+                                        modifier = Modifier.padding(end = 40.dp)
                                     )
                                 }
                                 BasicTextField(
@@ -1127,8 +1128,14 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                                     maxLines = 4,
                                     textStyle = TextStyle(fontFamily = AppFont, color = fg, fontSize = 16.sp),
                                     cursorBrush = SolidColor(AccentBlue),
-                                    modifier = Modifier.fillMaxWidth()
+                                    modifier = Modifier.fillMaxWidth().padding(end = 40.dp)
                                 )
+                                        // زر الملصقات: واضح داخل مربع الكتابة
+                                        Box(
+                                            Modifier.align(Alignment.CenterEnd).size(36.dp).clip(CircleShape)
+                                                .clickable { stickerOpen = true },
+                                            contentAlignment = Alignment.Center
+                                        ) { Text("🎭", fontSize = 22.sp) }
                             }
                             }
                             // الكتابة فاضية = زر المايك (ضغطة مطولة تسجل)، فيه نص = زر الإرسال، وبالمراجعة = إرسال التسجيل
@@ -1193,12 +1200,10 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
 
             // ----- ملصقات -----
             BackHandler(enabled = stickerOpen) { stickerOpen = false }
-            BadgePopup(
-                open = stickerOpen, origin = stickerOrigin, dark = dark, backdrop = contentBackdrop,
+            ChatStickerPanel(
+                open = stickerOpen, dark = dark,
                 onDismiss = { stickerOpen = false },
-                onPick = { if (it.isNotBlank()) sendSticker(it) },
-                heading = "الملصقات",
-                subheading = "اختر ملصق وينرسل للمجموعة"
+                onPick = { if (it.isNotBlank()) sendSticker(it) }
             )
 
             // ----- إعدادات المجموعة: خلفية + فقاعات (نفس لوحة المحادثة العادية) -----

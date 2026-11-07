@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -36,7 +37,7 @@ internal object StickerDownloader {
     private const val ZIP_URL = "https://github.com/xezn9/Noway/releases/download/Stickers/Stickers.zip"
 
     /** غيّر الرقم لما ترفع نسخة جديدة من الملف حتى ينزلها الكل مرة ثانية */
-    private const val REVISION = 1
+    private const val REVISION = 2
 
     /** true = ينزل فقط على الواي فاي أو الإنترنت غير المحدود */
     private const val UNMETERED_ONLY = false
@@ -48,14 +49,28 @@ internal object StickerDownloader {
     var version by mutableIntStateOf(0)
         private set
 
-    fun start(context: Context) {
+    /** جاري التنزيل؟ وهل فشل آخر محاولة؟ (للوحة الملصقات) */
+    var busy by mutableStateOf(false)
+        private set
+    var failed by mutableStateOf(false)
+        private set
+
+    /** إعادة محاولة فورية (زر "إعادة المحاولة" أو أول فتح للوحة بدون ملصقات) */
+    fun retry(context: Context) {
+        val app = context.applicationContext
+        app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt("done_rev", 0).apply()
+        start(app, immediate = true)
+    }
+
+    fun start(context: Context, immediate: Boolean = false) {
         val app = context.applicationContext
         val sp = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         if (sp.getInt("done_rev", 0) >= REVISION) return
         if (!running.compareAndSet(false, true)) return
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            Handler(Looper.getMainLooper()).post { busy = true; failed = false }
             try {
-                delay(3_000)   // نخلي التطبيق يفتح أول
+                if (!immediate) delay(3_000)   // نخلي التطبيق يفتح أول
                 var attempt = 0
                 while (attempt < 8) {
                     val ok = if (!networkAllowed(app)) false else runCatching { downloadAndInstall(app) }.getOrDefault(false)
@@ -64,10 +79,13 @@ internal object StickerDownloader {
                         break
                     }
                     attempt++
+                    if (immediate && attempt >= 2) break   // فتح اللوحة: نحاول مرتين بس ونظهر زر إعادة المحاولة
                     delay(minOf(120_000L, 8_000L * attempt * attempt))
                 }
             } finally {
+                val done = sp.getInt("done_rev", 0) >= REVISION
                 running.set(false)
+                Handler(Looper.getMainLooper()).post { busy = false; failed = !done }
             }
         }
     }
@@ -115,28 +133,40 @@ internal object StickerDownloader {
         }
     }
 
-    /** فك الضغط لمجلد مؤقت ثم نقل كل حزمة لمكانها (حتى ما تظهر حزمة ناقصة) */
+    /**
+     * فك الضغط: كل ملصقات الزيب (حتى لو داخل مجلدات) تنحط ببساطة بمجلد واحد files/chat_stickers/
+     * وتصير "ملصقات الدردشة" فقط. ما تظهر برموز الاسم ولا كأقسام.
+     */
     private fun install(ctx: Context, zip: File): Boolean {
-        val root = TelegramStickers.root(ctx).apply { mkdirs() }
-        val tmp = File(root, ".dl_tmp").apply { deleteRecursively(); mkdirs() }
+        val target = File(ctx.filesDir, "chat_stickers")
+        val tmp = File(ctx.filesDir, "chat_stickers_tmp").apply { deleteRecursively(); mkdirs() }
         val exts = setOf("tgs", "webp", "png", "jpg", "jpeg")
-        val builtIn = try { ctx.assets.list("stickers")?.toSet() ?: emptySet() } catch (_: Exception) { emptySet() }
-        val packs = LinkedHashSet<String>()
+        var count = 0
         ZipInputStream(BufferedInputStream(FileInputStream(zip))).use { zin ->
             var e = zin.nextEntry
             while (e != null) {
                 if (!e.isDirectory) {
                     val parts = e.name.replace('\\', '/').split('/').filter { it.isNotBlank() && it != "." }
                     val bad = parts.any { it == ".." || it.startsWith(".") || it.startsWith("__MACOSX") }
-                    if (parts.size >= 2 && !bad) {
+                    if (parts.isNotEmpty() && !bad) {
                         val file = parts.last()
-                        val pack = parts[parts.size - 2]
                         val ext = file.substringAfterLast('.', "").lowercase()
-                        val okName = !pack.contains(':') && !file.substringBeforeLast('.').contains(':')
-                        if (ext in exts && okName && pack !in builtIn) {
-                            val outDir = File(tmp, pack).apply { mkdirs() }
-                            FileOutputStream(File(outDir, file)).use { zin.copyTo(it) }
-                            packs += pack
+                        if (ext in exts) {
+                            // اسم نظيف بدون ":" أو فراغات (لأن المعرّف s:chat:<الاسم>)
+                            fun clean(x: String) = x.replace(Regex("[:\\s/]+"), "_")
+                            var base = clean(file.substringBeforeLast('.'))
+                            if (base.isBlank()) base = "s${count}"
+                            var out = File(tmp, "$base.$ext")
+                            if (out.exists() || File(tmp, "$base.tgs").exists() || File(tmp, "$base.webp").exists() ||
+                                File(tmp, "$base.png").exists() || File(tmp, "$base.jpg").exists() || File(tmp, "$base.jpeg").exists()) {
+                                val folder = if (parts.size >= 2) clean(parts[parts.size - 2]) else "x"
+                                base = "${folder}_$base"
+                                out = File(tmp, "$base.$ext")
+                            }
+                            if (!out.exists()) {
+                                FileOutputStream(out).use { zin.copyTo(it) }
+                                count++
+                            }
                         }
                     }
                 }
@@ -144,13 +174,11 @@ internal object StickerDownloader {
                 e = zin.nextEntry
             }
         }
-        if (packs.isEmpty()) { tmp.deleteRecursively(); return false }
-        for (p in packs) {
-            val target = File(root, p)
-            if (target.exists()) target.deleteRecursively()
-            File(tmp, p).renameTo(target)
-        }
-        tmp.deleteRecursively()
+        if (count == 0) { tmp.deleteRecursively(); return false }
+        if (target.exists()) target.deleteRecursively()
+        if (!tmp.renameTo(target)) { tmp.deleteRecursively(); return false }
+        // تنظيف: الحزم اللي نزلت بالنسخة القديمة من نفس الزيب (كرموز اسم) تنشال، وحزم تيليجرام (tg_) تبقى
+        TelegramStickers.root(ctx).listFiles()?.filter { it.isDirectory && !it.name.startsWith("tg_") }?.forEach { it.deleteRecursively() }
         StickerRegistry.refresh(ctx)
         Handler(Looper.getMainLooper()).post { version++ }
         return true
