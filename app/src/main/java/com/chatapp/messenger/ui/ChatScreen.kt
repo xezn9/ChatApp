@@ -361,6 +361,9 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
     // ---- اختيار + معاينة قبل الإرسال ----
     var pending by remember { mutableStateOf<PendingAttachment?>(null) }
     var showAttach by remember { mutableStateOf(false) }
+    // ملصقات المحادثة: نافذة الاختيار + نقطة انبثاقها (زر +)
+    var stickerOpen by remember { mutableStateOf(false) }
+    var stickerOrigin by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
     val mediaPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null && mediaStatus == null) {
             val isVideo = (ctx.contentResolver.getType(uri) ?: "").startsWith("video")
@@ -649,6 +652,20 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
             fly.snapTo(-1f)
             fly.animateTo(0f, spring(0.6f, 500f))
         }
+    }
+
+    /** إرسال ملصق كرسالة (نص مشفّر بصيغة [[stk:...]]) */
+    fun sendSticker(id: String) {
+        if (id.isBlank()) return
+        val r = replyTo
+        Repo.send(
+            me, other.uid, ChatSticker.encode(id),
+            replyId = r?.id ?: "",
+            replyText = r?.let { msgPreview(it, 100) } ?: "",
+            replyFrom = r?.from ?: ""
+        )
+        replyTo = null
+        scope.launch { listState.scrollToItem(0) }
     }
 
     // عند الرد أو التعديل افتح الكيبورد على مربع الكتابة
@@ -972,7 +989,7 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                             modifier = Modifier.weight(1f)
                         )
                     } else {
-                    Box {
+                    Box(Modifier.onGloballyPositioned { stickerOrigin = it.boundsInRoot().center }) {
                         GlassButton(
                             onClick = { showAttach = !showAttach },
                             backdrop = contentBackdrop,
@@ -995,6 +1012,10 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                                 onPickFile = {
                                         showAttach = false
                                         filePicker.launch(arrayOf("*/*"))
+                                    },
+                                onPickSticker = {
+                                        showAttach = false
+                                        stickerOpen = true
                                     }
                             )
                     }
@@ -1124,7 +1145,7 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                 // الرسالة المحذوفة للجميع ("رسالة مَحذوفة") ما يصير عليها رد/تعديل/تثبيت، بس إخفاء من عندي
                 if (!mm.deleted) {
                     add(MsgAction(AppIcons.Reply, "رد", Blue) { menu = null; editing = null; replyTo = mm })
-                    if (mt.mine && mm.mediaType.isEmpty()) add(MsgAction(Icons.Filled.Edit, "تعديل", Color(0xFF8A5CFF)) {
+                    if (mt.mine && mm.mediaType.isEmpty() && ChatSticker.parse(mm.text) == null) add(MsgAction(Icons.Filled.Edit, "تعديل", Color(0xFF8A5CFF)) {
                         menu = null; replyTo = null; editing = mm; text = mm.text
                     })
                     // حفظ الملف بمجلد التنزيلات
@@ -1137,7 +1158,7 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                         Repo.setMessagePinned(me, other.uid, mm.id, !mm.pinned, onWriteFail)
                     })
                     // ترجمة الرسائل الإنجليزية للعربية (أو إخفاء الترجمة إذا ظاهرة)
-                    if (mm.mediaType.isEmpty() && Translator.looksEnglish(mm.text) && mm.id !in Translator.loading) {
+                    if (mm.mediaType.isEmpty() && ChatSticker.parse(mm.text) == null && Translator.looksEnglish(mm.text) && mm.id !in Translator.loading) {
                         val shown = Translator.results.containsKey(mm.id)
                         add(MsgAction(AppIcons.Translate, if (shown) "إخفاء الترجمة" else "ترجمة", Color(0xFF00BFA5)) {
                             menu = null
@@ -1214,12 +1235,22 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
         pending?.let { pa ->
             AttachmentPreviewScreen(pa, sending = mediaStatus != null, onSend = { sendPending() }, onCancel = { cancelPending() })
         }
+
+        // ----- ملصقات -----
+        BackHandler(enabled = stickerOpen) { stickerOpen = false }
+        BadgePopup(
+            open = stickerOpen, origin = stickerOrigin, dark = dark, backdrop = contentBackdrop,
+            onDismiss = { stickerOpen = false },
+            onPick = { if (it.isNotBlank()) sendSticker(it) },
+            heading = "الملصقات",
+            subheading = "اختر ملصق وينرسل بالمحادثة"
+        )
         }
     }
 }
 
 /** نص الرسالة بنفس صيغة "آخر رسالة" المخزنة بوثيقة المحادثة (تُقارن معها حرفياً) */
-private fun lastTextOf(m: Msg): String = if (m.deleted) "رسالة مَحذوفة" else m.text.take(100)
+private fun lastTextOf(m: Msg): String = if (m.deleted) "رسالة مَحذوفة" else ChatSticker.preview(m.text).take(100)
 
 private class MenuTarget(val msg: Msg, val mine: Boolean, val bounds: Rect)
 
@@ -1523,7 +1554,32 @@ private fun MessageRow(
         val reactPad = androidx.compose.animation.core.animateDpAsState(
             if (m.reactions.isNotEmpty() && !m.deleted) 10.dp else 0.dp, spring(0.7f, 500f), label = "reactPad"
         ).value
+        val stickerId = if (!m.deleted && m.mediaType.isEmpty()) ChatSticker.parse(m.text) else null
         Box(Modifier.padding(bottom = reactPad.coerceAtLeast(0.dp))) {
+          if (stickerId != null) {
+            // رسالة ملصق: الملصق كبير وبدون فقاعة
+            Column(
+                Modifier.widthIn(max = 260.dp)
+                    .onGloballyPositioned { boundsHolder[0] = it.boundsInRoot() }
+                    .graphicsLayer { scaleX = pulse.value; scaleY = pulse.value }
+                    .pointerInput(m.id) {
+                        detectTapGestures(
+                            onDoubleTap = { fireDoubleTap() },
+                            onLongPress = { fireLongPress() }
+                        )
+                    }
+            ) {
+                if (m.replyId.isNotEmpty()) {
+                    ReplyQuoteBlock(
+                        msgId = m.id, replyId = m.replyId, replyName = replyName,
+                        replyText = if (replyDeleted) "رسالة مَحذوفة" else m.replyText,
+                        textColor = fg, onJump = onJump, onLongPress = { fireLongPress() },
+                        onDoubleTap = { fireDoubleTap() }
+                    )
+                }
+                StickerMessage(stickerId, 132.dp)
+            }
+          } else {
             StyledBubble(
                 style = style, mine = mine, dark = dark, fg = fg, backdrop = backdrop,
                 modifier = Modifier.widthIn(max = 260.dp)
@@ -1543,6 +1599,7 @@ private fun MessageRow(
                     onDoubleTap = { fireDoubleTap() }
                 )
             }
+          }
             ReactionBurst(burst.value)
             ReactionBadge(
                 reactions = if (m.deleted) emptyMap() else m.reactions, dark = dark, fg = fg,

@@ -222,10 +222,12 @@ object FileUtil {
 private fun AttachMenu(
     pMedia: Float,
     pFile: Float,
+    pSticker: Float,
     backdrop: Backdrop,
     fg: Color,
     onPickMedia: () -> Unit,
-    onPickFile: () -> Unit
+    onPickFile: () -> Unit,
+    onPickSticker: (() -> Unit)?
 ) {
     // أقصى اليمين الفيزيائي (Start بالعربي، End بالإنجليزي)
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
@@ -233,7 +235,8 @@ private fun AttachMenu(
         verticalArrangement = Arrangement.spacedBy(10.dp),
         horizontalAlignment = if (rtl) Alignment.Start else Alignment.End
     ) {
-        // الأبعد (ملفات) فوق، والأقرب للزر (صور وفيديوهات) تحته
+        // الأبعد (ملصقات إن وجدت) فوق، وبعدها ملفات، والأقرب للزر (صور وفيديوهات) تحته
+        if (onPickSticker != null) EmergeItem(pSticker, travelDp = 186) { AttachItem(backdrop, fg, "ملصقات", "🎭", onPickSticker) }
         EmergeItem(pFile, travelDp = 124) { AttachItem(backdrop, fg, "ملفات", "📎", onPickFile) }
         EmergeItem(pMedia, travelDp = 62) { AttachItem(backdrop, fg, "صور وفيديوهات", "🖼", onPickMedia) }
     }
@@ -250,10 +253,12 @@ fun AttachMenuPopup(
     fg: Color,
     onDismiss: () -> Unit,
     onPickMedia: () -> Unit,
-    onPickFile: () -> Unit
+    onPickFile: () -> Unit,
+    onPickSticker: (() -> Unit)? = null
 ) {
     val pMedia = remember { Animatable(0f) }
     val pFile = remember { Animatable(0f) }
+    val pSticker = remember { Animatable(0f) }
     var composed by remember { mutableStateOf(open) }
     LaunchedEffect(open) {
         if (open) {
@@ -261,12 +266,14 @@ fun AttachMenuPopup(
             coroutineScope {
                 launch { pMedia.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 330f)) }
                 launch { delay(60); pFile.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 330f)) }
+                launch { delay(120); pSticker.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 330f)) }
             }
         } else if (composed) {
             // الرجوع: «ملفات» (الأبعد) يرجع أول، وبعده «صور وفيديوهات»، وكلهم يدخلون بزر (+)
             coroutineScope {
-                launch { pFile.animateTo(0f, tween(190, easing = FastOutLinearInEasing)) }
-                launch { delay(60); pMedia.animateTo(0f, tween(190, easing = FastOutLinearInEasing)) }
+                launch { pSticker.animateTo(0f, tween(190, easing = FastOutLinearInEasing)) }
+                launch { delay(40); pFile.animateTo(0f, tween(190, easing = FastOutLinearInEasing)) }
+                launch { delay(80); pMedia.animateTo(0f, tween(190, easing = FastOutLinearInEasing)) }
             }
             composed = false
         }
@@ -282,9 +289,10 @@ fun AttachMenuPopup(
         properties = PopupProperties(focusable = true)
     ) {
         AttachMenu(
-            pMedia = pMedia.value, pFile = pFile.value, backdrop = backdrop, fg = fg,
+            pMedia = pMedia.value, pFile = pFile.value, pSticker = pSticker.value, backdrop = backdrop, fg = fg,
             onPickMedia = { if (open) onPickMedia() },
-            onPickFile = { if (open) onPickFile() }
+            onPickFile = { if (open) onPickFile() },
+            onPickSticker = onPickSticker?.let { cb -> { if (open) cb() } }
         )
     }
 }

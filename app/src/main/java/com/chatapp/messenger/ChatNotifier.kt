@@ -67,7 +67,8 @@ object ChatNotifier {
         return i
     }
 
-    suspend fun show(ctx: Context, from: String, text: String) {
+    suspend fun show(ctx: Context, from: String, rawText: String) {
+        val text = com.chatapp.messenger.ui.ChatSticker.preview(rawText)
         // محادثة مكتومة: بدون إشعار
         if (MuteStore.isMuted(ctx, from)) return
         // محادثة مقيّدة: بدون إشعار
@@ -170,7 +171,8 @@ object ChatNotifier {
     }
 
     /** إشعار رسالة مجموعة: عنوانه اسم المجموعة، وكل رسالة باسم وصورة مرسلها. الرسائل المتعددة تتجمع بإشعار واحد. */
-    suspend fun showGroup(ctx: Context, gid: String, groupHint: String, from: String, fromHint: String, text: String) {
+    suspend fun showGroup(ctx: Context, gid: String, groupHint: String, from: String, fromHint: String, rawText: String) {
+        val text = com.chatapp.messenger.ui.ChatSticker.preview(rawText)
         if (Build.VERSION.SDK_INT >= 33 &&
             ctx.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) return

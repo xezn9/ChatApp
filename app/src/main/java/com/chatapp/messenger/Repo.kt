@@ -56,7 +56,13 @@ data class GroupItem(
     /** رقم نسخة GIF البانر المخزّن بـ RTDB (0 = ما فيه GIF) */
     val bannerGifV: Long = 0L,
     /** رقم نسخة GIF صورة المجموعة المخزّن بـ RTDB (0 = صورة ثابتة) */
-    val avatarGifV: Long = 0L
+    val avatarGifV: Long = 0L,
+    /** خلفية المجموعة المشتركة (يحددها المالك ويشوفها كل الأعضاء): "" = ما فيه | preset | image */
+    val bgKind: String = "",
+    val bgPreset: String = "",
+    val bgBlur: Boolean = false,
+    /** رقم نسخة الخلفية (للصورة: نسخة الملف المخزّن بـ groupBgs/{gid}) */
+    val bgV: Long = 0L
 )
 
 /** تغيير ملف GIF لمجموعة: بدون تغيير / حذف / رفع جديد */
@@ -629,7 +635,11 @@ object Repo {
             bannerFx = ((m.child("bannerFx").value as? Number)?.toFloat() ?: 0f).coerceIn(-1f, 1f),
             bannerFy = ((m.child("bannerFy").value as? Number)?.toFloat() ?: 0f).coerceIn(-1f, 1f),
             bannerGifV = m.num("bannerGifV"),
-            avatarGifV = m.num("avatarGifV")
+            avatarGifV = m.num("avatarGifV"),
+            bgKind = m.str("bgKind"),
+            bgPreset = m.str("bgPreset"),
+            bgBlur = m.flag("bgBlur"),
+            bgV = m.num("bgV")
         )
         return GroupFull(item, members, admins, settings, restricted, banned, pin)
     }
@@ -849,6 +859,70 @@ object Repo {
      * [avatarGif] / [bannerGif]: ملف GIF جديد أو حذفه أو بدون تغيير. [bannerFx]/[bannerFy] = موضع قص البانر.
      * إذا تغيّرت الصورة الثابتة بدون GIF، لازم تمرّر GifChange.Remove حتى ينحذف الـ GIF القديم.
      */
+    // ---------- خلفية المجموعة المشتركة: المالك يحددها وتطلع لكل الأعضاء ----------
+    // الإعدادات (النوع/اللون/التمويه/النسخة) بـ groups/{gid}/meta، وصورة الخلفية (أو GIF) بـ groupBgs/{gid}
+
+    /**
+     * يحفظ خلفية المجموعة. [kind]: "" = حذف الخلفية (ترجع لخلفية كل واحد الخاصة) | "preset" | "image".
+     * [image] = بايتات صورة جديدة (JPEG أو GIF). إذا kind=image وما مرّرت صورة، تبقى الصورة الحالية [currentV] وتتغير باقي الإعدادات فقط.
+     */
+    suspend fun setGroupBackground(
+        cacheDir: java.io.File, gid: String, kind: String, preset: String, blur: Boolean,
+        image: ByteArray?, currentV: Long
+    ) {
+        val v = System.currentTimeMillis()
+        val m = hashMapOf<String, Any>("bgKind" to kind, "bgPreset" to preset.take(24), "bgBlur" to blur)
+        if (kind == "image") {
+            if (image != null) {
+                if (image.size > 6_000_000) throw IllegalStateException("الصورة كبيرة، الحد الأقصى لخلفية المجموعة 6 ميگا")
+                // نسخة محلية فوراً حتى تظهر عند المالك بدون انتظار
+                val dir = java.io.File(cacheDir, "group_bgs").apply { mkdirs() }
+                dir.listFiles { f -> f.name.startsWith("gbg_${gid}_") }?.forEach { it.delete() }
+                java.io.File(dir, "gbg_${gid}_$v.bg").writeBytes(image)
+                val b64 = android.util.Base64.encodeToString(image, android.util.Base64.NO_WRAP)
+                try {
+                    withTimeout(120_000) {
+                        rtdb.getReference("groupBgs/$gid").setValue(mapOf("v" to v, "data" to b64)).await()
+                    }
+                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                    throw IllegalStateException("انتهت المهلة أثناء رفع الخلفية، تأكد من الاتصال بالإنترنت")
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    if (e.message?.contains("ermission", ignoreCase = true) == true)
+                        throw IllegalStateException("ما عندك صلاحية لهذا الإجراء (تأكد من نشر قواعد قاعدة البيانات)")
+                    throw e
+                }
+                m["bgV"] = v
+            } else {
+                if (currentV == 0L) throw IllegalStateException("اختر صورة أول")
+                m["bgV"] = currentV
+            }
+        } else {
+            m["bgV"] = v
+        }
+        gWrite(rtdb.getReference("groups/$gid/meta").updateChildren(m))
+        if (kind != "image") runCatching { withTimeout(20_000) { rtdb.getReference("groupBgs/$gid").removeValue().await() } }
+    }
+
+    /** ينزّل صورة خلفية المجموعة مرة وحدة لكل نسخة [v] ويخزنها بالكاش. null إذا ما انقرت */
+    suspend fun groupBgFile(cacheDir: java.io.File, gid: String, v: Long): java.io.File? {
+        val dir = java.io.File(cacheDir, "group_bgs").apply { mkdirs() }
+        val prefix = "gbg_${gid}_"
+        val cached = java.io.File(dir, "$prefix$v.bg")
+        if (cached.exists() && cached.length() > 0) return cached
+        val snap = withTimeout(120_000) { rtdb.getReference("groupBgs/$gid").get().await() }
+        val data = snap.child("data").getValue(String::class.java) ?: return null
+        val real = snap.child("v").getValue(Long::class.java) ?: v
+        val bytes = android.util.Base64.decode(data, android.util.Base64.NO_WRAP)
+        dir.listFiles { f -> f.name.startsWith(prefix) }?.forEach { it.delete() }
+        val out = java.io.File(dir, "$prefix$real.bg")
+        val tmp = java.io.File(dir, out.name + ".tmp")
+        tmp.writeBytes(bytes)
+        if (!tmp.renameTo(out)) { tmp.delete(); return null }
+        return out
+    }
+
     suspend fun updateGroupInfo(
         gid: String, name: String, bio: String, avatar: String?,
         avatarGif: GifChange = GifChange.Keep,
@@ -998,6 +1072,7 @@ object Repo {
         updates["groups/$gid"] = null
         updates["groupChats/$gid"] = null
         updates["groupGifs/$gid"] = null
+        updates["groupBgs/$gid"] = null
         g.members.forEach { updates["userGroups/$it/$gid"] = null }
         if (g.item.handle.isNotBlank()) updates["groupHandles/${g.item.handle}"] = null
         gWrite(rtdb.reference.updateChildren(updates))
@@ -1084,7 +1159,7 @@ object Repo {
             msg["replyFrom"] = replyFrom
         }
         msg.putAll(extra)
-        val preview = text.take(100)
+        val preview = com.chatapp.messenger.ui.ChatSticker.preview(text).take(100)
         appScope.launch {
             sendMutex.withLock {
                 // أول تواصل بيني وبينه (ما عندي سجل للمحادثة) + هو مشغّل الطلبات = رسالتي تصير "طلب رسالة" عنده

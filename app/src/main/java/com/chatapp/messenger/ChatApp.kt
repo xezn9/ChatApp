@@ -19,6 +19,8 @@ class ChatApp : Application() {
         CrashLogger.install(this)
         com.chatapp.messenger.ui.theme.FontManager.init(this)
         com.chatapp.messenger.ui.theme.ThemeSettings.init(this)
+        // تنزيل حزم الملصقات الإضافية تلقائياً وبشكل خفي (مرة وحدة)
+        com.chatapp.messenger.ui.StickerDownloader.start(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val ch = NotificationChannel(CHANNEL_MESSAGES, "الرسائل", NotificationManager.IMPORTANCE_HIGH)
             val nm = getSystemService(NotificationManager::class.java)

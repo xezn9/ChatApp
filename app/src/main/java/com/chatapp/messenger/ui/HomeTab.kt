@@ -848,7 +848,7 @@ private fun RemoteGroupRow(r: GroupPreview, joining: Boolean, onJoin: () -> Unit
 private fun GroupRow(g: GroupItem, onClick: () -> Unit) {
     val last by remember(g.id) { Repo.groupLastMessageFlow(g.id) }.collectAsState(initial = null)
     val members = if (g.memberCount == 1) "عضو واحد" else "${g.memberCount} أعضاء"
-    val secondary = last?.text?.takeIf { it.isNotBlank() } ?: buildString {
+    val secondary = last?.text?.takeIf { it.isNotBlank() }?.let { ChatSticker.preview(it) } ?: buildString {
         if (g.handle.isNotBlank()) append("@").append(g.handle).append(" · ")
         append(members)
     }

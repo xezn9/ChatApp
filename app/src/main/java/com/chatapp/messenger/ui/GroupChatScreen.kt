@@ -284,22 +284,75 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
     val openedAt = remember { System.currentTimeMillis() }
     val fly = remember { Animatable(0f) }
 
-    // ---- خلفية هذي المجموعة (محلية وخاصة بي) ----
+    // ---- خلفية المجموعة ----
+    // إذا مالك المجموعة حدد خلفية: تطلع لكل الأعضاء (تنخزن بالسيرفر). وإلا كل واحد له خلفيته المحلية الخاصة.
     val prefs = remember { ChatPrefs(ctx) }
     val bgKey = "g_$groupId"
     var bgCfg by remember(groupId) { mutableStateOf(prefs.load(me, bgKey)) }
-    val updateBg = { nb: ChatBg -> bgCfg = nb; prefs.save(me, bgKey, nb) }
-    val bgFile = remember(groupId) { prefs.imageFile(me, bgKey) }
-    val hasImage = remember(bgCfg.version) { prefs.hasImage(me, bgKey) }
+    val localBgFile = remember(groupId) { prefs.imageFile(me, bgKey) }
+    val gItem = g?.item
+    val iAmOwner = gItem != null && me.isNotEmpty() && gItem.owner == me
+    val sharedOn = gItem != null && gItem.bgKind.isNotEmpty()
+    val sharedBg = if (gItem != null && sharedOn) ChatBg(gItem.bgKind, gItem.bgPreset, gItem.bgBlur, gItem.bgV) else null
+    val sharedImgV = if (gItem?.bgKind == "image") (gItem?.bgV ?: 0L) else 0L
+    val sharedFile by androidx.compose.runtime.produceState<java.io.File?>(null, groupId, sharedImgV) {
+        value = if (sharedImgV == 0L) null else runCatching { Repo.groupBgFile(ctx.cacheDir, groupId, sharedImgV) }.getOrNull()
+    }
+    val effBg = sharedBg ?: bgCfg
+    // صورة مشتركة لسا تنزل: نعرض مكان فاضي بدل صورتي المحلية
+    val bgFile = if (sharedBg != null) (sharedFile ?: java.io.File(ctx.cacheDir, "group_bgs/none")) else localBgFile
+    val localHasImage = remember(bgCfg.version) { prefs.hasImage(me, bgKey) }
+    val hasImage = if (sharedBg != null) sharedBg.kind == "image" else localHasImage
+    val updateBg: (ChatBg) -> Unit = { nb ->
+        if (iAmOwner) {
+            // المالك: التغيير يطبّق على كل أعضاء المجموعة
+            scope.launch {
+                try {
+                    Repo.setGroupBackground(
+                        ctx.cacheDir, groupId,
+                        if (nb.kind == "default") "" else nb.kind, nb.preset, nb.blur,
+                        null, gItem?.bgV ?: 0L
+                    )
+                } catch (e: IllegalStateException) {
+                    AppToast.show(e.message ?: "ما تغيرت الخلفية", long = true)
+                } catch (e: Exception) {
+                    AppToast.show("ما تغيرت الخلفية، تأكد من الإنترنت", long = true)
+                }
+            }
+        } else if (sharedOn) {
+            AppToast.show("خلفية هذي المجموعة يحددها المالك")
+        } else {
+            bgCfg = nb
+            prefs.save(me, bgKey, nb)
+        }
+    }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) scope.launch {
-            val err = saveChatBackgroundFromUri(ctx, uri, bgFile)
-            if (err != null) AppToast.show(err)
-            else updateBg(bgCfg.copy(kind = "image", version = System.currentTimeMillis()))
+            if (iAmOwner) {
+                val tmp = java.io.File(ctx.cacheDir, "group_bg_pick.tmp")
+                val err = saveChatBackgroundFromUri(ctx, uri, tmp)
+                if (err != null) AppToast.show(err)
+                else {
+                    try {
+                        val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { tmp.readBytes().also { tmp.delete() } }
+                        Repo.setGroupBackground(ctx.cacheDir, groupId, "image", "", effBg.blur, bytes, 0L)
+                    } catch (e: IllegalStateException) {
+                        AppToast.show(e.message ?: "ما تغيرت الخلفية", long = true)
+                    } catch (e: Exception) {
+                        AppToast.show("ما تغيرت الخلفية، تأكد من الإنترنت", long = true)
+                    }
+                }
+            } else if (sharedOn) {
+                AppToast.show("خلفية هذي المجموعة يحددها المالك")
+            } else {
+                val err = saveChatBackgroundFromUri(ctx, uri, localBgFile)
+                if (err != null) AppToast.show(err)
+                else updateBg(bgCfg.copy(kind = "image", version = System.currentTimeMillis()))
+            }
         }
     }
 
-    val custom = bgCfg.custom
+    val custom = effBg.custom
     val dark = custom || isAppDark()
     val fg = if (custom) Color.White else MaterialTheme.colorScheme.onBackground
     val bgBackdrop = rememberLayerBackdrop()      // الخلفية فقط (الفقاعات تستخدمها)
@@ -360,7 +413,29 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
         Repo.sendGroupMessage(
             groupId, t,
             onFail = { AppToast.show("ما انرسلت الرسالة: ممنوع عليك الإرسال هسه") },
-            replyId = rep?.id ?: "", replyText = rep?.text?.take(100) ?: "", replyFrom = rep?.from ?: ""
+            replyId = rep?.id ?: "", replyText = rep?.let { ChatSticker.preview(it.text).take(100) } ?: "", replyFrom = rep?.from ?: ""
+        )
+    }
+
+    /** إرسال ملصق بالمجموعة (نفس قيود الوضع البطيء) */
+    fun sendSticker(id: String) {
+        val gg = g ?: return
+        val a = access ?: return
+        if (id.isBlank()) return
+        val slow = gg.settings.slowMode
+        val now = System.currentTimeMillis()
+        if (!a.isAdmin && slow > 0 && now - lastSentAt < slow * 1000L) {
+            val left = (slow * 1000L - (now - lastSentAt)) / 1000 + 1
+            AppToast.show("الوضع البطيء: انتظر $left ثانية")
+            return
+        }
+        lastSentAt = now
+        val rep = replyTo
+        replyTo = null
+        Repo.sendGroupMessage(
+            groupId, ChatSticker.encode(id),
+            onFail = { AppToast.show("ما انرسلت الرسالة: ممنوع عليك الإرسال هسه") },
+            replyId = rep?.id ?: "", replyText = rep?.let { ChatSticker.preview(it.text).take(100) } ?: "", replyFrom = rep?.from ?: ""
         )
     }
 
@@ -372,6 +447,8 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
     var viewVideo by remember { mutableStateOf<java.io.File?>(null) }
     var pending by remember { mutableStateOf<PendingAttachment?>(null) }
     var showAttach by remember { mutableStateOf(false) }
+    var stickerOpen by remember { mutableStateOf(false) }
+    var stickerOrigin by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
     val mediaPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null && mediaStatus == null) {
             val isVideo = (ctx.contentResolver.getType(uri) ?: "").startsWith("video")
@@ -606,7 +683,7 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                 Repo.sendGroupVoice(
                     groupId, id, ((d.durMs + 500) / 1000).toInt().coerceAtLeast(1), d.wave,
                     onFail = { AppToast.show("ما انرسلت الرسالة: ممنوع عليك الإرسال هسه") },
-                    replyId = rep?.id ?: "", replyText = rep?.text?.take(100) ?: "", replyFrom = rep?.from ?: ""
+                    replyId = rep?.id ?: "", replyText = rep?.let { ChatSticker.preview(it.text).take(100) } ?: "", replyFrom = rep?.from ?: ""
                 )
                 replyTo = null
                 d.file.delete()
@@ -781,11 +858,11 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                 // قاعدة صلبة تحت التلاشي حتى ما تبين الشاشة الي وراها وقت تغيير الخلفية
                 Box(Modifier.fillMaxSize().layerBackdrop(bgBackdrop).background(appBackground())) {
                     Crossfade(
-                        targetState = bgCfg.copy(blur = false),
+                        targetState = effBg.copy(blur = false),
                         animationSpec = tween(500),
                         label = "groupBg"
                     ) { c ->
-                        ChatBackground(c.copy(blur = bgCfg.blur), bgFile, Modifier.fillMaxSize())
+                        ChatBackground(c.copy(blur = effBg.blur), bgFile, Modifier.fillMaxSize())
                     }
                 }
                 if (stable.isEmpty() && g != null) {
@@ -968,7 +1045,7 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                                     backdrop = contentBackdrop, dark = dark, fg = fg,
                                     isEdit = false,
                                     title = "رد على " + replyNameOf(rm.from),
-                                    preview = rm.text.take(70),
+                                    preview = ChatSticker.preview(rm.text).take(70),
                                     onClose = { replyTo = null }
                                 )
                             }
@@ -992,7 +1069,7 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                                     modifier = Modifier.weight(1f)
                                 )
                             } else {
-                            Box {
+                            Box(Modifier.onGloballyPositioned { stickerOrigin = it.boundsInRoot().center }) {
                                 GlassButton(
                                     onClick = { showAttach = !showAttach },
                                     backdrop = contentBackdrop,
@@ -1015,6 +1092,10 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                                         onPickFile = {
                                                 showAttach = false
                                                 filePicker.launch(arrayOf("*/*"))
+                                            },
+                                        onPickSticker = {
+                                                showAttach = false
+                                                stickerOpen = true
                                             }
                                     )
                             }
@@ -1110,6 +1191,16 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                 AttachmentPreviewScreen(pa, sending = mediaStatus != null, onSend = { sendPending() }, onCancel = { cancelPending() })
             }
 
+            // ----- ملصقات -----
+            BackHandler(enabled = stickerOpen) { stickerOpen = false }
+            BadgePopup(
+                open = stickerOpen, origin = stickerOrigin, dark = dark, backdrop = contentBackdrop,
+                onDismiss = { stickerOpen = false },
+                onPick = { if (it.isNotBlank()) sendSticker(it) },
+                heading = "الملصقات",
+                subheading = "اختر ملصق وينرسل للمجموعة"
+            )
+
             // ----- إعدادات المجموعة: خلفية + فقاعات (نفس لوحة المحادثة العادية) -----
             AnimatedVisibility(
                 visible = showSettings,
@@ -1120,7 +1211,7 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                     backdrop = contentBackdrop,
                     dark = dark,
                     otherName = "",
-                    bg = bgCfg,
+                    bg = effBg,
                     hasImage = hasImage,
                     onBgChange = updateBg,
                     onPickImage = {
@@ -1137,7 +1228,10 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                     onReport = {},
                     onDismiss = { showSettings = false },
                     title = "إعدادات المجموعة",
-                    personActions = false
+                    personActions = false,
+                    bgNote = if (iAmOwner) "الخلفية تنطبق على كل أعضاء المجموعة"
+                    else if (sharedOn) "خلفية هذي المجموعة يحددها المالك"
+                    else null
                 )
             }
 
@@ -1153,7 +1247,7 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                             replyTo = mm
                         })
                     }
-                    if (mm.mediaType.isEmpty() && Translator.looksEnglish(mm.text) && mm.id !in Translator.loading) {
+                    if (mm.mediaType.isEmpty() && ChatSticker.parse(mm.text) == null && Translator.looksEnglish(mm.text) && mm.id !in Translator.loading) {
                         val shown = Translator.results.containsKey(mm.id)
                         add(MsgAction(AppIcons.Translate, if (shown) "إخفاء الترجمة" else "ترجمة", Color(0xFF00BFA5)) {
                             menu = null
@@ -1385,7 +1479,28 @@ private fun GroupMessageRow(
             val reactPad = androidx.compose.animation.core.animateDpAsState(
                 if (m.reactions.isNotEmpty()) 10.dp else 0.dp, spring(0.7f, 500f), label = "reactPad"
             ).value
+            val stickerId = if (m.mediaType.isEmpty()) ChatSticker.parse(m.text) else null
             Box(Modifier.padding(bottom = reactPad.coerceAtLeast(0.dp))) {
+              if (stickerId != null) {
+                // رسالة ملصق: الملصق كبير وبدون فقاعة
+                Column(
+                    Modifier.widthIn(max = 260.dp)
+                        .onGloballyPositioned { boundsHolder[0] = it.boundsInRoot() }
+                        .graphicsLayer { scaleX = pulse.value; scaleY = pulse.value }
+                        .pointerInput(m.id) {
+                            detectTapGestures(onDoubleTap = { fireDoubleTap() }, onLongPress = { fireLongPress() })
+                        }
+                ) {
+                    if (m.replyId.isNotEmpty()) {
+                        ReplyQuoteBlock(
+                            msgId = m.id, replyId = m.replyId, replyName = replyName, replyText = m.replyText,
+                            textColor = fg, onJump = onJump, onLongPress = { fireLongPress() },
+                            onDoubleTap = { fireDoubleTap() }
+                        )
+                    }
+                    StickerMessage(stickerId, 132.dp)
+                }
+              } else {
                 StyledBubble(
                     style = style, mine = mine, dark = dark, fg = fg, backdrop = backdrop,
                     modifier = Modifier.widthIn(max = 260.dp)
@@ -1428,6 +1543,7 @@ private fun GroupMessageRow(
                     }
                   }
                 }
+              }
                 ReactionBurst(burst.value)
                 ReactionBadge(
                     reactions = m.reactions, dark = dark, fg = fg,

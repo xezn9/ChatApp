@@ -136,9 +136,15 @@
         ".read": "auth != null && auth.token.email_verified === true && (auth.uid === $uid || !root.child('blocks').child($uid).child(auth.uid).exists())",
         ".write": "auth != null && auth.token.email_verified === true && auth.uid === $uid",
         ".validate": "newData.hasChildren(['v', 'data']) && newData.child('v').isNumber() && newData.child('data').isString() && newData.child('data').val().length <= 8400000",
-        "v": { ".validate": "newData.isNumber()" },
-        "data": { ".validate": "newData.isString()" },
-        "$other": { ".validate": false }
+        "v": {
+          ".validate": "newData.isNumber()"
+        },
+        "data": {
+          ".validate": "newData.isString()"
+        },
+        "$other": {
+          ".validate": false
+        }
       }
     },
     "groupGifs": {
@@ -148,9 +154,15 @@
         "$slot": {
           ".write": "auth != null && auth.token.email_verified === true && ($slot === 'avatar' || $slot === 'banner') && (root.child('groups').child($gid).child('meta').child('owner').val() === auth.uid || root.child('groups').child($gid).child('admins').child(auth.uid).child('changeInfo').val() === true || (root.child('groups').child($gid).child('members').child(auth.uid).exists() && root.child('groups').child($gid).child('settings').child('changeInfo').val() === true))",
           ".validate": "!newData.exists() || (newData.hasChildren(['v', 'data']) && newData.child('v').isNumber() && newData.child('data').isString() && newData.child('data').val().length <= 8400000)",
-          "v": { ".validate": "newData.isNumber()" },
-          "data": { ".validate": "newData.isString()" },
-          "$other": { ".validate": false }
+          "v": {
+            ".validate": "newData.isNumber()"
+          },
+          "data": {
+            ".validate": "newData.isString()"
+          },
+          "$other": {
+            ".validate": false
+          }
         }
       }
     },
@@ -272,6 +284,18 @@
             ".validate": "newData.isString()"
           },
           "createdAt": {
+            ".validate": "newData.isNumber()"
+          },
+          "bgKind": {
+            ".validate": "newData.isString() && (newData.val() === '' || newData.val() === 'preset' || newData.val() === 'image')"
+          },
+          "bgPreset": {
+            ".validate": "newData.isString() && newData.val().length <= 24"
+          },
+          "bgBlur": {
+            ".validate": "newData.isBoolean()"
+          },
+          "bgV": {
             ".validate": "newData.isNumber()"
           },
           "$other": {
@@ -569,6 +593,22 @@
           "$other": {
             ".validate": false
           }
+        }
+      }
+    },
+    "groupBgs": {
+      "$gid": {
+        ".read": "auth != null && auth.token.email_verified === true && root.child('groups').child($gid).child('meta').exists()",
+        ".write": "auth != null && auth.token.email_verified === true && root.child('groups').child($gid).child('meta').child('owner').val() === auth.uid",
+        ".validate": "!newData.exists() || (newData.hasChildren(['v', 'data']) && newData.child('v').isNumber() && newData.child('data').isString() && newData.child('data').val().length <= 8400000)",
+        "v": {
+          ".validate": "newData.isNumber()"
+        },
+        "data": {
+          ".validate": "newData.isString()"
+        },
+        "$other": {
+          ".validate": false
         }
       }
     }

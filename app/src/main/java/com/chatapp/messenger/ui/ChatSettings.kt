@@ -121,7 +121,9 @@ fun AnimatedVisibilityScope.ChatSettingsPanel(
     /** عنوان اللوحة (للمجموعات: "إعدادات المجموعة") */
     title: String = "إعدادات المحادثة",
     /** false = بدون خيارات الشخص (تثبيت/حظر/إبلاغ)، تُستعمل بمحادثات المجموعات */
-    personActions: Boolean = true
+    personActions: Boolean = true,
+    /** ملاحظة تحت عنوان الخلفية (تغيّر النص الافتراضي) */
+    bgNote: String? = null
 ) {
     val fg = if (dark) Color.White else Color(0xFF101418)
     val defaultBg = appBackground()
@@ -252,7 +254,7 @@ fun AnimatedVisibilityScope.ChatSettingsPanel(
 
                     "bg" -> {
                         SubHeader("خلفية المحادثة", backdrop) { page = "main" }
-                        Text(if (personActions) "الخلفية تنطبق على هذي المحادثة فقط" else "الخلفية تنطبق على هذي المجموعة فقط", fontSize = 13.sp, color = fg.copy(alpha = 0.65f))
+                        Text(bgNote ?: if (personActions) "الخلفية تنطبق على هذي المحادثة فقط" else "الخلفية تنطبق على هذي المجموعة فقط", fontSize = 13.sp, color = fg.copy(alpha = 0.65f))
                         Spacer(Modifier.height(12.dp))
                         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             BgTile("افتراضي", bg.kind == "default", fg, { Modifier.background(defaultBg) }) {

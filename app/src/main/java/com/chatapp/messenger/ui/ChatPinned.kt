@@ -61,7 +61,7 @@ private val PinGold = Color(0xFFFFC107)
 
 /** نص مختصر للرسالة بسطر واحد */
 fun msgPreview(m: Msg, max: Int = 70): String =
-    if (m.deleted) "رسالة مَحذوفة" else m.text.replace('\n', ' ').take(max)
+    if (m.deleted) "رسالة مَحذوفة" else ChatSticker.preview(m.text).replace('\n', ' ').take(max)
 
 /**
  * شريط الرسائل المثبتة أعلى المحادثة (يظهر للطرفين):

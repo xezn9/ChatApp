@@ -180,6 +180,7 @@ internal object StickerRegistry {
         val dl = ArrayList<StickerPack>()
         TelegramStickers.root(ctx).listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") && !it.name.contains(':') }
             ?.sortedBy { it.name.lowercase() }?.forEach { d ->
+                if (map.containsKey(d.name)) return@forEach   // نفس اسم حزمة مدمجة بالتطبيق: نتجاهل المنزّلة
                 val byName = LinkedHashMap<String, String>()
                 (d.list()?.toList() ?: emptyList())
                     .filter { it.substringAfterLast('.', "").lowercase() in EXTS && !it.substringBeforeLast('.').contains(':') }
