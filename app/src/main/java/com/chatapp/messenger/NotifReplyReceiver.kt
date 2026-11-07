@@ -34,7 +34,7 @@ class NotifReplyReceiver : BroadcastReceiver() {
             return
         }
         if (text.isEmpty()) {
-            refresh(app, notifId, null)
+            refresh(app, notifId, null, kind, target)
             return
         }
 
@@ -64,7 +64,7 @@ class NotifReplyReceiver : BroadcastReceiver() {
                     delay(3000)   // نعطي الكتابة وقت توصل للسيرفر قبل ما ينتهي الريسيفر
                 }
             } finally {
-                refresh(app, notifId, text)
+                refresh(app, notifId, text, kind, target)
                 pending.finish()
             }
         }
@@ -72,21 +72,34 @@ class NotifReplyReceiver : BroadcastReceiver() {
 
     /** يعيد نشر الإشعار مع ردي (أو بدونه) حتى يوقف دوران "جاري الإرسال" */
     @SuppressLint("MissingPermission")
-    private fun refresh(ctx: Context, notifId: Int, myText: String?) {
+    private fun refresh(ctx: Context, notifId: Int, myText: String?, kind: String, target: String) {
         try {
             val nm = ctx.getSystemService(NotificationManager::class.java)
-            val sbn = nm.activeNotifications.firstOrNull { it.id == notifId } ?: return
-            val b = NotificationCompat.Builder.recoverBuilder(ctx, sbn.notification)
-            if (myText != null) {
-                val style = NotificationCompat.MessagingStyle
-                    .extractMessagingStyleFromNotification(sbn.notification)
-                if (style != null) {
-                    style.addMessage(myText, System.currentTimeMillis(), null as Person?)
-                    b.setStyle(style)
-                }
+            val old = nm.activeNotifications.firstOrNull { it.id == notifId }?.notification ?: return
+            val style = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(old) ?: return
+            if (myText != null) style.addMessage(myText, System.currentTimeMillis(), null as Person?)
+
+            val ex = old.extras
+            val avatar = try {
+                (old.getLargeIcon()?.loadDrawable(ctx) as? android.graphics.drawable.BitmapDrawable)?.bitmap
+            } catch (_: Exception) {
+                null
             }
-            b.setOnlyAlertOnce(true)
-            NotificationManagerCompat.from(ctx).notify(notifId, b.build())
+            val n = NotificationCompat.Builder(ctx, old.channelId ?: ChatApp.CHANNEL_MESSAGES)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setColor(androidx.core.content.ContextCompat.getColor(ctx, R.color.notification_accent))
+                .setContentTitle(ex.getCharSequence(NotificationCompat.EXTRA_TITLE))
+                .setContentText(ex.getCharSequence(NotificationCompat.EXTRA_TEXT))
+                .setLargeIcon(avatar)
+                .setStyle(style)
+                .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setOnlyAlertOnce(true)
+                .setContentIntent(old.contentIntent)
+                .addAction(ChatNotifier.replyAction(ctx, kind, target, notifId))
+                .build()
+            NotificationManagerCompat.from(ctx).notify(notifId, n)
         } catch (_: Exception) {
         }
     }
