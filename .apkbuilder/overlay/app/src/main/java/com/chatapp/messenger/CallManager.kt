@@ -20,6 +20,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import org.webrtc.AudioTrack
@@ -126,7 +127,12 @@ object CallManager {
      * يتحقق إن المكالمة لسه ترن ويجهّز الحالة. يرجع true إذا لازم نظهر رنين.
      * (يُستدعى من خدمة FCM)
      */
-    suspend fun prepareIncoming(ctx: Context, id: String, from: String, nameHint: String): Boolean {
+    private val incomingMutex = kotlinx.coroutines.sync.Mutex()
+
+    suspend fun prepareIncoming(ctx: Context, id: String, from: String, nameHint: String): Boolean =
+        incomingMutex.withLock { prepareIncomingLocked(ctx, id, from, nameHint) }
+
+    private suspend fun prepareIncomingLocked(ctx: Context, id: String, from: String, nameHint: String): Boolean {
         val me = Repo.auth.currentUser?.uid ?: return false
         if (id == callId && phase == Phase.INCOMING) return false
         if (isBusy) {
