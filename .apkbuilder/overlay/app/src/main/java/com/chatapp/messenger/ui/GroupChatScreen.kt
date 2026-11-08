@@ -29,6 +29,14 @@ import androidx.compose.material.icons.filled.Add
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
@@ -816,7 +824,12 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
     // إشعار هذي المجموعة ينشال أول ما أفتحها
     LaunchedEffect(groupId) { NotificationManagerCompat.from(ctx).cancel(("g:" + groupId).hashCode()) }
 
-    // أول ما تنحمل الرسائل: نحدد الغير مقروء وننزل لأول وحدة منها
+    // مفاتيح الرسائل الي انقرت فعلاً (ظهرت بالشاشة نص ثانية والتطبيق مفتوح)
+    var seenKeys by remember(groupId) { mutableStateOf<Set<String>>(emptySet()) }
+    // وصلت للرسالة الأولى غير المقروءة بالسهم؟ (بعدها السهم الفوگاني يروح للي قبل الظاهرة)
+    var arrowNavigated by remember(groupId) { mutableStateOf(false) }
+
+    // أول ما تنحمل الرسائل: نحدد الغير مقروء (بدون نزول تلقائي، السهم يوديك)
     LaunchedEffect(groupId, stable.isNotEmpty()) {
         if (unreadEntry != null || stable.isEmpty()) return@LaunchedEffect
         val saved = GroupReads.get(ctx, me, groupId)
@@ -826,33 +839,67 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
         if (saved < 0) GroupReads.set(ctx, me, groupId, cursor)
         readCursor = cursor
         unreadEntry = UnreadEntry(unread.firstOrNull()?.key, unread.size)
-        val first = unread.firstOrNull() ?: return@LaunchedEffect
-        val idx = revNow.value.indexOfFirst { it.key == first.key }
-        if (idx > 0) {
-            androidx.compose.runtime.withFrameNanos { }
-            // أول رسالة غير مقروءة تطلع بأعلى الشاشة والباقي تحتها (القائمة مقلوبة، فالإزاحة سالبة)
-            listState.scrollToItem(idx, -(listState.layoutInfo.viewportSize.height * 0.65f).toInt())
-        }
+    }
+
+    // الرسائل الغير مقروءة وقت الدخول (+ الي توصل بعدها وانت فوق) بالترتيب الزمني
+    val sessionUnread = remember(stable, readCursor) {
+        if (readCursor == Long.MAX_VALUE) emptyList()
+        else stable.filter { it.from != me && it.createdAt > readCursor }
+    }
+    val sessionUnreadState = rememberUpdatedState(sessionUnread)
+    val unreadKeys = remember(sessionUnread, seenKeys) {
+        sessionUnread.asSequence().map { it.key }.filter { it !in seenKeys }.toSet()
     }
 
     // الرسالة تنحسب مقروءة لما تظهر بالشاشة نص ثانية والتطبيق مفتوح
     LaunchedEffect(groupId, unreadEntry != null) {
         if (unreadEntry == null) return@LaunchedEffect
         snapshotFlow {
-            if (!AppState.foreground) 0L else {
-                val list = revNow.value
-                var mx = 0L
-                for (v in listState.layoutInfo.visibleItemsInfo) {
-                    val t = list.getOrNull(v.index)?.createdAt ?: continue
-                    if (t > mx) mx = t
-                }
-                mx
-            }
-        }.distinctUntilChanged().collectLatest { seen ->
-            if (seen <= readCursor) return@collectLatest
+            if (!AppState.foreground) emptySet<String>()
+            else listState.layoutInfo.visibleItemsInfo.mapNotNull { it.key as? String }.toSet()
+        }.distinctUntilChanged().collectLatest { visible ->
+            if (visible.isEmpty() || seenKeys.containsAll(visible)) return@collectLatest
             delay(500)
-            readCursor = seen
-            GroupReads.set(ctx, me, groupId, seen)
+            seenKeys = seenKeys + visible
+            // مؤشر القراءة المحفوظ: لحد أول رسالة لسه ما انقرت
+            val firstUnseen = sessionUnreadState.value.firstOrNull { it.key !in seenKeys }
+            val upTo = if (firstUnseen != null) firstUnseen.createdAt - 1
+                       else sessionUnreadState.value.lastOrNull()?.createdAt ?: return@collectLatest
+            GroupReads.set(ctx, me, groupId, upTo)
+        }
+    }
+
+    // ---- أسهم التنقل بين الغير مقروء ----
+    // index بالقائمة المقلوبة: 0 = الأحدث. الأكبر = أقدم = فوق الشاشة.
+    val visMin by remember { derivedStateOf { listState.layoutInfo.visibleItemsInfo.minOfOrNull { it.index } ?: 0 } }
+    val visMax by remember { derivedStateOf { listState.layoutInfo.visibleItemsInfo.maxOfOrNull { it.index } ?: 0 } }
+    val unreadIdx = remember(sessionUnread, rev) {
+        sessionUnread.mapNotNull { m -> rev.indexOfFirst { it.key == m.key }.takeIf { it >= 0 } }.sorted()
+    }
+    val allRead = unreadKeys.isEmpty()
+    val canGoUp = !allRead && unreadIdx.any { it > visMax }
+    val canGoDown = !allRead && unreadIdx.any { it < visMin && rev[it].key in unreadKeys }
+
+    fun goUnreadUp() {
+        // أول ضغطة: لأول رسالة غير مقروءة. بعدها: لأقرب وحدة فوق الشاشة
+        val target = if (!arrowNavigated) unreadIdx.maxOrNull() else unreadIdx.filter { it > visMax }.minOrNull()
+        val t = target ?: return
+        arrowNavigated = true
+        scope.launch {
+            // الرسالة تطلع بأعلى الشاشة والباقي تحتها (القائمة مقلوبة، فالإزاحة سالبة)
+            listState.animateScrollToItem(t, -(listState.layoutInfo.viewportSize.height * 0.6f).toInt())
+            flashId = rev.getOrNull(t)?.id
+            delay(900)
+            flashId = null
+        }
+    }
+
+    fun goUnreadDown() {
+        // أقرب رسالة غير مقروءة تحت الشاشة
+        val t = unreadIdx.filter { it < visMin && rev[it].key in unreadKeys }.maxOrNull() ?: return
+        arrowNavigated = true
+        scope.launch {
+            listState.animateScrollToItem(t, -(listState.layoutInfo.viewportSize.height * 0.6f).toInt())
         }
     }
 
@@ -873,6 +920,15 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
 
     BackHandler(enabled = menu != null) { menu = null }
     BackHandler(enabled = replyTo != null && menu == null) { replyTo = null }
+
+    // عند الرد (سحب أو قائمة) افتح الكيبورد تلقائياً على مربع الكتابة
+    LaunchedEffect(replyTo?.id) {
+        if (replyTo != null) {
+            delay(120)
+            runCatching { focusRequester.requestFocus() }
+            keyboardCtl?.show()
+        }
+    }
 
     fun replyNameOf(uid: String): String =
         if (uid == me) "أنت" else profiles[uid]?.name?.takeIf { it.isNotBlank() } ?: "عضو"
@@ -960,7 +1016,7 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                         Column {
                         if (unreadEntry?.firstKey == m.key) UnreadDivider(unreadEntry?.count ?: 0)
                         GroupMessageRow(
-                            unread = !mine && m.createdAt > readCursor,
+                            unread = !mine && m.key in unreadKeys,
                             m = m, mine = mine,
                             avatar = avatars[m.from],
                             showAvatar = showAvatar, tight = tight,
@@ -1024,6 +1080,17 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                         )
                     }
                 }
+            }
+
+            // ----- أسهم الغير مقروء: فوق (للي قبل) وتحت (للي بعد). تختفي بأنيميشن لما أقراهن كلهم -----
+            Column(
+                Modifier.align(Alignment.BottomEnd)
+                    .padding(end = 14.dp, bottom = listBottomPadding + 8.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                UnreadArrow(visible = canGoUp, up = true, count = 0, backdrop = contentBackdrop, onClick = { goUnreadUp() })
+                UnreadArrow(visible = canGoDown, up = false, count = unreadKeys.size, backdrop = contentBackdrop, onClick = { goUnreadDown() })
             }
 
             // ----- شريط الرسالة المثبتة -----
@@ -1706,6 +1773,39 @@ private fun SenderAvatar(avatar: ImageBitmap?, onClick: (() -> Unit)? = null) {
                 Icons.Filled.Person, null,
                 tint = Color(0xFF8A8F98), modifier = Modifier.size(18.dp)
             )
+        }
+    }
+}
+
+/** سهم تنقل بين الرسائل الغير مقروءة: يطلع ويختفي بتكبير + تلاشي ناعم */
+@Composable
+private fun UnreadArrow(
+    visible: Boolean, up: Boolean, count: Int,
+    backdrop: com.kyant.backdrop.Backdrop, onClick: () -> Unit
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = scaleIn(spring(0.6f, 450f), initialScale = 0.4f) + fadeIn(tween(180)) +
+            slideInVertically(spring(0.7f, 450f)) { if (up) it / 2 else -it / 2 },
+        exit = scaleOut(tween(220), targetScale = 0.3f) + fadeOut(tween(200)) +
+            slideOutVertically(tween(220)) { if (up) -it / 2 else it / 2 }
+    ) {
+        Box(contentAlignment = Alignment.TopEnd) {
+            GlassButton(onClick = onClick, backdrop = backdrop, modifier = Modifier.size(46.dp)) {
+                Icon(
+                    if (up) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                    null, modifier = Modifier.size(28.dp)
+                )
+            }
+            if (count > 0) {
+                Box(
+                    Modifier.offset(x = 4.dp, y = (-4).dp).defaultMinSize(minWidth = 18.dp, minHeight = 18.dp)
+                        .clip(CircleShape).background(AccentBlue).padding(horizontal = 5.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(if (count > 99) "99+" else "$count", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
         }
     }
 }

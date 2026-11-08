@@ -720,6 +720,7 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
         if (replyTo != null || editing != null) {
             delay(120)
             runCatching { focusRequester.requestFocus() }
+            keyboardCtl?.show()
         }
     }
 
