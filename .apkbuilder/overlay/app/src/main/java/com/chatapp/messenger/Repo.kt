@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -734,6 +735,7 @@ object Repo {
                     arr.filterNotNull().sortedByDescending { it.createdAt }
                 }
             }
+            .onEach { groupsMemo[me] = it }
     }
 
     // ---------- عمليات المجموعة (القواعد بقاعدة البيانات هي الي تحمي الصلاحيات فعلياً) ----------
@@ -1127,6 +1129,35 @@ object Repo {
     /** أشخاص عندي معهم محادثة سابقة (تنملأ من chatsFlow) حتى ما نسأل السيرفر عن "أول تواصل" مع كل رسالة */
     private val knownChats: MutableSet<String> = java.util.Collections.synchronizedSet(HashSet())
 
+    // ---------- كاش محلي للقوائم (حتى تنفتح الواجهة بحالتها الصحيحة فوراً بدون وميض) ----------
+    private fun listPrefs() = FirebaseApp.getInstance().applicationContext
+        .getSharedPreferences("repo_cache", android.content.Context.MODE_PRIVATE)
+
+    /** آخر قائمة \"حذف محادثة\" معروفة لهذا الحساب (null = أول مرة ما اتخزنت) */
+    fun cachedCleared(me: String): Map<String, Long>? {
+        if (me.isBlank()) return null
+        val s = listPrefs().getString("cleared_$me", null) ?: return null
+        return runCatching {
+            val o = org.json.JSONObject(s)
+            o.keys().asSequence().associateWith { o.getLong(it) }
+        }.getOrNull()
+    }
+    private fun saveCleared(me: String, m: Map<String, Long>) {
+        runCatching { listPrefs().edit().putString("cleared_$me", org.json.JSONObject(m as Map<*, *>).toString()).apply() }
+    }
+    /** آخر قائمة مثبتين معروفة (null = أول مرة) */
+    fun cachedPinned(me: String): Set<String>? =
+        if (me.isBlank()) null else listPrefs().getStringSet("pinned_$me", null)?.toSet()
+    private fun savePinned(me: String, s: Set<String>) {
+        runCatching { listPrefs().edit().putStringSet("pinned_$me", HashSet(s)).apply() }
+    }
+
+    // آخر قوائم وصلت بهذي العملية: ترجع تنعرض فوراً لما الواجهة تنبني من جديد
+    private val chatsMemo = java.util.concurrent.ConcurrentHashMap<String, List<ChatItem>>()
+    private val groupsMemo = java.util.concurrent.ConcurrentHashMap<String, List<GroupItem>>()
+    fun lastChats(me: String): List<ChatItem>? = chatsMemo[me]
+    fun lastGroups(me: String): List<GroupItem>? = groupsMemo[me]
+
     /** المحادثات الي أنا طرف فيها (تظهر بعد أول رسالة)، الأحدث أولاً */
     fun chatsFlow(me: String): Flow<List<ChatItem>> {
         if (me.isBlank()) return flowOf(emptyList())
@@ -1138,7 +1169,7 @@ object Repo {
                 knownChats.add(other)
                 ChatItem(other, c.str("lastText"), c.num("lastAt"), c.num("unread").toInt(), c.flag("req"))
             }.sortedByDescending { it.lastAt }
-        }
+        }.onEach { chatsMemo[me] = it }
     }
 
     // ---------- مؤشر الكتابة ----------
@@ -1452,9 +1483,12 @@ object Repo {
         if (me.isBlank()) { close(); return@callbackFlow }
         val reg = db.collection("settings").document(me).addSnapshotListener { d, _ ->
             if (d != null) {
+                // لقطة من الكاش وما فيها الوثيقة = مو موثوقة (ممكن قديمة): نتجاهلها وننتظر السيرفر
+                if (!d.exists() && d.metadata.isFromCache) return@addSnapshotListener
                 val m = (d.get("cleared") as? Map<*, *>)?.mapNotNull { (k, v) ->
                     (k as? String)?.let { it to ((v as? Number)?.toLong() ?: 0L) }
                 }?.toMap() ?: emptyMap()
+                saveCleared(me, m)
                 trySend(m)
             }
         }
@@ -1520,6 +1554,9 @@ object Repo {
     /** حذف المحادثة من عندي فقط: الطرف الثاني تبقى عنده كاملة */
     fun clearChat(me: String, other: String, lastAt: Long) {
         val at = if (lastAt <= 0L || lastAt == Long.MAX_VALUE) System.currentTimeMillis() else lastAt
+        // نحفظ الحذف محلياً فوراً حتى ما ترجع المحادثة تبين لحظة عند فتح التطبيق
+        saveCleared(me, (cachedCleared(me) ?: emptyMap()) + (other to at))
+        savePinned(me, (cachedPinned(me) ?: emptySet()) - other)
         db.collection("settings").document(me).set(
             mapOf(
                 "cleared" to mapOf(other to at),
@@ -2272,7 +2309,9 @@ object Repo {
         if (me.isBlank()) { close(); return@callbackFlow }
         val reg = db.collection("settings").document(me).addSnapshotListener { d, _ ->
             if (d != null) {
+                if (!d.exists() && d.metadata.isFromCache) return@addSnapshotListener
                 val list = (d.get("pinned") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+                savePinned(me, list.toSet())
                 trySend(list.toSet())
             }
         }

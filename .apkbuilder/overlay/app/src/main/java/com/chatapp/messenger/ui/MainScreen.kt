@@ -1,0 +1,608 @@
+package com.chatapp.messenger.ui
+
+import com.chatapp.messenger.ui.theme.AppFont
+
+import kotlinx.coroutines.launch
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.EnterExitState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
+import com.chatapp.messenger.Ban
+import kotlinx.coroutines.delay
+import androidx.compose.foundation.background
+import com.chatapp.messenger.ui.theme.isAppDark
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.paint
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.chatapp.messenger.AppState
+import com.chatapp.messenger.PrivacyState
+import com.chatapp.messenger.Repo
+import com.chatapp.messenger.UserItem
+import com.chatapp.messenger.ui.glass.GlassButton
+import androidx.compose.material3.Icon
+import com.chatapp.messenger.ui.glass.LiquidBottomTab
+import com.chatapp.messenger.ui.glass.LiquidBottomTabs
+import com.chatapp.messenger.ui.glass.ModeSwitch
+import com.chatapp.messenger.ui.theme.appBackground
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+
+/** إذا الحساب محظور (بعد بلاغ ثبت صحته) تظهر شاشة الحظر، وإلا الشاشة الرئيسية */
+@Composable
+fun MainScreen() {
+    // ثابت طول عمر الشاشة: بعد تسجيل الخروج الشاشة تبقى ثواني بحركة الخروج، وإذا انقرأ uid فاضي ينهار التطبيق
+    val myUid = remember { Repo.auth.currentUser?.uid ?: "" }
+    val ban by remember(myUid) { Repo.banFlow(myUid) }.collectAsState(initial = Ban())
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(ban.until) {
+        now = System.currentTimeMillis()
+        while (now < ban.until) {
+            delay(30_000)
+            now = System.currentTimeMillis()
+        }
+    }
+    if (ban.until > now) BanScreen(ban, now) else MainContent()
+}
+
+/** الشاشة الرئيسية: المحتوى + الشريط السفلي الزجاجي (Home / BDF / Account) */
+@Composable
+private fun MainContent() {
+    val myUid = remember { Repo.auth.currentUser?.uid ?: "" }
+    val ctx = LocalContext.current
+    val notifPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    var tab by androidx.compose.runtime.saveable.rememberSaveable { mutableIntStateOf(0) }
+    var chatWith by remember { mutableStateOf<UserItem?>(null) }
+    var viewProfile by remember { mutableStateOf<UserItem?>(null) }
+    // محادثة مجموعة مفتوحة (id) + شاشة معلوماتها، ونتذكر آخر id حتى تشتغل حركة الإغلاق
+    var openGroupId by remember { mutableStateOf<String?>(null) }
+    // محادثة الدعم الفني (معرّف صاحبها) + آخر قيمة للحركة
+    var supportThread by remember { mutableStateOf<String?>(null) }
+    var lastSupportThread by remember { mutableStateOf("") }
+    var groupInfoOpen by remember { mutableStateOf(false) }
+    var lastGroupId by remember { mutableStateOf("") }
+    // كل تبويب يبلغ عن نفسه منفصل (التبويبات كلها مبنية دائماً)
+    var homeOverlay by remember { mutableStateOf(false) }
+    var accountOverlay by remember { mutableStateOf(false) }
+    val overlayOpen = homeOverlay || accountOverlay
+    var confirmLogout by remember { mutableStateOf(false) }
+    // حذف محادثة من عندي فقط: (uid, الاسم, وقت آخر رسالة)
+    var deleteChat by remember { mutableStateOf<Triple<String, String, Long>?>(null) }
+    val delScope = androidx.compose.runtime.rememberCoroutineScope()
+    // نتذكر آخر محادثة/بروفايل حتى تشتغل حركة الإغلاق قبل ما تختفي الشاشة
+    var lastChat by remember { mutableStateOf<UserItem?>(null) }
+    var lastProfile by remember { mutableStateOf<UserItem?>(null) }
+    // نافذة إنشاء مجموعة: groupOpen = مفتوحة/مغلقة، groupP = تقدّم الحركة (0 مطوية على الزر ... 1 مفتوحة)
+    var groupOpen by remember { mutableStateOf(false) }
+    // نافذة اختيار رمز الاسم (نفس تصميم وحركة نافذة إنشاء مجموعة)
+    var stickerOpen by remember { mutableStateOf(false) }
+    val stickerCtx = androidx.compose.ui.platform.LocalContext.current
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(6000)
+        StickerStore.prewarm(stickerCtx)
+    }
+    var stickerOrigin by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    // واجهات صفحة Home: 0 = المحادثات، 1 = المجموعات، 2 = طلبات الرسائل
+    var homeMode by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(0) }
+    // زر ⋮ بصفحة Home: الحالة هنا لأن الزر والقائمة يُرسمان فوق المبدّل
+    var homeMenuOpen by remember { mutableStateOf(false) }
+    var homeMenuCmd by remember { mutableStateOf(0) }
+    var homeSelecting by remember { mutableStateOf(false) }
+    // عدد طلبات الرسائل الجديدة (يظهر على زر "الطلبات")
+    val requestCount by remember(myUid) { Repo.requestCountFlow(myUid) }.collectAsState(initial = 0)
+    // إعدادات خصوصيتي: تنقرأ هنا مرة وحدة وتنتشر لكل التطبيق (حالة الاتصال، مقروء، آخر ظهور)
+    LaunchedEffect(myUid) {
+        if (myUid.isNotEmpty()) Repo.privacyFlow(myUid).collect { PrivacyState.value = it }
+    }
+    val groupP = remember { Animatable(0f) }
+    val backdrop = rememberLayerBackdrop()
+    val contentColor = if (isAppDark()) Color.White else Color.Black
+    val iconColorFilter = ColorFilter.tint(contentColor)
+    val tabs = listOf(
+        rememberVectorPainter(Icons.Filled.Home) to "Home",
+        rememberVectorPainter(AppIcons.Group) to "Groups",
+        rememberVectorPainter(Icons.Filled.Person) to "Account"
+    )
+    val modeTabs = listOf(
+        rememberVectorPainter(AppIcons.ChatBubble) to "المحادثات",
+        rememberVectorPainter(AppIcons.Inbox) to if (requestCount > 0) "الطلبات ($requestCount)" else "الطلبات"
+    )
+
+    LaunchedEffect(myUid) {
+        // إذا كان الحساب معطّلاً ودخل صاحبه من جديد: يرجع يظهر
+        try {
+            Repo.reactivateIfDisabled()
+        } catch (_: Exception) {
+        }
+        try {
+            Repo.saveProfile()
+        } catch (_: Exception) {
+        }
+        // يوزر افتراضي فريد لكل مستخدم جديد
+        try {
+            Repo.ensureUsername()
+        } catch (_: Exception) {
+        }
+        // قصة قديمة (من نسخة سابقة) تنتقل للمكان المحمي الخاص بالأصدقاء
+        try {
+            Repo.migrateLegacyStory()
+        } catch (_: Exception) {
+        }
+        // صداقات قديمة (قبل نظام المتابعة) تنتقل لمتابعة متبادلة
+        try {
+            Repo.migrateLegacyFriendships()
+        } catch (_: Exception) {
+        }
+    }
+    // إشعارات الرسائل: صلاحية أندرويد 13+ وتسجيل توكن الجهاز لهذا الحساب
+    LaunchedEffect(myUid) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        Repo.registerFcmToken()
+        // استقبال الرسائل بالخلفية بدون سيرفر: خدمة تسمع لـ Firestore وتطلع الإشعار
+        com.chatapp.messenger.MessageListenerService.start(ctx)
+        com.chatapp.messenger.MessageListenerService.askBatteryExemptionOnce(ctx)
+    }
+    // متصل / آخر ظهور: أنا "متصل" والتطبيق مفتوح قدامي (نبضة كل دقيقتين)، وأول ما يروح للخلفية أصير "غير متصل"
+    LaunchedEffect(myUid, AppState.foreground) {
+        if (myUid.isEmpty()) return@LaunchedEffect
+        if (AppState.foreground) {
+            while (true) {
+                Repo.setPresence(true)
+                delay(PRESENCE_HEARTBEAT_MS)
+            }
+        } else {
+            Repo.setPresence(false)
+        }
+    }
+    // ضغطة على إشعار = افتح محادثة المرسل (أو المجموعة)
+    val pendingChat = Nav.openChatUid
+    LaunchedEffect(pendingChat) {
+        if (pendingChat != null) {
+            groupOpen = false
+            viewProfile = null
+            if (pendingChat.startsWith("support:")) {
+                chatWith = null
+                supportThread = pendingChat.removePrefix("support:")
+            } else if (pendingChat.startsWith("group:")) {
+                // ضغطة على إشعار مجموعة = افتح المجموعة
+                chatWith = null
+                supportThread = null
+                groupInfoOpen = false
+                openGroupId = pendingChat.removePrefix("group:")
+            } else {
+                chatWith = UserItem(pendingChat, "", "", "")
+            }
+            Nav.openChatUid = null
+        }
+    }
+    // رابط/باركود حساب = افتح بروفايل صاحبه فوراً
+    val pendingProfile = Nav.openProfileUid
+    LaunchedEffect(pendingProfile) {
+        if (pendingProfile != null) {
+            groupOpen = false
+            viewProfile = UserItem(pendingProfile, "", "", "")
+            Nav.openProfileUid = null
+        }
+    }
+    BackHandler(enabled = groupOpen) { groupOpen = false }
+    BackHandler(enabled = stickerOpen) { stickerOpen = false }
+    BackHandler(enabled = supportThread != null) { supportThread = null }
+    BackHandler(enabled = confirmLogout || deleteChat != null) { confirmLogout = false; deleteChat = null }
+    BackHandler(enabled = (chatWith != null || viewProfile != null) && !confirmLogout && deleteChat == null) {
+        if (viewProfile != null) viewProfile = null else chatWith = null
+    }
+    BackHandler(enabled = openGroupId != null && !groupInfoOpen && viewProfile == null) { openGroupId = null }
+    BackHandler(enabled = groupInfoOpen && viewProfile == null) { groupInfoOpen = false }
+
+    // موضع التبويب (حركة الانزلاق): نستعمله أيضاً حتى زر إنشاء مجموعة ما يبين إلا لما تبويب المجموعات يكون ظاهر فعلاً
+    val tabPos by animateFloatAsState(tab.toFloat(), spring(dampingRatio = 0.85f, stiffness = 380f), label = "tabPos")
+    Box(Modifier.fillMaxSize()) {
+        // المحتوى: هذا الي يظهر خلف الزجاج
+        Box(
+            Modifier
+                .fillMaxSize()
+                .layerBackdrop(backdrop)
+                .background(appBackground())
+        ) {
+            // لما تفتح محادثة/بروفايل، الشاشة الرئيسية تصغر وتخفت شوية خلفها، ولما ترجع تتكبر بحركة نابضية
+            val coverOpen = chatWith != null || viewProfile != null || openGroupId != null || supportThread != null
+            val backScale by animateFloatAsState(
+                if (coverOpen) 0.93f else 1f,
+                spring(dampingRatio = 0.72f, stiffness = 260f), label = "backScale"
+            )
+            val backAlpha by animateFloatAsState(
+                if (coverOpen) 0.55f else 1f, tween(320), label = "backAlpha"
+            )
+            Box(
+                Modifier.fillMaxSize().graphicsLayer {
+                    scaleX = backScale; scaleY = backScale; alpha = backAlpha
+                }
+            ) {
+            // خلفية متحركة بألوان مختلفة لكل تبويب
+            AnimatedAppBackground(tab, Modifier.fillMaxSize())
+            // التبويبات الثلاثة تنبني مرة وحدة عند فتح التطبيق وتبقى حيّة بالخلفية:
+            // التنقل بينها بس انزلاق/تلاشي (بدون إعادة بناء)، وأي تحديث ببياناتها يصير بالخفاء.
+            Box(Modifier.fillMaxSize()) {
+                for (i in 0..2) {
+                    val selected = tab == i
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            // التبويب الحالي دائماً فوق الباقين
+                            .zIndex(if (selected) 1f else 0f)
+                            .graphicsLayer {
+                                val d = i - tabPos
+                                alpha = (1f - kotlin.math.abs(d)).coerceIn(0f, 1f)
+                                translationX = d * size.width * 0.25f
+                            }
+                            // التبويبات المخفية ما تستقبل لمس (حتى ما تنضغط أزرارها بالغلط)
+                            .then(
+                                if (selected) Modifier else Modifier.pointerInput(Unit) {
+                                    awaitPointerEventScope {
+                                        while (true) {
+                                            awaitPointerEvent(PointerEventPass.Initial).changes.forEach { it.consume() }
+                                        }
+                                    }
+                                }
+                            )
+                    ) {
+                        when (i) {
+                            0 -> HomeTab(
+                                onOpenChat = { chatWith = it },
+                                onOpenProfile = { viewProfile = it },
+                                onRequestLogout = { confirmLogout = true },
+                                onRequestDeleteChat = { uid, name, lastAt -> deleteChat = Triple(uid, name, lastAt) },
+                                onOverlayChange = { homeOverlay = it },
+                                homeMode = homeMode,
+                                onOpenGroup = { openGroupId = it.id; groupInfoOpen = false },
+                                onOpenSupport = { supportThread = it },
+                                menuCmd = homeMenuCmd,
+                                onMenuCmdHandled = { homeMenuCmd = 0 },
+                                onSelectingChange = { homeSelecting = it }
+                            )
+                            1 -> GroupsTab(
+                                onOpenGroup = { openGroupId = it.id; groupInfoOpen = false },
+                                onRequestLogout = { confirmLogout = true }
+                            )
+                            else -> AccountTab(
+                                onOverlayChange = { accountOverlay = it },
+                                onOpenProfile = { viewProfile = it },
+                                active = selected,
+                                onOpenBadges = { stickerOrigin = it; stickerOpen = true },
+                                onRequestLogout = { confirmLogout = true }
+                            )
+                        }
+                    }
+                }
+            }
+            }
+        }
+
+        val open = chatWith
+        val profileOpen = viewProfile
+        if (open != null) lastChat = open
+        if (profileOpen != null) lastProfile = profileOpen
+        val chatGroupId = openGroupId
+        if (chatGroupId != null) lastGroupId = chatGroupId
+
+        // الشريط السفلي يختفي بحركة نزول عند فتح محادثة/بروفايل ويرجع بحركة طلوع
+        AnimatedVisibility(
+            visible = open == null && profileOpen == null && chatGroupId == null && supportThread == null && !overlayOpen,
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
+            enter = slideInVertically(spring(0.8f, 380f)) { it } + fadeIn(tween(200)),
+            exit = slideOutVertically(tween(220)) { it } + fadeOut(tween(160))
+        ) {
+            LiquidBottomTabs(
+                selectedTabIndex = { tab },
+                onTabSelected = { tab = it },
+                backdrop = backdrop,
+                tabsCount = 3,
+                modifier = Modifier
+                    .navigationBarsPadding()
+                    .padding(horizontal = 36f.dp, vertical = 24f.dp)
+            ) {
+                // نفس تركيبة الكتالوج: Box + paint بدل Icon، والنص 12sp
+                tabs.forEachIndexed { index, (painter, label) ->
+                    LiquidBottomTab({ tab = index }) {
+                        Box(
+                            Modifier
+                                .size(28f.dp)
+                                .paint(painter, colorFilter = iconColorFilter)
+                        )
+                        BasicText(label, style = TextStyle(contentColor, 12f.sp, fontFamily = AppFont))
+                    }
+                }
+            }
+        }
+
+        // مبدّل المحادثات/المجموعات: كبسولة مستقلة بتصميم مختلف عن الشريط السفلي،
+        // خارج صندوق layerBackdrop حتى ما يصير كراش
+        AnimatedVisibility(
+            visible = tab == 0 && open == null && profileOpen == null && chatGroupId == null && supportThread == null && !overlayOpen,
+            modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+            enter = slideInVertically(spring(0.8f, 380f)) { -it } + fadeIn(tween(200)),
+            exit = slideOutVertically(tween(220)) { -it } + fadeOut(tween(160))
+        ) {
+            ModeSwitch(
+                selectedIndex = homeMode,
+                onSelected = { homeMode = it },
+                backdrop = backdrop,
+                items = modeTabs,
+                modifier = Modifier
+                    .statusBarsPadding()
+                    .padding(top = 68.dp)
+                    .padding(horizontal = 16.dp)
+                    // يرخي قيود العرض الكامل من AnimatedVisibility حتى يتوسّط بعرضه الخاص
+                    .wrapContentWidth(Alignment.CenterHorizontally)
+                    .widthIn(max = 340.dp)
+                    .fillMaxWidth()
+            )
+        }
+
+        // زر ⋮ (Liquid Glass) أعلى اليسار الفعلي + قائمته: خارج صندوق layerBackdrop ومرسومين فوق المبدّل
+        val menuBtnVisible = tab == 0 && homeMode == 0 && !homeSelecting && open == null &&
+            profileOpen == null && chatGroupId == null && supportThread == null && !overlayOpen
+        if (!menuBtnVisible && homeMenuOpen) homeMenuOpen = false
+        val screenRtl = androidx.compose.ui.platform.LocalLayoutDirection.current ==
+            androidx.compose.ui.unit.LayoutDirection.Rtl
+        if (menuBtnVisible) {
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr
+            ) {
+                GlassButton(
+                    onClick = { homeMenuOpen = true },
+                    backdrop = backdrop,
+                    modifier = Modifier
+                        .align(if (screenRtl) Alignment.TopEnd else Alignment.TopStart)
+                        .statusBarsPadding()
+                        .padding(start = 12.dp, end = 12.dp, top = 10.dp)
+                        .size(44.dp)
+                ) {
+                    Icon(Icons.Filled.MoreVert, "المزيد", tint = contentColor, modifier = Modifier.size(24.dp))
+                }
+            }
+        }
+        if (homeMenuOpen) {
+            HomeMoreMenu(
+                backdrop = backdrop,
+                dark = isAppDark(),
+                onDismiss = { homeMenuOpen = false },
+                onSelect = { homeMenuOpen = false; homeMenuCmd = 1 },
+                onIntro = { homeMenuOpen = false; homeMenuCmd = 2 },
+                onActivity = { homeMenuOpen = false; homeMenuCmd = 3 }
+            )
+        }
+
+        // زر إنشاء مجموعة (Liquid Glass دائري): خارج صندوق layerBackdrop عمداً،
+        // لأن الزجاج ما ينفع يقرأ نفس الطبقة الي هو مرسوم داخلها (هذا كان سبب الكراش)
+        AnimatedVisibility(
+            visible = tab == 1 && tabPos > 0.55f && open == null && profileOpen == null && chatGroupId == null && supportThread == null && !overlayOpen,
+            modifier = Modifier.align(Alignment.BottomEnd),
+            enter = slideInVertically(spring(0.8f, 380f)) { it } + fadeIn(tween(200)),
+            exit = slideOutVertically(tween(220)) { it } + fadeOut(tween(160))
+        ) {
+            // الزر يختفي تماماً أثناء فتح/إغلاق النافذة (النافذة هي الي تمثله بنفس المكان والحجم)
+            if (!groupOpen && groupP.value <= 0.001f) {
+                GlassButton(
+                    onClick = { groupOpen = true },
+                    backdrop = backdrop,
+                    modifier = Modifier
+                        .navigationBarsPadding()
+                        .padding(end = 20.dp, bottom = 112.dp)
+                        .size(56.dp)
+                ) {
+                    Icon(
+                        AppIcons.GroupAdd, "إنشاء مجموعة",
+                        tint = contentColor,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+            }
+        }
+
+        // نافذة إنشاء مجموعة: تتحول من الزر وترجع له بنفس الحركة، ومحتواها نموذج المجموعة
+        val groupDark = isAppDark()
+        GroupCreatePanel(
+            progress = groupP,
+            open = groupOpen,
+            backdrop = backdrop,
+            dark = groupDark,
+            onDismiss = { groupOpen = false },
+            content = {
+                GroupCreateForm(
+                    dark = groupDark,
+                    onCreated = {
+                        // نسكّر النافذة ونروح لتبويب المجموعات حتى تشوف مجموعتها
+                        groupOpen = false
+                    }
+                )
+            }
+        )
+
+        BadgePopup(open = stickerOpen, origin = stickerOrigin, dark = groupDark, backdrop = backdrop, onDismiss = { stickerOpen = false })
+
+        // انيميشن دخول المحادثة: تنزلق من الجانب مع تلاشي وتكبير خفيف
+        AnimatedVisibility(
+            visible = open != null,
+            enter = slideInHorizontally(spring(0.86f, 420f)) { it } + fadeIn(tween(180)) +
+                scaleIn(spring(0.9f, 420f), initialScale = 0.94f),
+            // خروج: المحادثة تصغر وتتدور حوافها وتنزلق للجنب وتتلاشى، والرئيسية ترجع من ورا
+            exit = slideOutHorizontally(tween(340, easing = FastOutSlowInEasing)) { (it * 0.55f).toInt() } +
+                scaleOut(tween(340, easing = FastOutSlowInEasing), targetScale = 0.82f, transformOrigin = TransformOrigin(1f, 0.5f)) +
+                fadeOut(tween(260, delayMillis = 60))
+        ) {
+            // 0 = ظاهرة بالكامل، 1 = داخلة/طالعة: نستعملها لتدوير الحواف بالتدريج
+            val p by transition.animateFloat(
+                transitionSpec = { tween(340, easing = FastOutSlowInEasing) },
+                label = "chatEdge"
+            ) { if (it == EnterExitState.Visible) 0f else 1f }
+            lastChat?.let { c ->
+                Box(
+                    Modifier.fillMaxSize().graphicsLayer {
+                        shape = RoundedCornerShape((p * 44f).dp)
+                        clip = p > 0.001f
+                    }
+                ) {
+                    ChatScreen(other = c, onBack = { chatWith = null }, onOpenProfile = { viewProfile = c })
+                }
+            }
+        }
+        // محادثة المجموعة + شاشة معلوماتها وإدارتها
+        AnimatedVisibility(
+            visible = chatGroupId != null,
+            enter = slideInHorizontally(spring(0.86f, 420f)) { it } + fadeIn(tween(180)),
+            exit = slideOutHorizontally(tween(240)) { it } + fadeOut(tween(200))
+        ) {
+            if (lastGroupId.isNotEmpty()) {
+                GroupChatScreen(
+                    groupId = lastGroupId,
+                    onBack = { groupInfoOpen = false; openGroupId = null },
+                    onOpenInfo = { groupInfoOpen = true },
+                    onOpenProfile = { viewProfile = it }
+                )
+            }
+        }
+        AnimatedVisibility(
+            visible = chatGroupId != null && groupInfoOpen,
+            enter = slideInHorizontally(spring(0.86f, 420f)) { it } + fadeIn(tween(180)),
+            exit = slideOutHorizontally(tween(240)) { it } + fadeOut(tween(200))
+        ) {
+            if (lastGroupId.isNotEmpty()) {
+                GroupInfoScreen(
+                    groupId = lastGroupId,
+                    onBack = { groupInfoOpen = false },
+                    onGone = { groupInfoOpen = false; openGroupId = null },
+                    onOpenProfile = { viewProfile = it }
+                )
+            }
+        }
+        // محادثة الدعم الفني (باسم وصورة التطبيق للمستخدم، وللمطور باسم المستخدم)
+        run {
+            val st = supportThread
+            if (st != null) lastSupportThread = st
+            AnimatedVisibility(
+                visible = st != null,
+                enter = slideInHorizontally(spring(0.86f, 420f)) { it } + fadeIn(tween(180)),
+                exit = slideOutHorizontally(tween(240)) { it } + fadeOut(tween(200))
+            ) {
+                if (lastSupportThread.isNotEmpty()) {
+                    SupportChatScreen(
+                        threadUid = lastSupportThread,
+                        asDev = lastSupportThread != myUid,
+                        onBack = { supportThread = null }
+                    )
+                }
+            }
+        }
+
+        // الملف الشخصي فوق كل شي (حتى لو انفتح من شاشة معلومات المجموعة)
+        AnimatedVisibility(
+            visible = profileOpen != null,
+            enter = slideInHorizontally(spring(0.86f, 420f)) { it } + fadeIn(tween(180)),
+            exit = slideOutHorizontally(tween(240)) { it } + fadeOut(tween(200))
+        ) {
+            lastProfile?.let { p ->
+                UserProfileScreen(
+                    user = p,
+                    onBack = { viewProfile = null },
+                    onMessage = { viewProfile = null; groupInfoOpen = false; openGroupId = null; chatWith = p }
+                )
+            }
+        }
+
+        // تأكيد حذف المحادثة (من عندي فقط)
+        deleteChat?.let { (uid, name, lastAt) ->
+            GlassConfirmDialog(
+                backdrop = backdrop,
+                dark = isAppDark(),
+                title = "حذف المحادثة",
+                message = "راح تنحذف محادثتك مع $name من عندك فقط. الطرف الثاني تبقى عنده المحادثة كاملة.",
+                confirmText = "حذف",
+                icon = Icons.Filled.Delete,
+                onConfirm = {
+                    deleteChat = null
+                    // محادثات الدعم ("support:<uid>") تنحذف بنفس النظام العادي
+                    Repo.clearChat(myUid, uid, lastAt)
+                },
+                onDismiss = { deleteChat = null }
+            )
+        }
+
+        // تأكيد تسجيل الخروج (Liquid Glass)
+        if (confirmLogout) {
+            GlassConfirmDialog(
+                backdrop = backdrop,
+                dark = isAppDark(),
+                title = "تسجيل الخروج",
+                message = "متأكد تريد تسجّل الخروج من حسابك؟ ما راح توصلك إشعارات الرسائل لين ترجع تسجّل دخول.",
+                confirmText = "تسجيل الخروج",
+                icon = AppIcons.Logout,
+                onConfirm = { confirmLogout = false; Repo.signOut() },
+                onDismiss = { confirmLogout = false }
+            )
+        }
+    }
+}
