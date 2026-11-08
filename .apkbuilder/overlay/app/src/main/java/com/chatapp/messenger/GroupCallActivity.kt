@@ -599,10 +599,22 @@ private fun MemberRow(
                 )
             }
         }
+        val isMuted = if (m === GroupCallManager.selfMember) GroupCallManager.muted else m.muted
         if (canManage && !isHost) {
-            GlassMiniButton(backdrop, CallIcons.MicOff, Color.White, { GroupCallManager.muteMember(m.uid) })
+            // أحمر = العضو مكتوم. الضغط يكتمه، وإذا مكتوم أصلاً ما يسوي شي (هو يفتح مايكه بنفسه)
+            GlassMiniButton(
+                backdrop, CallIcons.MicOff, Color.White,
+                { if (!isMuted) GroupCallManager.muteMember(m.uid) },
+                fill = if (isMuted) CallRed else null
+            )
             Spacer(Modifier.width(8.dp))
             GlassMiniButton(backdrop, Icons.Filled.Close, Color(0xFFFF6B6B), { GroupCallManager.kickMember(m.uid) })
+        } else if (isMuted) {
+            // مؤشر كتم أحمر لمن ما عنده صلاحية إدارة (أو هذا المضيف/أنا)
+            Box(
+                Modifier.size(32.dp).clip(CircleShape).background(CallRed),
+                contentAlignment = Alignment.Center
+            ) { Icon(CallIcons.MicOff, null, tint = Color.White, modifier = Modifier.size(17.dp)) }
         }
     }
 }

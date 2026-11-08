@@ -367,17 +367,23 @@ internal fun GlassMiniButton(
     tint: Color,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    size: Dp = 40.dp
+    size: Dp = 40.dp,
+    /** لون خلفية اختياري (مثلاً أحمر لزر الكتم لما العضو مكتوم) */
+    fill: Color? = null
 ) {
     val haptic = LocalHapticFeedback.current
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val s by animateFloatAsState(if (pressed) 0.82f else 1f, spring(0.4f, 500f), label = "mini")
+    val fillA by androidx.compose.animation.animateColorAsState(
+        fill ?: Color.Transparent, tween(220), label = "miniFill"
+    )
     Box(
         modifier
             .size(size)
             .graphicsLayer { scaleX = s; scaleY = s }
             .callGlass(backdrop, CircleShape, Color.White.copy(alpha = 0.12f), blurDp = 6f)
+            .background(fillA, CircleShape)
             .clickable(interactionSource = interaction, indication = null, role = Role.Button) {
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 onClick()

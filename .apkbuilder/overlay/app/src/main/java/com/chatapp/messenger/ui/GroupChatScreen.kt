@@ -1113,6 +1113,37 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                 }
             )
 
+            // ----- شريط "مكالمة جارية" + زر انضمام (يظهر إذا اكو أحد بالمكالمة وأني مو منضم) -----
+            val inThisCall = GroupCallManager.isBusy && GroupCallManager.gid == groupId
+            if (callCount > 0 && !inThisCall) {
+                val joinShape = RoundedCornerShape(22.dp)
+                Row(
+                    Modifier.align(Alignment.TopCenter).fillMaxWidth()
+                        .padding(
+                            top = statusTop + 64.dp + (if (pinnedList.isNotEmpty()) 62.dp else 0.dp),
+                            start = 12.dp, end = 12.dp
+                        )
+                        .clip(joinShape)
+                        .background(Color(0xFF34C759).copy(alpha = if (dark) 0.22f else 0.18f))
+                        .border(1.dp, Color(0xFF34C759).copy(alpha = 0.5f), joinShape)
+                        .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(CallIcons.People, null, tint = Color(0xFF34C759), modifier = Modifier.size(22.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("مكالمة جماعية جارية", color = fg, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                        Text("$callCount مشارك", color = fg.copy(alpha = 0.65f), fontSize = 12.sp, maxLines = 1)
+                    }
+                    Box(
+                        Modifier.clip(RoundedCornerShape(16.dp)).background(Color(0xFF34C759))
+                            .clickable { GroupCallActivity.open(ctx, groupId, g?.item?.name ?: "") }
+                            .padding(horizontal = 18.dp, vertical = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) { Text("انضمام", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
+                }
+            }
+
             // ----- الشريط العلوي: رجوع + بطاقة المجموعة + إعدادات -----
             Row(
                 Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding()

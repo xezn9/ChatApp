@@ -57,6 +57,8 @@ object GroupCallManager {
         var name by mutableStateOf("")
         var avatar by mutableStateOf<Bitmap?>(null)
         var connected by mutableStateOf(false)
+        /** المايك مكتوم (يتزامن عبر groupCalls/{gid}/muted/{uid}) */
+        var muted by mutableStateOf(false)
         /** مستوى الصوت 0..1 (للأنيميشن حول الصورة) */
         var level by mutableFloatStateOf(0f)
     }
@@ -97,6 +99,7 @@ object GroupCallManager {
     private var joinJob: Job? = null
     private var activeListener: ValueEventListener? = null
     private var ctlListener: ValueEventListener? = null
+    private var mutedListener: ChildEventListener? = null
     private var ctlInit = false
     private var ctlSeen = -1L
     private var finishing = false
@@ -190,6 +193,8 @@ object GroupCallManager {
                 }
                 startActiveListener(groupId)
                 startCtlListener(groupId, me)
+                startMutedListener(groupId)
+                publishMuted()
                 startPeersListener(groupId)
                 // قياس مستوى الصوت كل 300ms لأنيميشن الكلام
                 launch {
@@ -229,7 +234,7 @@ object GroupCallManager {
                 when (a) {
                     "kick" -> leave("طردك المضيف من المكالمة")
                     "mute" -> {
-                        if (!muted) { muted = true; localTrack?.setEnabled(false) }
+                        if (!muted) { muted = true; localTrack?.setEnabled(false); publishMuted() }
                         notice = "المضيف كتم المايك حقك"
                     }
                 }
@@ -248,6 +253,40 @@ object GroupCallManager {
                 groupAvatarGifV = m.child("avatarGifV").getValue(Long::class.java) ?: 0L
             }
         }
+    }
+
+    // ------------------------------------------------------------------ حالة الكتم المشتركة
+
+    /** ننشر حالة كتم مايكي حتى الكل (وخصوصاً المضيف) يشوف الزر أحمر */
+    private fun publishMuted() {
+        val g = gid
+        val me = myUid
+        if (g.isBlank() || me.isBlank()) return
+        val r = ref("groupCalls/$g/muted/$me")
+        if (muted) {
+            runCatching { r.onDisconnect().removeValue() }
+            runCatching { r.setValue(true) }
+        } else {
+            runCatching { r.onDisconnect().cancel() }
+            runCatching { r.removeValue() }
+        }
+    }
+
+    private fun startMutedListener(g: String) {
+        val l = object : ChildEventListener {
+            private fun apply(s: DataSnapshot, v: Boolean) {
+                val uid = s.key ?: return
+                if (uid == myUid) return
+                members.firstOrNull { it.uid == uid }?.muted = v
+            }
+            override fun onChildAdded(s: DataSnapshot, prev: String?) { apply(s, s.getValue(Boolean::class.java) == true) }
+            override fun onChildChanged(s: DataSnapshot, prev: String?) { apply(s, s.getValue(Boolean::class.java) == true) }
+            override fun onChildRemoved(s: DataSnapshot) { apply(s, false) }
+            override fun onChildMoved(s: DataSnapshot, prev: String?) {}
+            override fun onCancelled(e: DatabaseError) {}
+        }
+        mutedListener = l
+        ref("groupCalls/$g/muted").addChildEventListener(l)
     }
 
     // ------------------------------------------------------------------ صلاحيات المضيف
@@ -319,6 +358,12 @@ object GroupCallManager {
         val m = Member(uid)
         members.add(m)
         loadProfile(m)
+        // الحالة ممكن توصل قبل ما يظهر العضو بالقائمة: نقراها مرة ثانية
+        scope.launch {
+            runCatching {
+                m.muted = ref("groupCalls/$gid/muted/$uid").get().await().getValue(Boolean::class.java) == true
+            }
+        }
         val link = Link(uid, t, offerer, m)
         links[uid] = link
         link.start()
@@ -511,6 +556,7 @@ object GroupCallManager {
     fun toggleMute() {
         muted = !muted
         localTrack?.setEnabled(!muted)
+        publishMuted()
     }
 
     fun toggleSpeaker() {
@@ -530,6 +576,8 @@ object GroupCallManager {
             Repo.sendGroupCallLog(g, com.chatapp.messenger.ui.ChatCallLog.GROUP_MISSED)
         }
         scope.launch {
+            runCatching { ref("groupCalls/$g/muted/$me").onDisconnect().cancel() }
+            runCatching { ref("groupCalls/$g/muted/$me").removeValue().await() }
             runCatching { ref("groupCalls/$g/peers/$me").onDisconnect().cancel() }
             runCatching { ref("groupCalls/$g/peers/$me").removeValue().await() }
             val snap = runCatching { ref("groupCalls/$g/peers").get().await() }.getOrNull()
@@ -555,6 +603,8 @@ object GroupCallManager {
         activeListener = null
         ctlListener?.let { runCatching { ref("groupCalls/$g/ctl/$myUid").removeEventListener(it) } }
         ctlListener = null
+        mutedListener?.let { runCatching { ref("groupCalls/$g/muted").removeEventListener(it) } }
+        mutedListener = null
         links.values.toList().forEach { it.close() }
         links.clear()
         runCatching { localTrack?.dispose() }
