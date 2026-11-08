@@ -44,7 +44,7 @@ import kotlin.coroutines.resumeWithException
  * الإشارة عبر Realtime Database:
  *   groupCalls/{gid}/active           = {by, startedAt}   (يكتبه الي بدأ المكالمة، والـ Worker يتأكد منه للرنين)
  *   groupCalls/{gid}/peers/{uid}      = وقت الانضمام      (حضور؛ ينحذف تلقائياً عند الانقطاع)
- *   groupCalls/{gid}/sig/{to}/{from}  = {offer|answer, t, ice/*}
+ *   groupCalls/{gid}/sig/{to}/{from}  = {offer|answer, t, ice/...}
  * الي ينضم متأخر هو الي يرسل الـ offer للباقين. الحد الأقصى 8 مشاركين.
  */
 object GroupCallManager {
