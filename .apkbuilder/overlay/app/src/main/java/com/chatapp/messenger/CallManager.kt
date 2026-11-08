@@ -76,6 +76,12 @@ object CallManager {
     private var canSendIce = false
     private var finishing = false
 
+    // ---- سجل المكالمة الفائتة (يكتبه المتصل بس) ----
+    private var rangPeer = false       // الرنين وصل فعلاً للطرف الثاني (ما فشل البدء)
+    private var everAnswered = false   // الطرف الثاني رد (دخلنا مرحلة الاتصال)
+    private var endState = ""          // حالة الإنهاء: declined / busy / missed / ended
+    private var callLogged = false
+
     /** يجلب صورة الشخص من ملفه الشخصي (Firestore profiles/{uid}.avatar بصيغة base64) */
     private fun loadAvatar(uid: String) {
         peerAvatar = null
@@ -133,6 +139,7 @@ object CallManager {
                     mapOf("callId" to id, "from" to me, "at" to System.currentTimeMillis())
                 ).await()
                 Push.call(peer, id)
+                rangPeer = true
                 listenCall(id)
                 flushLocalIce()
                 timeoutJob = launch {
@@ -325,6 +332,7 @@ object CallManager {
             PeerConnection.IceConnectionState.COMPLETED -> {
                 disconnectJob?.cancel()
                 if (phase == Phase.CONNECTING || phase == Phase.OUTGOING || phase == Phase.INCOMING) {
+                    everAnswered = true
                     timeoutJob?.cancel()
                     phase = Phase.ACTIVE
                     activeSince = System.currentTimeMillis()
@@ -390,6 +398,7 @@ object CallManager {
                             phase == Phase.INCOMING -> "فاتتك مكالمة"
                             else -> ""
                         }
+                        endState = state
                         if (isCaller) cleanupCaller(id, peerUid)
                         finish(reason)
                         return
@@ -399,6 +408,7 @@ object CallManager {
                     val ans = s.child("answer").getValue(String::class.java)
                     if (!ans.isNullOrEmpty() && pc != null) {
                         answerHandled = true
+                        everAnswered = true
                         phase = Phase.CONNECTING
                         timeoutJob?.cancel()
                         timeoutJob = scope.launch {
@@ -450,6 +460,7 @@ object CallManager {
     /** نكتب الحالة بقاعدة البيانات ثم ننهي محلياً */
     private fun endLocal(state: String, reason: String) {
         if (finishing) return
+        endState = state
         val id = callId
         val peer = peerUid
         val wasOutgoing = phase == Phase.OUTGOING
@@ -473,9 +484,25 @@ object CallManager {
         }
     }
 
+    /**
+     * إذا أنا المتصل والطرف الثاني ما رد (ما رد / رفض / مشغول / لغيت قبل الرد):
+     * نكتب "مكالمة فائتة" بالمحادثة، تطلع عند الطرفين (عنده بالأحمر مع زر اتصال).
+     */
+    private fun logMissedIfNeeded() {
+        if (!isCaller || !rangPeer || everAnswered || callLogged) return
+        callLogged = true
+        val me = Repo.auth.currentUser?.uid ?: return
+        val peer = peerUid
+        if (peer.isBlank()) return
+        val kind = if (endState == "declined") com.chatapp.messenger.ui.ChatCallLog.DECLINED
+        else com.chatapp.messenger.ui.ChatCallLog.MISSED
+        Repo.send(me, peer, com.chatapp.messenger.ui.ChatCallLog.encode(kind))
+    }
+
     private fun finish(reason: String) {
         if (finishing) return
         finishing = true
+        logMissedIfNeeded()
         timeoutJob?.cancel()
         disconnectJob?.cancel()
         val ctx = appCtx
@@ -511,6 +538,10 @@ object CallManager {
         pendingLocalIce.clear()
         canSendIce = false
         finishing = false
+        rangPeer = false
+        everAnswered = false
+        endState = ""
+        callLogged = false
         muted = false
         speaker = false
         activeSince = 0L

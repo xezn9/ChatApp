@@ -987,7 +987,8 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                                 }
                             },
                             iLiked = m.reactions[me] != null,
-                            onHeart = { on -> Repo.setGroupMessageReaction(groupId, m.key, if (on) HEART else null, onReactFail) }
+                            onHeart = { on -> Repo.setGroupMessageReaction(groupId, m.key, if (on) HEART else null, onReactFail) },
+                            onCallBack = { GroupCallActivity.open(ctx, groupId, g?.item?.name ?: "") }
                         )
                         }
                     }
@@ -1339,7 +1340,7 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                             replyTo = mm
                         })
                     }
-                    if (mm.mediaType.isEmpty() && ChatSticker.parse(mm.text) == null && Translator.looksEnglish(mm.text) && mm.id !in Translator.loading) {
+                    if (mm.mediaType.isEmpty() && ChatSticker.parse(mm.text) == null && ChatCallLog.parse(mm.text) == null && Translator.looksEnglish(mm.text) && mm.id !in Translator.loading) {
                         val shown = Translator.results.containsKey(mm.id)
                         add(MsgAction(AppIcons.Translate, if (shown) "إخفاء الترجمة" else "ترجمة", Color(0xFF00BFA5)) {
                             menu = null
@@ -1441,7 +1442,8 @@ private fun GroupMessageRow(
     onJump: (String) -> Unit = {},
     onLongPress: (Rect) -> Unit = {},
     iLiked: Boolean = false,
-    onHeart: (Boolean) -> Unit = {}
+    onHeart: (Boolean) -> Unit = {},
+    onCallBack: () -> Unit = {}
 ) {
     val haptic = LocalHapticFeedback.current
     val boundsHolder = remember { arrayOf(Rect.Zero) }
@@ -1577,9 +1579,19 @@ private fun GroupMessageRow(
             ).value
             val stickerId = if (m.mediaType.isEmpty()) ChatSticker.parse(m.text) else null
             val customStk = CustomStickers.isCustom(m.mediaType, m.text, m.thumb)
+            val callKind = if (m.mediaType.isEmpty()) ChatCallLog.parse(m.text) else null
             var showSaveStk by remember(m.id) { mutableStateOf(false) }
             Box(Modifier.padding(bottom = reactPad.coerceAtLeast(0.dp))) {
-              if (stickerId != null || customStk) {
+              if (callKind != null) {
+                // سجل مكالمة جماعية فائتة: كرت بدل الفقاعة، الضغط = انضمام للمكالمة
+                CallLogCard(
+                    kind = callKind, mine = mine, dark = dark, fg = fg,
+                    onCallBack = onCallBack,
+                    onLongPress = { fireLongPress() },
+                    modifier = Modifier.widthIn(max = 260.dp)
+                        .onGloballyPositioned { boundsHolder[0] = it.boundsInRoot() }
+                )
+              } else if (stickerId != null || customStk) {
                 // رسالة ملصق: الملصق كبير وبدون فقاعة
                 Column(
                     Modifier.widthIn(max = 260.dp)

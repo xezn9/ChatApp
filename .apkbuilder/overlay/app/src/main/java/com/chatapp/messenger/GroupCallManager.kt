@@ -100,6 +100,8 @@ object GroupCallManager {
     private var ctlInit = false
     private var ctlSeen = -1L
     private var finishing = false
+    private var isStarter = false        // أنا الي بدأت المكالمة (ما كان فيه أحد)
+    private var everHadOthers = false    // انضم لها أحد غيري (لو لا = مكالمة فائتة للكل)
     private val links = HashMap<String, Link>()
 
     private fun ref(path: String) = Repo.rtdb.getReference(path)
@@ -171,6 +173,8 @@ object GroupCallManager {
                     return@launch
                 }
                 val starter = existing.isEmpty()
+                isStarter = starter
+                everHadOthers = !starter
                 myT = System.currentTimeMillis()
                 activeSince = myT
                 selfMember = Member(me).also { loadProfile(it) }
@@ -311,6 +315,7 @@ object GroupCallManager {
         if (old != null) removePeer(uid)
         // الي انضم أخيراً هو الي يرسل الـ offer
         val offerer = myT > t || (myT == t && myUid > uid)
+        everHadOthers = true
         val m = Member(uid)
         members.add(m)
         loadProfile(m)
@@ -520,6 +525,10 @@ object GroupCallManager {
         val g = gid
         val me = myUid
         val wasHost = iAmHost
+        // بدأت مكالمة جماعية وطلعت وما انضم لها أحد = "مكالمة جماعية فائتة" بالمجموعة
+        if (isStarter && !everHadOthers && reason.isBlank()) {
+            Repo.sendGroupCallLog(g, com.chatapp.messenger.ui.ChatCallLog.GROUP_MISSED)
+        }
         scope.launch {
             runCatching { ref("groupCalls/$g/peers/$me").onDisconnect().cancel() }
             runCatching { ref("groupCalls/$g/peers/$me").removeValue().await() }
@@ -569,6 +578,8 @@ object GroupCallManager {
         links.clear()
         members.clear()
         finishing = false
+        isStarter = false
+        everHadOthers = false
         muted = false
         speaker = false
         endReason = ""

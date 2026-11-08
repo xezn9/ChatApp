@@ -795,7 +795,8 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                             onOpenMedia = { openMedia(m) },
                             onAvatarClick = if (mine) null else onOpenProfile,
                             iLiked = m.reactions[me] != null,
-                            onHeart = { on -> Repo.setMessageReaction(me, other.uid, m.id, if (on) HEART else null, onWriteFail) }
+                            onHeart = { on -> Repo.setMessageReaction(me, other.uid, m.id, if (on) HEART else null, onWriteFail) },
+                            onCallBack = { CallActivity.dial(ctx, other.uid, shownName) }
                         )
                     }
                 }
@@ -1226,7 +1227,7 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                 // الرسالة المحذوفة للجميع ("رسالة مَحذوفة") ما يصير عليها رد/تعديل/تثبيت، بس إخفاء من عندي
                 if (!mm.deleted) {
                     add(MsgAction(AppIcons.Reply, "رد", Blue) { menu = null; editing = null; replyTo = mm })
-                    if (mt.mine && mm.mediaType.isEmpty() && ChatSticker.parse(mm.text) == null) add(MsgAction(Icons.Filled.Edit, "تعديل", Color(0xFF8A5CFF)) {
+                    if (mt.mine && mm.mediaType.isEmpty() && ChatSticker.parse(mm.text) == null && ChatCallLog.parse(mm.text) == null) add(MsgAction(Icons.Filled.Edit, "تعديل", Color(0xFF8A5CFF)) {
                         menu = null; replyTo = null; editing = mm; text = mm.text
                     })
                     // حفظ الملف بمجلد التنزيلات
@@ -1239,7 +1240,7 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                         Repo.setMessagePinned(me, other.uid, mm.id, !mm.pinned, onWriteFail)
                     })
                     // ترجمة الرسائل الإنجليزية للعربية (أو إخفاء الترجمة إذا ظاهرة)
-                    if (mm.mediaType.isEmpty() && ChatSticker.parse(mm.text) == null && Translator.looksEnglish(mm.text) && mm.id !in Translator.loading) {
+                    if (mm.mediaType.isEmpty() && ChatSticker.parse(mm.text) == null && ChatCallLog.parse(mm.text) == null && Translator.looksEnglish(mm.text) && mm.id !in Translator.loading) {
                         val shown = Translator.results.containsKey(mm.id)
                         add(MsgAction(AppIcons.Translate, if (shown) "إخفاء الترجمة" else "ترجمة", Color(0xFF00BFA5)) {
                             menu = null
@@ -1526,7 +1527,8 @@ private fun MessageRow(
     onOpenMedia: () -> Unit = {},
     onAvatarClick: (() -> Unit)? = null,
     iLiked: Boolean = false,
-    onHeart: (Boolean) -> Unit = {}
+    onHeart: (Boolean) -> Unit = {},
+    onCallBack: () -> Unit = {}
 ) {
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
@@ -1634,9 +1636,19 @@ private fun MessageRow(
         ).value
         val stickerId = if (!m.deleted && m.mediaType.isEmpty()) ChatSticker.parse(m.text) else null
         val customStk = !m.deleted && CustomStickers.isCustom(m.mediaType, m.text, m.thumb)
+        val callKind = if (!m.deleted && m.mediaType.isEmpty()) ChatCallLog.parse(m.text) else null
         var showSaveStk by remember(m.id) { mutableStateOf(false) }
         Box(Modifier.padding(bottom = reactPad.coerceAtLeast(0.dp))) {
-          if (stickerId != null || customStk) {
+          if (callKind != null) {
+            // سجل مكالمة (فائتة/مرفوضة): كرت بدل الفقاعة، الضغط = اتصال مرة ثانية
+            CallLogCard(
+                kind = callKind, mine = mine, dark = dark, fg = fg,
+                onCallBack = onCallBack,
+                onLongPress = { fireLongPress() },
+                modifier = Modifier.widthIn(max = 260.dp)
+                    .onGloballyPositioned { boundsHolder[0] = it.boundsInRoot() }
+            )
+          } else if (stickerId != null || customStk) {
             // رسالة ملصق: الملصق كبير وبدون فقاعة
             Column(
                 Modifier.widthIn(max = 260.dp)
