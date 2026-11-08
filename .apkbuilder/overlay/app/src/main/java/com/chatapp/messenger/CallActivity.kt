@@ -12,6 +12,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -42,6 +43,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -80,6 +83,7 @@ class CallActivity : ComponentActivity() {
             )
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        volumeControlStream = android.media.AudioManager.STREAM_VOICE_CALL
 
         if (!handle(intent)) { finish(); return }
 
@@ -184,7 +188,15 @@ private fun CallScreen(onClose: () -> Unit) {
                 Modifier.size(132.dp).clip(CircleShape).background(Color(0xFF2B3550)),
                 contentAlignment = Alignment.Center
             ) {
-                Text(name.trim().take(1), color = Color.White, fontSize = 54.sp, fontWeight = FontWeight.Bold)
+                val av = CallManager.peerAvatar
+                if (av != null) {
+                    Image(
+                        av.asImageBitmap(), null, Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Text(name.trim().take(1), color = Color.White, fontSize = 54.sp, fontWeight = FontWeight.Bold)
+                }
             }
             Spacer(Modifier.height(24.dp))
             Text(

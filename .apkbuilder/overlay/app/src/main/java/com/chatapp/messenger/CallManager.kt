@@ -21,6 +21,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import org.webrtc.AudioTrack
@@ -49,6 +50,7 @@ object CallManager {
     var muted by mutableStateOf(false); private set
     var speaker by mutableStateOf(false); private set
     var activeSince by mutableStateOf(0L); private set
+    var peerAvatar by mutableStateOf<android.graphics.Bitmap?>(null); private set
 
     var callId: String = ""; private set
     private var isCaller = false
@@ -74,6 +76,27 @@ object CallManager {
     private var canSendIce = false
     private var finishing = false
 
+    /** يجلب صورة الشخص من ملفه الشخصي (Firestore profiles/{uid}.avatar بصيغة base64) */
+    private fun loadAvatar(uid: String) {
+        peerAvatar = null
+        scope.launch {
+            val bmp = withContext(Dispatchers.IO) {
+                runCatching {
+                    val doc = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                        .collection("profiles").document(uid).get().await()
+                    val b64 = doc.getString("avatar").orEmpty()
+                    if (b64.isBlank()) return@runCatching null
+                    val bytes = android.util.Base64.decode(b64, android.util.Base64.NO_WRAP)
+                    val src = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return@runCatching null
+                    val side = minOf(src.width, src.height)
+                    val sq = android.graphics.Bitmap.createBitmap(src, (src.width - side) / 2, (src.height - side) / 2, side, side)
+                    if (side > 512) android.graphics.Bitmap.createScaledBitmap(sq, 512, 512, true) else sq
+                }.getOrNull()
+            }
+            if (peerUid == uid) peerAvatar = bmp
+        }
+    }
+
     private fun ref(path: String) = Repo.rtdb.getReference(path)
     val isBusy: Boolean get() = phase != Phase.IDLE && phase != Phase.ENDED
 
@@ -88,6 +111,7 @@ object CallManager {
         peerUid = peer
         peerName = name
         phase = Phase.OUTGOING
+        loadAvatar(peer)
         val id = ref("calls").push().key
         if (id == null) { finish("تعذّر بدء المكالمة"); return }
         callId = id
@@ -153,6 +177,7 @@ object CallManager {
         peerUid = from
         peerName = nameHint.ifBlank { "مستخدم" }
         phase = Phase.INCOMING
+        loadAvatar(from)
         listenCall(id)
         timeoutJob = scope.launch {
             delay(CallConfig.RING_TIMEOUT_MS + 5000)
@@ -246,8 +271,13 @@ object CallManager {
             PeerConnectionFactory.InitializationOptions.builder(ctx).createInitializationOptions()
         )
         val adm = JavaAudioDeviceModule.builder(ctx)
-            .setUseHardwareAcousticEchoCanceler(true)
-            .setUseHardwareNoiseSuppressor(true)
+            .setUseHardwareAcousticEchoCanceler(false)
+            .setUseHardwareNoiseSuppressor(false)
+            .setAudioAttributes(
+                android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build()
+            )
             .createAudioDeviceModule()
         val f = PeerConnectionFactory.builder().setAudioDeviceModule(adm).createPeerConnectionFactory()
         factory = f
@@ -485,7 +515,7 @@ object CallManager {
         speaker = false
         activeSince = 0L
         endReason = ""
-        if (phase == Phase.IDLE) { callId = ""; peerUid = ""; peerName = "" }
+        if (phase == Phase.IDLE) { callId = ""; peerUid = ""; peerName = ""; peerAvatar = null }
     }
 
     // ------------------------------------------------------------------ مسار الصوت
