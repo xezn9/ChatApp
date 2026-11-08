@@ -282,7 +282,12 @@ private fun MainContent() {
                 }
             ) {
             // خلفية متحركة بألوان مختلفة لكل تبويب
-            AnimatedAppBackground(tab, Modifier.fillMaxSize())
+            // كل واجهة لها خلفيتها (افتراضية/جاهزة/صورة أو GIF)، والتبديل بينها بتلاشي ناعم
+            androidx.compose.animation.Crossfade(
+                targetState = tab,
+                animationSpec = androidx.compose.animation.core.tween(500),
+                label = "tabBg"
+            ) { t -> AppTabBackground(t, Modifier.fillMaxSize()) }
             // التبويبات الثلاثة تنبني مرة وحدة عند فتح التطبيق وتبقى حيّة بالخلفية:
             // التنقل بينها بس انزلاق/تلاشي (بدون إعادة بناء)، وأي تحديث ببياناتها يصير بالخفاء.
             Box(Modifier.fillMaxSize()) {

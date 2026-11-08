@@ -19,6 +19,7 @@ class ChatApp : Application() {
         CrashLogger.install(this)
         com.chatapp.messenger.ui.theme.FontManager.init(this)
         com.chatapp.messenger.ui.theme.ThemeSettings.init(this)
+        com.chatapp.messenger.ui.AppBgSettings.init(this)
         // تنزيل حزم الملصقات الإضافية تلقائياً وبشكل خفي (مرة وحدة)
         com.chatapp.messenger.ui.StickerDownloader.start(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
