@@ -6,6 +6,7 @@ import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -56,6 +57,8 @@ object GroupCallManager {
         var name by mutableStateOf("")
         var avatar by mutableStateOf<Bitmap?>(null)
         var connected by mutableStateOf(false)
+        /** مستوى الصوت 0..1 (للأنيميشن حول الصورة) */
+        var level by mutableFloatStateOf(0f)
     }
 
     var phase by mutableStateOf(Phase.IDLE); private set
@@ -66,6 +69,18 @@ object GroupCallManager {
     var activeSince by mutableStateOf(0L); private set
     var endReason by mutableStateOf(""); private set
     val members = mutableStateListOf<Member>()
+    var hostUid by mutableStateOf(""); private set
+    var groupAvatar by mutableStateOf(""); private set
+    var groupAvatarGifV by mutableStateOf(0L); private set
+    var selfMember by mutableStateOf<Member?>(null); private set
+    var notice by mutableStateOf(""); private set
+
+    fun clearNotice() { notice = "" }
+
+    /** صاحب المكالمة (المضيف) */
+    val host: Member?
+        get() = if (hostUid.isNotBlank() && hostUid == myUid) selfMember else members.firstOrNull { it.uid == hostUid }
+    val iAmHost: Boolean get() = hostUid.isNotBlank() && hostUid == myUid
 
     val isBusy: Boolean get() = phase == Phase.ACTIVE
 
@@ -73,13 +88,17 @@ object GroupCallManager {
     private val main = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
-    private var myUid = ""
+    private var myUid = ""   // (يُقرأ من host/iAmHost)
     private var myT = 0L
     private var factory: PeerConnectionFactory? = null
     private var audioSource: org.webrtc.AudioSource? = null
     private var localTrack: AudioTrack? = null
     private var peersListener: ChildEventListener? = null
     private var joinJob: Job? = null
+    private var activeListener: ValueEventListener? = null
+    private var ctlListener: ValueEventListener? = null
+    private var ctlInit = false
+    private var ctlSeen = -1L
     private var finishing = false
     private val links = HashMap<String, Link>()
 
@@ -144,9 +163,18 @@ object GroupCallManager {
                     finish("المكالمة ممتلئة (${MAX_PARTICIPANTS} كحد أقصى)")
                     return@launch
                 }
+                val kicked = runCatching {
+                    ref("groupCalls/$groupId/kicked/$me").get().await().exists()
+                }.getOrDefault(false)
+                if (kicked) {
+                    finish("طردك المضيف من هذه المكالمة")
+                    return@launch
+                }
                 val starter = existing.isEmpty()
                 myT = System.currentTimeMillis()
                 activeSince = myT
+                selfMember = Member(me).also { loadProfile(it) }
+                loadGroupAvatar(groupId)
 
                 val myRef = ref("groupCalls/$groupId/peers/$me")
                 myRef.onDisconnect().removeValue()
@@ -156,11 +184,109 @@ object GroupCallManager {
                         .setValue(mapOf("by" to me, "startedAt" to myT)).await()
                     Push.groupCall(groupId)
                 }
+                startActiveListener(groupId)
+                startCtlListener(groupId, me)
                 startPeersListener(groupId)
+                // قياس مستوى الصوت كل 300ms لأنيميشن الكلام
+                launch {
+                    while (true) {
+                        delay(300)
+                        pollStats()
+                    }
+                }
             } catch (e: Exception) {
                 finish("تعذّر الانضمام للمكالمة")
             }
         }
+    }
+
+    private fun startActiveListener(g: String) {
+        val l = object : ValueEventListener {
+            override fun onDataChange(s: DataSnapshot) {
+                hostUid = s.child("by").getValue(String::class.java).orEmpty()
+            }
+            override fun onCancelled(e: DatabaseError) {}
+        }
+        activeListener = l
+        ref("groupCalls/$g/active").addValueEventListener(l)
+    }
+
+    /** أوامر المضيف لي: كتم / طرد */
+    private fun startCtlListener(g: String, me: String) {
+        ctlInit = false
+        ctlSeen = -1L
+        val l = object : ValueEventListener {
+            override fun onDataChange(s: DataSnapshot) {
+                val a = s.child("a").getValue(String::class.java)
+                val at = s.child("at").getValue(Long::class.java) ?: 0L
+                if (!ctlInit) { ctlInit = true; ctlSeen = at; return }   // أوامر قديمة قبل انضمامي: نتجاهلها
+                if (a == null || at == ctlSeen) return
+                ctlSeen = at
+                when (a) {
+                    "kick" -> leave("طردك المضيف من المكالمة")
+                    "mute" -> {
+                        if (!muted) { muted = true; localTrack?.setEnabled(false) }
+                        notice = "المضيف كتم المايك حقك"
+                    }
+                }
+            }
+            override fun onCancelled(e: DatabaseError) {}
+        }
+        ctlListener = l
+        ref("groupCalls/$g/ctl/$me").addValueEventListener(l)
+    }
+
+    private fun loadGroupAvatar(g: String) {
+        scope.launch {
+            runCatching {
+                val m = ref("groups/$g/meta").get().await()
+                groupAvatar = m.child("avatar").getValue(String::class.java).orEmpty()
+                groupAvatarGifV = m.child("avatarGifV").getValue(Long::class.java) ?: 0L
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ صلاحيات المضيف
+
+    fun muteMember(uid: String) {
+        if (!iAmHost) return
+        val g = gid
+        scope.launch {
+            runCatching {
+                ref("groupCalls/$g/ctl/$uid")
+                    .setValue(mapOf("a" to "mute", "at" to System.currentTimeMillis())).await()
+            }
+        }
+    }
+
+    fun kickMember(uid: String) {
+        if (!iAmHost) return
+        val g = gid
+        scope.launch {
+            runCatching { ref("groupCalls/$g/kicked/$uid").setValue(true).await() }
+            runCatching {
+                ref("groupCalls/$g/ctl/$uid")
+                    .setValue(mapOf("a" to "kick", "at" to System.currentTimeMillis())).await()
+            }
+            runCatching { ref("groupCalls/$g/peers/$uid").removeValue().await() }
+        }
+    }
+
+    // ------------------------------------------------------------------ مستوى الصوت
+
+    private fun norm(v: Double): Float {
+        val x = (v * 5.0).coerceIn(0.0, 1.0).toFloat()
+        return if (x < 0.08f) 0f else x
+    }
+
+    private fun pollStats() {
+        if (finishing) return
+        var first = true
+        for (l in links.values.toList()) {
+            l.pollStats(first)
+            first = false
+        }
+        if (links.isEmpty()) selfMember?.level = 0f
     }
 
     private fun startPeersListener(groupId: String) {
@@ -309,6 +435,27 @@ object GroupCallManager {
             list.forEach { write(it) }
         }
 
+        fun pollStats(wantLocal: Boolean) {
+            val p = pc ?: return
+            p.getStats { report ->
+                var inLvl = 0.0
+                var outLvl = 0.0
+                for (st in report.statsMap.values) {
+                    val kind = st.members["kind"] ?: st.members["mediaType"]
+                    if (kind != "audio") continue
+                    val lvl = (st.members["audioLevel"] as? Number)?.toDouble() ?: continue
+                    when (st.type) {
+                        "inbound-rtp" -> inLvl = maxOf(inLvl, lvl)
+                        "media-source" -> outLvl = maxOf(outLvl, lvl)
+                    }
+                }
+                main.post {
+                    member.level = if (member.connected) norm(inLvl) else 0f
+                    if (wantLocal) selfMember?.level = if (muted) 0f else norm(outLvl)
+                }
+            }
+        }
+
         fun onIce(s: PeerConnection.IceConnectionState) {
             when (s) {
                 PeerConnection.IceConnectionState.CONNECTED,
@@ -368,19 +515,24 @@ object GroupCallManager {
     }
 
     /** مغادرة المكالمة. إذا كنت آخر واحد نحذف عقدة المكالمة بالكامل */
-    fun leave() {
+    fun leave(reason: String = "") {
         if (!isBusy) return
         val g = gid
         val me = myUid
+        val wasHost = iAmHost
         scope.launch {
             runCatching { ref("groupCalls/$g/peers/$me").onDisconnect().cancel() }
             runCatching { ref("groupCalls/$g/peers/$me").removeValue().await() }
             val snap = runCatching { ref("groupCalls/$g/peers").get().await() }.getOrNull()
             if (snap != null && !snap.hasChildren()) {
                 runCatching { ref("groupCalls/$g").removeValue().await() }
+            } else if (wasHost && snap != null) {
+                // المضيف طلع والمكالمة مستمرة: ننقل الإدارة لأقدم مشارك
+                val next = snap.children.minByOrNull { it.getValue(Long::class.java) ?: Long.MAX_VALUE }?.key
+                if (next != null) runCatching { ref("groupCalls/$g/active/by").setValue(next).await() }
             }
         }
-        finish("")
+        finish(reason)
     }
 
     private fun finish(reason: String) {
@@ -390,6 +542,10 @@ object GroupCallManager {
         val g = gid
         peersListener?.let { runCatching { ref("groupCalls/$g/peers").removeEventListener(it) } }
         peersListener = null
+        activeListener?.let { runCatching { ref("groupCalls/$g/active").removeEventListener(it) } }
+        activeListener = null
+        ctlListener?.let { runCatching { ref("groupCalls/$g/ctl/$myUid").removeEventListener(it) } }
+        ctlListener = null
         links.values.toList().forEach { it.close() }
         links.clear()
         runCatching { localTrack?.dispose() }
@@ -416,7 +572,10 @@ object GroupCallManager {
         muted = false
         speaker = false
         endReason = ""
-        if (phase == Phase.IDLE) { gid = ""; groupName = ""; activeSince = 0L }
+        if (phase == Phase.IDLE) {
+            gid = ""; groupName = ""; activeSince = 0L
+            hostUid = ""; groupAvatar = ""; groupAvatarGifV = 0L; selfMember = null; notice = ""
+        }
     }
 
     // ------------------------------------------------------------------ ملفات الأعضاء

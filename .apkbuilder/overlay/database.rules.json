@@ -653,19 +653,20 @@
           ".write": "auth != null && auth.token.email_verified === true && root.child('groups').child($gid).child('members').child(auth.uid).exists() && (!root.child('bans').child(auth.uid).exists() || root.child('bans').child(auth.uid).child('until').val() < now)",
           ".validate": "!newData.exists() || newData.hasChildren(['by', 'startedAt'])",
           "by": {
-            ".validate": "newData.isString() && newData.val() === auth.uid"
+            ".validate": "newData.isString()"
           },
           "startedAt": {
             ".validate": "newData.isNumber()"
           },
           "$other": {
             ".validate": false
-          }
+          },
+          ".read": "auth != null && auth.token.email_verified === true && root.child('groups').child($gid).child('members').child(auth.uid).exists()"
         },
         "peers": {
           ".read": "auth != null && auth.token.email_verified === true && root.child('groups').child($gid).child('members').child(auth.uid).exists()",
           "$uid": {
-            ".write": "auth != null && auth.token.email_verified === true && auth.uid === $uid && root.child('groups').child($gid).child('members').child(auth.uid).exists() && (!newData.exists() || (!root.child('bans').child(auth.uid).exists() || root.child('bans').child(auth.uid).child('until').val() < now))",
+            ".write": "auth != null && auth.token.email_verified === true && ((auth.uid === $uid && root.child('groups').child($gid).child('members').child(auth.uid).exists() && (!newData.exists() || (!root.child('bans').child(auth.uid).exists() || root.child('bans').child(auth.uid).child('until').val() < now))) || (!newData.exists() && root.child('groupCalls').child($gid).child('active').child('by').val() === auth.uid))",
             ".validate": "!newData.exists() || newData.isNumber()"
           }
         },
@@ -692,6 +693,29 @@
                 ".validate": false
               }
             }
+          }
+        },
+        "ctl": {
+          "$uid": {
+            ".read": "auth != null && auth.token.email_verified === true && auth.uid === $uid",
+            ".write": "auth != null && auth.token.email_verified === true && root.child('groupCalls').child($gid).child('active').child('by').val() === auth.uid",
+            ".validate": "!newData.exists() || newData.hasChildren(['a', 'at'])",
+            "a": {
+              ".validate": "newData.isString() && (newData.val() === 'kick' || newData.val() === 'mute')"
+            },
+            "at": {
+              ".validate": "newData.isNumber()"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        },
+        "kicked": {
+          "$uid": {
+            ".read": "auth != null && auth.token.email_verified === true && (auth.uid === $uid || root.child('groupCalls').child($gid).child('active').child('by').val() === auth.uid)",
+            ".write": "auth != null && auth.token.email_verified === true && root.child('groupCalls').child($gid).child('active').child('by').val() === auth.uid",
+            ".validate": "newData.isBoolean()"
           }
         },
         "$other": {
