@@ -154,6 +154,15 @@
             android:excludeFromRecents="true"
             android:screenOrientation="portrait" />
 
+        <activity
+            android:name=".GroupCallActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:excludeFromRecents="true"
+            android:screenOrientation="portrait" />
+
         <service
             android:name=".CallService"
             android:exported="false"

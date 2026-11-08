@@ -225,9 +225,9 @@ private fun CallScreen(onClose: () -> Unit) {
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.Bottom
                     ) {
-                        ToggleButton(if (CallManager.muted) "🔇" else "🎤", "كتم", CallManager.muted) { CallManager.toggleMute() }
+                        ToggleButton(if (CallManager.muted) CallIcons.MicOff else CallIcons.Mic, "كتم", CallManager.muted) { CallManager.toggleMute() }
                         RoundButton(Color(0xFFE5484D), "إنهاء", rotate = 135f) { CallManager.hangup() }
-                        ToggleButton(if (CallManager.speaker) "🔊" else "🔈", "سماعة", CallManager.speaker) { CallManager.toggleSpeaker() }
+                        ToggleButton(if (CallManager.speaker) CallIcons.VolumeUp else CallIcons.VolumeDown, "سماعة", CallManager.speaker) { CallManager.toggleSpeaker() }
                     }
                 }
             }
@@ -236,7 +236,7 @@ private fun CallScreen(onClose: () -> Unit) {
 }
 
 @Composable
-private fun RoundButton(color: Color, label: String, rotate: Float, onClick: () -> Unit) {
+internal fun RoundButton(color: Color, label: String, rotate: Float, onClick: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             Modifier.size(72.dp).clip(CircleShape).background(color).clickable(onClick = onClick),
@@ -250,7 +250,7 @@ private fun RoundButton(color: Color, label: String, rotate: Float, onClick: () 
 }
 
 @Composable
-private fun ToggleButton(emoji: String, label: String, on: Boolean, onClick: () -> Unit) {
+internal fun ToggleButton(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, on: Boolean, onClick: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             Modifier.size(64.dp).clip(CircleShape)
@@ -258,7 +258,7 @@ private fun ToggleButton(emoji: String, label: String, on: Boolean, onClick: () 
                 .clickable(onClick = onClick),
             contentAlignment = Alignment.Center
         ) {
-            Text(emoji, fontSize = 26.sp)
+            Icon(icon, null, tint = if (on) Color(0xFF0B0F1A) else Color.White, modifier = Modifier.size(28.dp))
         }
         Spacer(Modifier.height(8.dp))
         Text(label, color = Color.White.copy(alpha = 0.8f), fontSize = 13.sp)

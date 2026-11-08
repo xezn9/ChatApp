@@ -103,7 +103,7 @@ object CallManager {
     // ------------------------------------------------------------------ بدء مكالمة (المتصل)
 
     fun startCall(ctx: Context, peer: String, name: String) {
-        if (isBusy) return
+        if (isBusy || GroupCallManager.isBusy) return
         val me = Repo.auth.currentUser?.uid ?: return
         resetState()
         appCtx = ctx.applicationContext
@@ -159,7 +159,7 @@ object CallManager {
     private suspend fun prepareIncomingLocked(ctx: Context, id: String, from: String, nameHint: String): Boolean {
         val me = Repo.auth.currentUser?.uid ?: return false
         if (id == callId && phase == Phase.INCOMING) return false
-        if (isBusy) {
+        if (isBusy || GroupCallManager.isBusy) {
             runCatching { ref("calls/$id/state").setValue("busy").await() }
             return false
         }
@@ -265,7 +265,7 @@ object CallManager {
 
     // ------------------------------------------------------------------ WebRTC
 
-    private fun ensureFactory(ctx: Context): PeerConnectionFactory {
+    internal fun ensureFactory(ctx: Context): PeerConnectionFactory {
         factory?.let { return it }
         PeerConnectionFactory.initialize(
             PeerConnectionFactory.InitializationOptions.builder(ctx).createInitializationOptions()

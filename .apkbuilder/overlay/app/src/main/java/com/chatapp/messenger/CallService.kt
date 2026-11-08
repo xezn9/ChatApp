@@ -25,7 +25,7 @@ class CallService : Service() {
         }
         val open = PendingIntent.getActivity(
             this, 4,
-            Intent(this, CallActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            Intent(this, if (intent?.getBooleanExtra("group", false) == true) GroupCallActivity::class.java else CallActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val n = NotificationCompat.Builder(this, CHANNEL)
@@ -52,10 +52,10 @@ class CallService : Service() {
         private const val CHANNEL = "call_ongoing"
         private const val ID = 7702
 
-        fun start(ctx: Context, name: String) {
+        fun start(ctx: Context, name: String, group: Boolean = false) {
             runCatching {
                 ContextCompat.startForegroundService(
-                    ctx, Intent(ctx, CallService::class.java).putExtra("name", name)
+                    ctx, Intent(ctx, CallService::class.java).putExtra("name", name).putExtra("group", group)
                 )
             }
         }

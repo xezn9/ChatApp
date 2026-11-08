@@ -47,6 +47,7 @@ class ChatMessagingService : FirebaseMessagingService() {
         when (d["type"]) {
             "call" -> { onCall(d); return }
             "call_cancel" -> { onCallCancel(d); return }
+            "gcall" -> { onGroupCall(d); return }
         }
         if (d["type"] != "msg") return
         val me = Repo.auth.currentUser?.uid ?: return       // بدون حساب = بدون إشعارات
@@ -132,6 +133,21 @@ class ChatMessagingService : FirebaseMessagingService() {
         if (!ok) return
         CallNotifier.showIncoming(applicationContext, id, CallManager.peerName)
         if (AppState.foreground) CallManager.openUi(applicationContext)
+    }
+
+    /** مكالمة جماعية بمجموعة أنا فيها: رنين مع زر انضمام */
+    private fun onGroupCall(d: Map<String, String>) {
+        val me = Repo.auth.currentUser?.uid ?: return
+        if (d["to"] != me) return
+        val gid = d["gid"] ?: return
+        val from = d["from"] ?: return
+        if (from == me) return
+        if (GroupCallManager.isBusy || CallManager.isBusy) return
+        val started = d["startedAt"]?.toLongOrNull() ?: 0L
+        if (kotlin.math.abs(System.currentTimeMillis() - started) > 60_000L) return
+        val alive = runBlocking { GroupCallManager.isAlive(gid) }
+        if (!alive) return
+        CallNotifier.showGroupIncoming(applicationContext, gid, d["groupName"].orEmpty(), d["fromName"].orEmpty())
     }
 
     private fun onCallCancel(d: Map<String, String>) {
