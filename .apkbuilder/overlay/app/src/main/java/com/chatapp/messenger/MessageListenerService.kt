@@ -417,6 +417,8 @@ class MessageListenerService : Service() {
             if (from == me || doc.child("deleted").value == true) continue
             val text = doc.child("text").value as? String ?: continue
             if (AppState.foreground) continue            // التطبيق مفتوح: الرسالة تبين بالمحادثة
+            val mid = doc.key
+            if (mid != null && !ChatNotifier.claim("m:$mid")) continue   // FCM سبقنا وطلّع الإشعار
             ChatNotifier.show(applicationContext, from, text)
         }
     }

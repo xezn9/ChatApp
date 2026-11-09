@@ -18,6 +18,10 @@ const SCOPES = {
 
 const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const seen = new Map(); // منع تكرار الإشعار لنفس الرسالة (ضمن نفس النسخة من الـ Worker)
+// مدة بقاء إشعار الرسالة عند FCM إذا الجهاز مطفي/بدون نت/بوضع Doze. قبل كانت 120 ثانية: أي جهاز ينقطع عنه النت
+// أكثر من دقيقتين يضيّع الإشعار نهائياً. الحين يوصل أول ما يرجع الجهاز (لين 24 ساعة).
+const MSG_TTL = '86400s';
+const MSG_MAX_AGE_MS = 10 * 60 * 1000; // أقدم عمر مقبول للرسالة وقت طلب الإشعار (كان 3 دقايق)
 
 export default {
   async fetch(req, env) {
@@ -64,6 +68,17 @@ async function handle(req, env) {
   seen.set(dedupe, Date.now());
   if (seen.size > 2000) for (const k of [...seen.keys()].slice(0, 1000)) seen.delete(k);
 
+  // أي فشل مؤقت (نت/Google/Firebase) لازم يمسح علامة التكرار، وإلا محاولة التطبيق الثانية تنرد كـ "duplicate" والإشعار يضيع
+  try {
+    return await sendDirect(sa, project, rtdbUrl, sender, to, msgId);
+  } catch (e) {
+    seen.delete(dedupe);
+    throw e;
+  }
+}
+
+async function sendDirect(sa, project, rtdbUrl, sender, to, msgId) {
+  const dedupe = sender + '/' + msgId;
   // 2) الرسالة موجودة فعلاً ومرسلها هو صاحب التوكن
   const cid = [sender, to].sort().join('_');
   const rtTok = await accessToken(sa, SCOPES.rtdb);
@@ -71,7 +86,7 @@ async function handle(req, env) {
   if (!msg || msg.from !== sender || msg.to !== to || typeof msg.text !== 'string') {
     return json({ ok: false, error: 'message not found' }, 403);
   }
-  if (Math.abs(Date.now() - Number(msg.createdAt || 0)) > 3 * 60 * 1000) {
+  if (Math.abs(Date.now() - Number(msg.createdAt || 0)) > MSG_MAX_AGE_MS) {
     return json({ ok: true, skipped: 'old' });
   }
 
@@ -94,8 +109,13 @@ async function handle(req, env) {
   // 5) الإرسال (data فقط، التطبيق هو الي يبني الإشعار بصورة المرسل)
   const sent = await deliver(sa, project, fsBase, fsTok, to, tokens, {
     type: 'msg', from: sender, to, fromName: name,
-    text: msg.text.slice(0, 200), chatId: cid
-  }, '120s');
+    text: msg.text.slice(0, 200), chatId: cid, msgId
+  }, MSG_TTL);
+  if (sent === 0) {
+    // كل المحاولات فشلت (مو توكن ميت): نخلي التطبيق يعيد المحاولة
+    seen.delete(dedupe);
+    return json({ ok: false, error: 'fcm failed' }, 502);
+  }
   return json({ ok: true, sent });
 }
 
@@ -118,7 +138,7 @@ async function handleGroup(body, sender, sa, project, rtdbUrl) {
   if (!msg || msg.from !== sender || typeof msg.text !== 'string') {
     return json({ ok: false, error: 'message not found' }, 403);
   }
-  if (Math.abs(Date.now() - Number(msg.createdAt || 0)) > 3 * 60 * 1000) {
+  if (Math.abs(Date.now() - Number(msg.createdAt || 0)) > MSG_MAX_AGE_MS) {
     return json({ ok: true, skipped: 'old' });
   }
 
@@ -137,6 +157,15 @@ async function handleGroup(body, sender, sa, project, rtdbUrl) {
   seen.set(dedupe, Date.now());
   if (seen.size > 2000) for (const k of [...seen.keys()].slice(0, 1000)) seen.delete(k);
 
+  try {
+    return await sendGroupBatch(sa, project, rtdbUrl, rtTok, gid, msgId, sender, msg, batch, reply);
+  } catch (e) {
+    seen.delete(dedupe);   // فشل مؤقت: نسمح للتطبيق يعيد المحاولة
+    throw e;
+  }
+}
+
+async function sendGroupBatch(sa, project, rtdbUrl, rtTok, gid, msgId, sender, msg, batch, reply) {
   // 3) اسم المجموعة + اسم المرسل
   const fsTok = await accessToken(sa, SCOPES.fs);
   const fsBase = `https://firestore.googleapis.com/v1/projects/${project}/databases/(default)/documents`;
@@ -157,7 +186,7 @@ async function handleGroup(body, sender, sa, project, rtdbUrl) {
         type: 'gmsg', gid, msgId, from: sender, to: uid,
         fromName: senderName, groupName: typeof groupName === 'string' ? groupName : '',
         text: msg.text.slice(0, 200), createdAt: String(msg.createdAt || '')
-      }, '120s');
+      }, MSG_TTL);
     } catch (_) { return 0; }
   }));
   return reply({ sent: counts.reduce((a, b) => a + b, 0), recipients: batch.length });
@@ -270,13 +299,22 @@ async function deliver(sa, project, fsBase, fsTok, to, tokens, data, ttl) {
   const fcmTok = await accessToken(sa, SCOPES.fcm);
   let sent = 0;
   await Promise.all(tokens.map(async (t) => {
-    const r = await fetch(`https://fcm.googleapis.com/v1/projects/${project}/messages:send`, {
-      method: 'POST',
-      headers: { Authorization: 'Bearer ' + fcmTok, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: { token: t, data, android: { priority: 'HIGH', ttl } } })
-    });
-    if (r.ok) { sent++; return; }
-    const err = await r.json().catch(() => ({}));
+    let r, err;
+    // محاولتين: أخطاء Google المؤقتة (429 / 5xx / انقطاع) ما لازم تضيّع الإشعار
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        r = await fetch(`https://fcm.googleapis.com/v1/projects/${project}/messages:send`, {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + fcmTok, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: { token: t, data, android: { priority: 'HIGH', ttl } } })
+        });
+      } catch (_) { r = null; }
+      if (r && r.ok) { sent++; return; }
+      if (r && r.status !== 429 && r.status < 500) break;
+      if (attempt === 0) await new Promise((res) => setTimeout(res, 400));
+    }
+    if (!r) return;
+    err = await r.json().catch(() => ({}));
     // توكن ميت: ننظّفه
     if (r.status === 404 || JSON.stringify(err).includes('UNREGISTERED')) {
       await fetch(`${fsBase}/tokens/${to}/devices/${encodeURIComponent(t)}`, {
@@ -289,15 +327,29 @@ async function deliver(sa, project, fsBase, fsTok, to, tokens, data, ttl) {
 
 // ---------------------------------------------------------------- Firestore / RTDB
 
+// كل أجهزة المستخدم (كل الصفحات). قبل كنا نقرأ أول 20 توكن بس: مع كثرة إعادة التثبيت/التجارب تتراكم توكنات ميتة
+// والتوكن الحالي ممكن يطلع برا أول 20 فما يوصل الإشعار.
 async function listTokens(fsBase, uid, tok) {
-  const r = await fetch(`${fsBase}/tokens/${uid}/devices?pageSize=20`, { headers: { Authorization: 'Bearer ' + tok } });
-  if (!r.ok) return [];
-  const j = await r.json();
-  return (j.documents || []).map((d) => decodeURIComponent(d.name.split('/').pop()));
+  const out = [];
+  let page = '';
+  for (let i = 0; i < 5; i++) {
+    const r = await fetch(`${fsBase}/tokens/${uid}/devices?pageSize=100${page}`, { headers: { Authorization: 'Bearer ' + tok } });
+    if (!r.ok) {
+      if (r.status === 429 || r.status >= 500) throw new Error('firestore ' + r.status);
+      break;
+    }
+    const j = await r.json();
+    for (const d of (j.documents || [])) out.push(decodeURIComponent(d.name.split('/').pop()));
+    if (!j.nextPageToken) break;
+    page = '&pageToken=' + encodeURIComponent(j.nextPageToken);
+  }
+  return out;
 }
 
 async function rtdbGet(base, path, tok, query = '') {
   const r = await fetch(`${base}/${path}.json?access_token=${encodeURIComponent(tok)}${query ? '&' + query : ''}`);
+  // خطأ مؤقت من السيرفر = استثناء (التطبيق يعيد المحاولة)، مو "الرسالة مو موجودة" (رفض نهائي)
+  if (r.status === 429 || r.status >= 500) throw new Error('rtdb ' + r.status);
   if (!r.ok) return null;
   return await r.json();
 }

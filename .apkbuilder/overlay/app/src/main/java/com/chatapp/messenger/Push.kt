@@ -130,10 +130,10 @@ object Push {
     private fun enqueue(body: JSONObject) {
         if (PUSH_URL.isBlank()) return
         scope.launch {
-            // محاولتين: إذا فشلت الأولى (نت ضعيف) نعيد بعد ثانيتين
-            repeat(2) { attempt ->
+            // 3 محاولات (2 ثانية ثم 5 ثواني): نت ضعيف أو خطأ مؤقت من السيرفر ما لازم يضيّع الإشعار
+            repeat(3) { attempt ->
                 if (runCatching { post(body) }.getOrDefault(false)) return@launch
-                if (attempt == 0) kotlinx.coroutines.delay(2000)
+                if (attempt < 2) kotlinx.coroutines.delay(if (attempt == 0) 2000L else 5000L)
             }
         }
     }

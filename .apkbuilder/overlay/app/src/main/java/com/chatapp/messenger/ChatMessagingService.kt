@@ -40,6 +40,9 @@ class ChatMessagingService : FirebaseMessagingService() {
 
     override fun onMessageReceived(message: RemoteMessage) {
         val d = message.data
+        // كل إشعار FCM عالي الأولوية يسمح لنا نشغّل خدمة الاستماع حتى لو أندرويد/الشركة قتلتها بالخلفية
+        // (خارج هالنافذة أندرويد 12+ يمنع تشغيلها). هذا يرجّع الاتصال بدون ما أفتح التطبيق.
+        if (Repo.auth.currentUser != null) MessageListenerService.start(applicationContext)
         if (d["type"] == "gmsg") {
             onGroupMessage(d)
             return
@@ -63,6 +66,9 @@ class ChatMessagingService : FirebaseMessagingService() {
         // محادثة مقيّدة: بدون إشعار
         if (RestrictStore.store.has(applicationContext, from)) return
         val text = d["text"] ?: return
+        // نفس الرسالة ممكن توصل من FCM ومن خدمة الاستماع: الي يسبق يطلع الإشعار والثاني يتجاهلها
+        val msgId = d["msgId"].orEmpty()
+        if (msgId.isNotEmpty() && !ChatNotifier.claim("m:$msgId")) return
         var name = d["fromName"].orEmpty()
 
         // صورة المرسل من ملفه الشخصي (تنجلب هنا لأن حجمها أكبر من حد إشعارات FCM)
