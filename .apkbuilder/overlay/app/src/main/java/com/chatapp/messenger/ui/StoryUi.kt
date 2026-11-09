@@ -387,9 +387,9 @@ object MusicApi {
         val itn = async {
             runCatching { if (t.isEmpty()) trending() else search(t) }.getOrDefault(emptyList())
         }
-        // تيك توك: مصدر إضافي، فشله (أو بطؤه) ما يأثر على الباقي. بدون كلمة بحث ما نبحث فيه
+        // تيك توك: مصدر إضافي، فشله (أو بطؤه) ما يأثر على الباقي
         val tt = async {
-            if (t.isEmpty()) emptyList() else runCatching { TikTokMusic.search(t) }.getOrDefault(emptyList())
+            runCatching { TikTokMusic.search(if (t.isEmpty()) "trending music" else t) }.getOrDefault(emptyList())
         }
         val a = yt.await(); val b = itn.await(); val c = tt.await()
         if (a.isEmpty() && b.isEmpty() && c.isEmpty()) throw java.io.IOException("no results")

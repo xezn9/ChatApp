@@ -28,7 +28,7 @@ object TikTokMusic {
     /** عنوان الخدمة - مكان واحد للتغيير إذا انكسر */
     private const val API = "https://www.tikwm.com/api"
     private const val UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36"
-    private const val SEARCH_TIMEOUT_MS = 4_500L
+    private const val SEARCH_TIMEOUT_MS = 9_000L
 
     // الخدمة المجانية تسمح تقريباً بطلب كل ثانية: نفرض فاصل بين الطلبات حتى ما ننحظر
     private val gate = Mutex()
@@ -42,12 +42,15 @@ object TikTokMusic {
         lastCall = System.currentTimeMillis()
         withContext(Dispatchers.IO) {
             val c = URL(url).openConnection() as HttpURLConnection
-            c.connectTimeout = 4_000
-            c.readTimeout = 4_000
+            c.connectTimeout = 7_000
+            c.readTimeout = 7_000
             c.setRequestProperty("User-Agent", UA)
             try {
                 val j = JSONObject(c.inputStream.bufferedReader().use { it.readText() })
-                if (j.optInt("code", -1) == 0) j else null
+                if (j.optInt("code", -1) == 0) j else {
+                    android.util.Log.w("TikTokMusic", "رد غير ناجح: " + j.toString().take(200))
+                    null
+                }
             } finally {
                 c.disconnect()
             }
@@ -68,7 +71,11 @@ object TikTokMusic {
             runCatching {
                 val q = URLEncoder.encode(term, "UTF-8")
                 val data = get("$API/feed/search?keywords=$q&count=20&cursor=0&web=1&hd=0")?.optJSONObject("data")
-                val vids = data?.optJSONArray("videos") ?: return@runCatching emptyList<MusicTrack>()
+                val vids = data?.optJSONArray("videos")
+                if (vids == null) {
+                    android.util.Log.w("TikTokMusic", "ما في videos بالرد")
+                    return@runCatching emptyList<MusicTrack>()
+                }
                 val out = ArrayList<MusicTrack>()
                 val seen = HashSet<String>()
                 for (i in 0 until vids.length()) {
@@ -89,8 +96,8 @@ object TikTokMusic {
                     out.add(MusicTrack(PREFIX + id, title, artist, cover, PREFIX + id, SOURCE, dur.coerceIn(5, 600)))
                 }
                 out
-            }.getOrDefault(emptyList())
-        } ?: emptyList()
+            }.onFailure { android.util.Log.w("TikTokMusic", "فشل البحث: $it") }.getOrDefault(emptyList())
+        } ?: emptyList<MusicTrack>().also { android.util.Log.w("TikTokMusic", "انتهت المهلة") }
     }
 
     /** يرجّع رابط الصوت المباشر لفيديو تيك توك (من نتائج البحث المخزّنة أو من الخدمة) */
