@@ -717,7 +717,7 @@ internal fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
             when {
                 em.startsWith(StoryMedia.AUDIO_PREFIX) -> ((existing?.musicEnd ?: 0) - (existing?.musicStart ?: 0)).coerceAtLeast(1)
                 em.startsWith(YouTubeMusic.PREFIX) -> 60
-                em.startsWith(TikTokMusic.PREFIX) -> 30
+                em.startsWith(TikTokMusic.PREFIX) -> (existing?.musicEnd ?: 30).coerceAtLeast(30)
                 else -> 30
             }
         )
@@ -1129,13 +1129,16 @@ internal fun StoryEditorScreen(existing: Story?, onDismiss: () -> Unit) {
                                     onSearch = { chipSel = ""; loadMusic(query.trim()) },
                                     results = results, loading = loading, failed = failed,
                                     kindSel = kindSel, onKind = { kindSel = it },
-                                    maxLen = if (musicUrl.startsWith("content:") || musicUrl.startsWith(StoryMedia.AUDIO_PREFIX)) StoryMedia.MAX_SECONDS else STORY_SECONDS,
+                                    maxLen = if (musicUrl.startsWith("content:") || musicUrl.startsWith(StoryMedia.AUDIO_PREFIX) || musicUrl.startsWith(TikTokMusic.PREFIX)) StoryMedia.MAX_SECONDS else STORY_SECONDS,
                                     onPickFile = { audioLauncher.launch(arrayOf("audio/*", "video/*")) },
                                     onPick = { t ->
                                         musicUrl = t.previewUrl; musicTitle = t.title; musicArtist = t.artist
                                         musicCover = t.cover; musicDur = t.durationSec; startF = 0f; changing = false
-                                        endF = minOf(STORY_SECONDS, t.durationSec).toFloat()
-                                        player.play(t.previewUrl, 0, minOf(STORY_SECONDS, t.durationSec))
+                                        // تيك توك: الصوت كامل (لين أقصى مدة قصة)، وتكدر تقص منه. الباقي 15 ثانية
+                                        val initLen = if (t.source == TikTokMusic.SOURCE) minOf(StoryMedia.MAX_SECONDS, t.durationSec)
+                                                      else minOf(STORY_SECONDS, t.durationSec)
+                                        endF = initLen.toFloat()
+                                        player.play(t.previewUrl, 0, initLen)
                                     },
                                     onClear = {
                                         player.stop()
@@ -1606,7 +1609,7 @@ private fun MusicPanel(
                     )
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                         // طول الجزء (الزر المختار يكبر بارتداد)
-                        listOf(5, 10, 15, 30, 60).filter { it <= total && it <= maxLen }.forEach { l ->
+                        (listOf(5, 10, 15, 30, 60) + minOf(total, maxLen)).distinct().sorted().filter { it <= total && it <= maxLen }.forEach { l ->
                             val sel = len == l
                             val sc by animateFloatAsState(
                                 if (sel) 1.1f else 1f,
