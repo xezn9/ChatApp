@@ -92,6 +92,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
@@ -245,6 +246,14 @@ private class GroupMenuTarget(val msg: GroupMsg, val mine: Boolean, val bounds: 
  * خلفية خاصة بالمجموعة، فقاعات حسب شكل كل مرسل، شريط علوي وسفلي زجاجي، رسالة مثبتة، وقائمة ضغطة مطولة.
  * الصلاحيات (تقييد/إيقاف الإرسال/الوضع البطيء) نفس السابق، والحماية الفعلية بقواعد قاعدة البيانات.
  */
+/** النص القابل للبحث: النصوص العادية + أسماء الملفات (بدون الملصقات وسجل المكالمات والوسائط) */
+private fun searchTextOf(m: GroupMsg): String? = when {
+    m.mediaType == "file" -> m.fileName.ifBlank { null }
+    m.mediaType.isNotEmpty() -> null
+    ChatSticker.parse(m.text) != null || ChatCallLog.parse(m.text) != null -> null
+    else -> m.text
+}
+
 @Composable
 fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit, onOpenProfile: (UserItem) -> Unit = {}) {
     val me = remember { Repo.auth.currentUser?.uid ?: "" }
@@ -259,7 +268,9 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
     }
     val st by remember(groupId) { Repo.groupFullFlow(groupId).map { GroupLoaded(it) } }
         .collectAsState(initial = null)
-    val messages by remember(groupId) { Repo.groupMessagesFlow(groupId) }
+    // عند فتح البحث نحمّل تاريخ أطول (الافتراضي آخر 300 رسالة)
+    var historyLimit by remember(groupId) { mutableIntStateOf(300) }
+    val messages by remember(groupId, historyLimit) { Repo.groupMessagesFlow(groupId, historyLimit) }
         .collectAsState(initial = emptyList())
     val loaded = st
     val g = loaded?.g
@@ -950,6 +961,12 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
         }
     }
 
+    // ---- البحث عن رسالة ----
+    val search = rememberMessageSearch(groupId, rev, { it.id }, { searchTextOf(it) }, { jumpToMessage(it) })
+    LaunchedEffect(search.open) {
+        if (search.open && historyLimit < ChatSearch.GROUP_HISTORY) historyLimit = ChatSearch.GROUP_HISTORY
+    }
+
     // الرسالة المثبتة (تتحول لـ Msg حتى نستعمل نفس شريط المحادثة العادية)
     val pin = g?.pinned
     val pinnedList = remember(pin) { if (pin != null) listOf(Msg(pin.id, pin.from, pin.text, 0L)) else emptyList() }
@@ -1027,6 +1044,7 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                             dark = dark, fg = fg, backdrop = bgBackdrop,
                             animateIn = fresh,
                             flash = flashId == m.id,
+                            highlight = search.highlight,
                             modifier = Modifier,
                             onAvatarClick = {
                                 // ضغطة على صورة أي عضو تفتح حسابه (صورتي أنا ما تفتح)
@@ -1153,8 +1171,9 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                 }
             }
 
-            // ----- الشريط العلوي: رجوع + بطاقة المجموعة + إعدادات -----
-            Row(
+            // ----- الشريط العلوي: رجوع + بطاقة المجموعة + بحث + إعدادات -----
+            if (search.open) MessageSearchBar(search, contentBackdrop, fg, Modifier.align(Alignment.TopCenter))
+            else Row(
                 Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding()
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1192,6 +1211,9 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                         tint = if (callCount > 0) Color(0xFF34C759) else fg,
                         modifier = Modifier.size(22.dp)
                     )
+                }
+                GlassButton(onClick = { search.show() }, backdrop = contentBackdrop, modifier = Modifier.size(44.dp)) {
+                    Icon(Icons.Filled.Search, "بحث", modifier = Modifier.size(22.dp))
                 }
                 GlassButton(onClick = { showSettings = true }, backdrop = contentBackdrop, modifier = Modifier.size(44.dp)) {
                     Icon(Icons.Filled.Settings, null, modifier = Modifier.size(22.dp))
@@ -1544,6 +1566,7 @@ private fun GroupMessageRow(
     modifier: Modifier = Modifier,
     animateIn: Boolean = false,
     flash: Boolean = false,
+    highlight: String = "",
     unread: Boolean = false,
     onAvatarClick: () -> Unit = {},
     onToggleVoice: () -> Unit = {},
@@ -1760,7 +1783,7 @@ private fun GroupMessageRow(
                         else MediaThumb(asMsg, textColor, onOpenMedia, { fireLongPress() }, { fireDoubleTap() })
                     } else {
                         Column {
-                            Text(m.text, color = textColor, fontSize = 16.sp)
+                            Text(searchHighlighted(m.text, highlight), color = textColor, fontSize = 16.sp)
                             TranslationBlock(m.id, textColor)
                         }
                     }

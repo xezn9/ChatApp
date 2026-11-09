@@ -372,10 +372,10 @@ object Repo {
      * وتتحدث بمكانها (تأكيد السيرفر، تعديل، حذف، تثبيت) بدل لقطة كاملة جديدة كل مرة،
      * والترتيب بالمفتاح لأنه ثابت (createdAt يتغير لما السيرفر يأكد).
      */
-    fun messagesFlow(me: String, other: String): Flow<List<Msg>> {
+    fun messagesFlow(me: String, other: String, limit: Int = 50): Flow<List<Msg>> {
         if (me.isBlank()) return flowOf(emptyList())
         return callbackFlow {
-            val q = rtdb.getReference("chats/${chatId(me, other)}/messages").orderByKey().limitToLast(50)
+            val q = rtdb.getReference("chats/${chatId(me, other)}/messages").orderByKey().limitToLast(limit)
             val map = java.util.TreeMap<String, Msg>(java.util.Collections.reverseOrder())
             var ready = false
             fun push() { if (ready) trySend(map.values.toList()) }
@@ -695,8 +695,8 @@ object Repo {
      * لقطة كاملة جديدة كل مرة، وهذا الي كان يخلي رسالتي تختفي وترجع بعد تأكيد السيرفر).
      * الترتيب بالمفتاح (push key) لأنه ثابت ومرتب زمنياً، بعكس createdAt الي يتغير لما السيرفر يأكد.
      */
-    fun groupMessagesFlow(id: String): Flow<List<GroupMsg>> = callbackFlow {
-        val q = rtdb.getReference("groupChats/$id/messages").orderByKey().limitToLast(300)
+    fun groupMessagesFlow(id: String, limit: Int = 300): Flow<List<GroupMsg>> = callbackFlow {
+        val q = rtdb.getReference("groupChats/$id/messages").orderByKey().limitToLast(limit)
         val map = java.util.TreeMap<String, GroupMsg>()
         var ready = false
         fun push() { if (ready) trySend(map.values.toList()) }

@@ -100,6 +100,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
@@ -194,7 +195,9 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    val rawMsgs by remember(other.uid) { Repo.messagesFlow(me, other.uid) }.collectAsState(initial = emptyList())
+    // عند فتح البحث نحمّل تاريخ أطول (الافتراضي آخر 50 رسالة فقط)
+    var historyLimit by remember(other.uid) { mutableIntStateOf(50) }
+    val rawMsgs by remember(other.uid, historyLimit) { Repo.messagesFlow(me, other.uid, historyLimit) }.collectAsState(initial = emptyList())
     val clearedMap by remember(me) { Repo.clearedFlow(me) }.collectAsState(initial = emptyMap())
     val clearedAt = clearedMap[other.uid] ?: 0L
     // رسائل حذفتها "من عندي فقط" (رسائلي أو رسائل الطرف الثاني): تنخفي عندي والطرف الثاني ما يتأثر
@@ -353,6 +356,12 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
             delay(1000)
             if (flashId == id) flashId = null
         }
+    }
+
+    // ---- البحث عن رسالة ----
+    val search = rememberMessageSearch(other.uid, msgs, { it.id }, { searchTextOf(it) }, { jumpTo(it) })
+    LaunchedEffect(search.open) {
+        if (search.open && historyLimit < ChatSearch.PRIVATE_HISTORY) historyLimit = ChatSearch.PRIVATE_HISTORY
     }
 
     // ---- إرسال وعرض الصور والفيديوهات ----
@@ -780,6 +789,7 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                             animateIn = fresh,
                             readLabel = mine && m.id == lastReadMineId,
                             flash = flashId == m.id,
+                            highlight = search.highlight,
                             replyName = nameOf(m.replyFrom),
                             replyDeleted = original?.deleted == true,
                             onReply = { if (!m.deleted) { editing = null; replyTo = m } },
@@ -854,8 +864,9 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                     .padding(top = statusTop + 64.dp, start = 12.dp, end = 12.dp)
             )
 
-            // ----- الشريط العلوي: رجوع + بطاقة الشخص (صورة + اسم) + إعدادات -----
-            Row(
+            // ----- الشريط العلوي: رجوع + بطاقة الشخص (صورة + اسم) + بحث + إعدادات -----
+            if (search.open) MessageSearchBar(search, contentBackdrop, fg, Modifier.align(Alignment.TopCenter))
+            else Row(
                 Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding()
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -910,6 +921,9 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                     ) {
                         Icon(CallIcons.Phone, null, modifier = Modifier.size(22.dp))
                     }
+                }
+                GlassButton(onClick = { search.show() }, backdrop = contentBackdrop, modifier = Modifier.size(44.dp)) {
+                    Icon(Icons.Filled.Search, "بحث", modifier = Modifier.size(22.dp))
                 }
                 GlassButton(onClick = { showSettings = true }, backdrop = contentBackdrop, modifier = Modifier.size(44.dp)) {
                     Icon(Icons.Filled.Settings, null, modifier = Modifier.size(22.dp))
@@ -1330,6 +1344,15 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
 }
 
 /** نص الرسالة بنفس صيغة "آخر رسالة" المخزنة بوثيقة المحادثة (تُقارن معها حرفياً) */
+/** النص القابل للبحث: النصوص العادية + أسماء الملفات (بدون المحذوف والملصقات وسجل المكالمات والوسائط) */
+private fun searchTextOf(m: Msg): String? = when {
+    m.deleted -> null
+    m.mediaType == "file" -> m.fileName.ifBlank { null }
+    m.mediaType.isNotEmpty() -> null
+    ChatSticker.parse(m.text) != null || ChatCallLog.parse(m.text) != null -> null
+    else -> m.text
+}
+
 private fun lastTextOf(m: Msg): String = if (m.deleted) "رسالة مَحذوفة" else ChatSticker.preview(m.text).take(100)
 
 private class MenuTarget(val msg: Msg, val mine: Boolean, val bounds: Rect)
@@ -1470,7 +1493,7 @@ private fun BubbleBody(
                     fontSize = 15.sp, fontStyle = FontStyle.Italic
                 )
             } else {
-                Text(txt, color = textColor, fontSize = 16.sp)
+                Text(searchHighlighted(txt, highlight), color = textColor, fontSize = 16.sp)
             }
         }
         if (!m.deleted && !isMedia) TranslationBlock(m.id, textColor)
@@ -1520,6 +1543,7 @@ private fun MessageRow(
     animateIn: Boolean = false,
     readLabel: Boolean = false,
     flash: Boolean = false,
+    highlight: String = "",
     replyName: String = "",
     replyDeleted: Boolean = false,
     onReply: () -> Unit = {},
