@@ -1027,7 +1027,7 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                     reverseLayout = true,
                     contentPadding = PaddingValues(
                         start = 12.dp, end = 12.dp,
-                        top = statusTop + 76.dp + pinnedPad,
+                        top = statusTop + 76.dp + SearchStripHeight + pinnedPad,
                         bottom = listBottomPadding + typingPad
                     )
                 ) {
@@ -1137,7 +1137,7 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                 backdrop = contentBackdrop, dark = dark, fg = fg, pinned = pinnedList,
                 onClick = { jumpToPinned() },
                 modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth()
-                    .padding(top = statusTop + 64.dp, start = 12.dp, end = 12.dp),
+                    .padding(top = statusTop + 64.dp + SearchStripHeight, start = 12.dp, end = 12.dp),
                 trailing = {
                     if (access?.canPin == true) {
                         Box(
@@ -1159,7 +1159,7 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                 Row(
                     Modifier.align(Alignment.TopCenter).fillMaxWidth()
                         .padding(
-                            top = statusTop + 64.dp + (if (pinnedList.isNotEmpty()) 62.dp else 0.dp),
+                            top = statusTop + 64.dp + SearchStripHeight + (if (pinnedList.isNotEmpty()) 62.dp else 0.dp),
                             start = 12.dp, end = 12.dp
                         )
                         .clip(joinShape)
@@ -1184,8 +1184,11 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
             }
 
             // ----- الشريط العلوي: رجوع + بطاقة المجموعة + بحث + إعدادات -----
-            if (search.open) MessageSearchBar(search, contentBackdrop, fg, Modifier.align(Alignment.TopCenter))
-            else Row(
+            MessageSearchBar(
+                search, contentBackdrop, fg,
+                Modifier.align(Alignment.TopCenter).padding(top = statusTop + 64.dp)
+            )
+            Row(
                 Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding()
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1223,9 +1226,6 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                         tint = if (callCount > 0) Color(0xFF34C759) else fg,
                         modifier = Modifier.size(22.dp)
                     )
-                }
-                GlassButton(onClick = { search.show() }, backdrop = contentBackdrop, modifier = Modifier.size(44.dp)) {
-                    Icon(Icons.Filled.Search, "بحث", modifier = Modifier.size(22.dp))
                 }
                 GlassButton(onClick = { showSettings = true }, backdrop = contentBackdrop, modifier = Modifier.size(44.dp)) {
                     Icon(Icons.Filled.Settings, null, modifier = Modifier.size(22.dp))

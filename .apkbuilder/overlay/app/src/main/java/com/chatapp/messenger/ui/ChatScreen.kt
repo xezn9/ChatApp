@@ -779,7 +779,7 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                     reverseLayout = true,
                     contentPadding = PaddingValues(
                         start = 12.dp, end = 12.dp,
-                        top = statusTop + 76.dp + pinnedPad,
+                        top = statusTop + 76.dp + SearchStripHeight + pinnedPad,
                         bottom = listBottomPadding + typingPad
                     )
                 ) {
@@ -836,7 +836,7 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
             AnimatedVisibility(
                 visible = introReady && rawMsgs.isEmpty() && profile.introOn && !profile.restricted && other.uid != me,
                 modifier = Modifier.align(Alignment.Center)
-                    .padding(top = statusTop + 76.dp, bottom = listBottomPadding),
+                    .padding(top = statusTop + 76.dp + SearchStripHeight, bottom = listBottomPadding),
                 enter = fadeIn(tween(350)) + scaleIn(spring(0.85f, 380f), initialScale = 0.9f),
                 exit = fadeOut(tween(150))
             ) {
@@ -878,12 +878,15 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                 backdrop = contentBackdrop, dark = dark, fg = fg, pinned = pinnedMsgs,
                 onClick = { if (pinnedMsgs.size == 1) jumpTo(pinnedMsgs[0].id) else showPinned = true },
                 modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth()
-                    .padding(top = statusTop + 64.dp, start = 12.dp, end = 12.dp)
+                    .padding(top = statusTop + 64.dp + SearchStripHeight, start = 12.dp, end = 12.dp)
             )
 
             // ----- الشريط العلوي: رجوع + بطاقة الشخص (صورة + اسم) + بحث + إعدادات -----
-            if (search.open) MessageSearchBar(search, contentBackdrop, fg, Modifier.align(Alignment.TopCenter))
-            else Row(
+            MessageSearchBar(
+                search, contentBackdrop, fg,
+                Modifier.align(Alignment.TopCenter).padding(top = statusTop + 64.dp)
+            )
+            Row(
                 Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding()
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -938,9 +941,6 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                     ) {
                         Icon(CallIcons.Phone, null, modifier = Modifier.size(22.dp))
                     }
-                }
-                GlassButton(onClick = { search.show() }, backdrop = contentBackdrop, modifier = Modifier.size(44.dp)) {
-                    Icon(Icons.Filled.Search, "بحث", modifier = Modifier.size(22.dp))
                 }
                 GlassButton(onClick = { showSettings = true }, backdrop = contentBackdrop, modifier = Modifier.size(44.dp)) {
                     Icon(Icons.Filled.Settings, null, modifier = Modifier.size(22.dp))

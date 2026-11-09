@@ -35,6 +35,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.AnnotatedString
@@ -191,7 +193,14 @@ fun searchHighlighted(text: String, highlight: String): AnnotatedString {
     }
 }
 
-/** شريط البحث: يحل محل الشريط العلوي أثناء البحث */
+/** ارتفاع شريط البحث (40dp) + فراغ تحته، يُضاف لإزاحة كل شي يجي تحت الأزرار العلوية */
+val SearchStripHeight = 48.dp
+
+/**
+ * شريط البحث الزجاجي: دائماً تحت الأزرار العلوية (ما يحل محلها).
+ * ضغطة عليه تفتح البحث وتظهر أسهم التنقل وزر الإغلاق جنبه.
+ * المكان يحدده المستدعي (padding top = statusTop + 64.dp).
+ */
 @Composable
 fun MessageSearchBar(
     search: MessageSearch,
@@ -200,25 +209,23 @@ fun MessageSearchBar(
     modifier: Modifier = Modifier
 ) {
     val focus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    val focusManager = LocalFocusManager.current
+    LaunchedEffect(search.open) { if (!search.open) focusManager.clearFocus() }
 
     Row(
-        modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp),
+        modifier.fillMaxWidth().padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        GlassButton(onClick = { search.close() }, backdrop = backdrop, modifier = Modifier.size(44.dp)) {
-            Icon(Icons.Filled.Close, "إغلاق البحث", modifier = Modifier.size(22.dp))
-        }
         GlassButton(
-            onClick = { runCatching { focus.requestFocus() } }, backdrop = backdrop,
-            modifier = Modifier.weight(1f).heightIn(min = 44.dp)
+            onClick = { search.show(); runCatching { focus.requestFocus() } }, backdrop = backdrop,
+            modifier = Modifier.weight(1f).heightIn(min = 40.dp)
         ) {
             Icon(Icons.Filled.Search, null, tint = fg.copy(alpha = 0.7f), modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))
             Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                 if (search.query.isEmpty()) {
-                    Text("ابحث في الرسائل…", color = fg.copy(alpha = 0.5f), fontSize = 16.sp, maxLines = 1)
+                    Text("ابحث في الرسائل…", color = fg.copy(alpha = 0.5f), fontSize = 15.sp, maxLines = 1)
                 }
                 BasicTextField(
                     value = search.query,
@@ -229,9 +236,10 @@ fun MessageSearchBar(
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = { search.older() }),
                     modifier = Modifier.fillMaxWidth().focusRequester(focus)
+                        .onFocusChanged { if (it.isFocused) search.show() }
                 )
             }
-            if (search.query.isNotBlank()) {
+            if (search.open && search.query.isNotBlank()) {
                 Spacer(Modifier.width(6.dp))
                 Text(
                     if (search.total == 0) "0" else "${search.position}/${search.total}",
@@ -239,18 +247,23 @@ fun MessageSearchBar(
                 )
             }
         }
-        // السهم لفوق = رسائل أقدم، لتحت = أحدث
-        GlassButton(
-            onClick = { search.older() }, backdrop = backdrop,
-            enabled = search.total > 0, modifier = Modifier.size(44.dp)
-        ) {
-            Icon(Icons.Filled.KeyboardArrowUp, "الأقدم", modifier = Modifier.size(24.dp))
-        }
-        GlassButton(
-            onClick = { search.newer() }, backdrop = backdrop,
-            enabled = search.total > 0, modifier = Modifier.size(44.dp)
-        ) {
-            Icon(Icons.Filled.KeyboardArrowDown, "الأحدث", modifier = Modifier.size(24.dp))
+        if (search.open) {
+            // السهم لفوق = رسائل أقدم، لتحت = أحدث
+            GlassButton(
+                onClick = { search.older() }, backdrop = backdrop,
+                enabled = search.total > 0, modifier = Modifier.size(40.dp)
+            ) {
+                Icon(Icons.Filled.KeyboardArrowUp, "الأقدم", modifier = Modifier.size(22.dp))
+            }
+            GlassButton(
+                onClick = { search.newer() }, backdrop = backdrop,
+                enabled = search.total > 0, modifier = Modifier.size(40.dp)
+            ) {
+                Icon(Icons.Filled.KeyboardArrowDown, "الأحدث", modifier = Modifier.size(22.dp))
+            }
+            GlassButton(onClick = { search.close() }, backdrop = backdrop, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Filled.Close, "إغلاق البحث", modifier = Modifier.size(20.dp))
+            }
         }
     }
 }
