@@ -135,11 +135,13 @@ object AppBgSettings {
     private val presets = mutableStateListOf(0, 0, 0)
     private val blurs = mutableStateListOf(false, false, false)
     private val versions = mutableStateListOf(0L, 0L, 0L)
+    private val gifs = mutableStateListOf(false, false, false)   // نعرفها من البداية حتى ما ينتظر الرسم فحص الملف
 
     fun kind(tab: Int): String = kinds[tab.coerceIn(0, 2)]
     fun preset(tab: Int): Int = presets[tab.coerceIn(0, 2)]
     fun blur(tab: Int): Boolean = blurs[tab.coerceIn(0, 2)]
     fun version(tab: Int): Long = versions[tab.coerceIn(0, 2)]
+    fun isGif(tab: Int): Boolean = gifs[tab.coerceIn(0, 2)]
 
     fun imageFile(ctx: Context, tab: Int): File = File(ctx.applicationContext.filesDir, "appbg_${tab.coerceIn(0, 2)}.jpg")
 
@@ -154,6 +156,15 @@ object AppBgSettings {
             presets[t] = p.getInt("preset_$t", 0).coerceIn(0, AppBgPresets[t].lastIndex)
             blurs[t] = p.getBoolean("blur_$t", false)
             versions[t] = p.getLong("ver_$t", 0L)
+            gifs[t] = k == "image" && runCatching { GifUtil.isGifFile(imageFile(ctx, t)) }.getOrDefault(false)
+        }
+        // نفك الصورة (أو أول فريم من الـ GIF) من الحين وبنفس الخيط، بحجم مصغّر يكفي الشاشة (سريع)،
+        // حتى تكون الخلفية جاهزة قبل أول رسم للواجهة بدون أي ومضة أو لون بديل
+        for (t in 0..2) {
+            if (kinds[t] == "image") {
+                val soft = !gifs[t] && blurs[t] && Build.VERSION.SDK_INT < Build.VERSION_CODES.S
+                AppBgCache.load(imageFile(ctx, t).path, versions[t], soft)
+            }
         }
     }
 
@@ -179,25 +190,52 @@ object AppBgSettings {
         val err = saveChatBackgroundFromUri(ctx, uri, imageFile(ctx, t))
         if (err != null) return err
         versions[t] = System.currentTimeMillis()
+        gifs[t] = runCatching { GifUtil.isGifFile(imageFile(ctx, t)) }.getOrDefault(false)
+        // نفك الصورة الجديدة قبل ما نغيّر الحالة حتى تظهر فوراً بدون لحظة فراغ
+        withContext(Dispatchers.IO) {
+            AppBgCache.load(imageFile(ctx, t).path, versions[t], !gifs[t] && blurs[t] && Build.VERSION.SDK_INT < Build.VERSION_CODES.S)
+        }
         kinds[t] = "image"
         save(t)
         return null
     }
 }
 
-/** تحميل صورة الخلفية الثابتة من الملف (softBlur: تمويه تقريبي للأجهزة الأقدم من أندرويد 12) */
+/** كاش بالذاكرة للصور الخلفية المفكوكة (المفتاح: المسار + النسخة + التمويه التقريبي) */
+internal object AppBgCache {
+    private val map = java.util.concurrent.ConcurrentHashMap<String, ImageBitmap>()
+    private fun key(path: String, version: Long, softBlur: Boolean) = "$path|$version|$softBlur"
+
+    fun get(path: String, version: Long, softBlur: Boolean): ImageBitmap? = map[key(path, version, softBlur)]
+
+    /** يفك الصورة ويحطها بالكاش (softBlur: تمويه تقريبي للأجهزة الأقدم من أندرويد 12) */
+    fun load(path: String, version: Long, softBlur: Boolean): ImageBitmap? {
+        val k = key(path, version, softBlur)
+        map[k]?.let { return it }
+        val img = runCatching {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(path, bounds)
+            var sample = 1
+            while (max(bounds.outWidth, bounds.outHeight) / (sample * 2) >= 1920) sample *= 2
+            var bmp = BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample })
+                ?: return@runCatching null
+            if (softBlur) {
+                bmp = Bitmap.createScaledBitmap(bmp, max(1, bmp.width / 14), max(1, bmp.height / 14), true)
+            }
+            bmp.asImageBitmap()
+        }.getOrNull() ?: return null
+        // ننظف النسخ القديمة لنفس الملف (إذا غيّر المستخدم الصورة)
+        map.keys.filter { it.startsWith("$path|") && it != k }.forEach { map.remove(it) }
+        map[k] = img
+        return img
+    }
+}
+
+/** تحميل صورة الخلفية الثابتة: من الكاش فوراً إذا جاهزة، وإلا تنفك بالخلفية */
 @Composable
 private fun rememberTabBgImage(path: String, version: Long, softBlur: Boolean): ImageBitmap? {
-    val img by produceState<ImageBitmap?>(null, path, version, softBlur) {
-        value = withContext(Dispatchers.IO) {
-            runCatching {
-                var bmp = BitmapFactory.decodeFile(path) ?: return@runCatching null
-                if (softBlur) {
-                    bmp = Bitmap.createScaledBitmap(bmp, max(1, bmp.width / 14), max(1, bmp.height / 14), true)
-                }
-                bmp.asImageBitmap()
-            }.getOrNull()
-        }
+    val img by produceState<ImageBitmap?>(AppBgCache.get(path, version, softBlur), path, version, softBlur) {
+        if (value == null) value = withContext(Dispatchers.IO) { AppBgCache.load(path, version, softBlur) }
     }
     return img
 }
@@ -226,25 +264,22 @@ fun AppTabBackground(tab: Int, modifier: Modifier = Modifier) {
                 val ctx = LocalContext.current
                 val file = remember(t) { AppBgSettings.imageFile(ctx, t) }
                 val ver = AppBgSettings.version(t)
-                val animated by produceState<Boolean?>(null, file.path, ver) {
-                    value = withContext(Dispatchers.IO) { GifUtil.isGifFile(file) }
-                }
-                val img = if (animated == false) rememberTabBgImage(file.path, ver, softBlur = blurOn && !canBlur) else null
-                if (animated == true) {
-                    // GIF يتكرر للأبد، والتمويه الحقيقي بأندرويد 12+ فقط
-                    AnimatedGifImage(file, Modifier.fillMaxSize().then(blurMod), ContentScale.Crop, key = ver)
-                    Box(Modifier.fillMaxSize().background(scrim))
-                } else if (img != null) {
+                val animated = AppBgSettings.isGif(t)
+                // الصورة (أو أول فريم من الـ GIF) جاهزة من الكاش من لحظة فتح التطبيق
+                val img = rememberTabBgImage(file.path, ver, softBlur = !animated && blurOn && !canBlur)
+                if (img != null) {
                     Image(
                         img, null,
                         modifier = Modifier.fillMaxSize().then(blurMod),
                         contentScale = ContentScale.Crop,
                         filterQuality = FilterQuality.Medium
                     )
-                    Box(Modifier.fillMaxSize().background(scrim))
                 } else {
-                    Box(Modifier.fillMaxSize().background(appBackground()))
+                    Box(Modifier.fillMaxSize().background(appBackground()))   // فشل فك الملف فقط
                 }
+                // GIF يتكرر للأبد فوق أول فريمه (بنفس المكان بدون قفزة)، والتمويه الحقيقي بأندرويد 12+ فقط
+                if (animated) AnimatedGifImage(file, Modifier.fillMaxSize().then(blurMod), ContentScale.Crop, key = ver)
+                Box(Modifier.fillMaxSize().background(scrim))
             }
             else -> AnimatedAppBackground(t, Modifier.fillMaxSize().then(blurMod))
         }
