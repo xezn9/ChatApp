@@ -272,6 +272,9 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
     var historyLimit by remember(groupId) { mutableIntStateOf(300) }
     val messages by remember(groupId, historyLimit) { Repo.groupMessagesFlow(groupId, historyLimit) }
         .collectAsState(initial = emptyList())
+    // ---- رسائل منتهية الوقت: تختفي عند الجميع وتنحذف تلقائياً ----
+    val expiryList = remember(messages) { messages.filter { it.expiresAt > 0L }.map { it.expiresAt } }
+    val expNow = rememberExpiryNow(expiryList)
     val loaded = st
     val g = loaded?.g
     val callCount by remember(groupId) { GroupCallManager.peersCountFlow(groupId) }
@@ -283,6 +286,8 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
     val scope = rememberCoroutineScope()
     var text by remember { mutableStateOf("") }
     var menu by remember { mutableStateOf<GroupMenuTarget?>(null) }
+    // الرسالة الي أحدد لها وقت انتهاء (يفتح حوار اختيار المدة)
+    var expiryFor by remember(groupId) { mutableStateOf<GroupMsg?>(null) }
     var lastSentAt by remember { mutableLongStateOf(0L) }
     var showSettings by remember { mutableStateOf(false) }
     var rootSize by remember { mutableStateOf(IntSize.Zero) }
@@ -401,9 +406,16 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
 
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     // مفتاح كل رسالة ثابت (معرّفها)، فما تنعاد حركتها لما السيرفر يأكد الإرسال
-    val stable = messages
+    val stable = remember(messages, expNow) { messages.filter { !MessageExpiry.isExpired(it.expiresAt, expNow) } }
     val rev = remember(stable) { stable.asReversed() }
     val listState = rememberLazyListState()
+    // الرسائل الي انتهت: نحذفها من السيرفر (أي عضو يكون فاتح المجموعة)
+    val swept = remember(groupId) { mutableSetOf<String>() }
+    LaunchedEffect(messages, expNow) {
+        messages.filter { MessageExpiry.isExpired(it.expiresAt, expNow) && swept.add(it.id) }.forEach { m ->
+            runCatching { Repo.deleteGroupMessage(groupId, m.id, m.mediaId) }
+        }
+    }
 
     fun act(block: suspend () -> Unit) {
         scope.launch {
@@ -1428,6 +1440,24 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                 StoryFromChat(ownerUid = ow, onDismiss = { storyOwner = null })
             }
 
+            // ----- حوار انتهاء الرسالة -----
+            expiryFor?.let { em ->
+                MessageExpiryDialog(
+                    backdrop = contentBackdrop, dark = dark, hasExpiry = em.expiresAt > 0L,
+                    onSet = { ms ->
+                        act { Repo.setGroupMessageExpiry(groupId, em.id, Repo.serverNow() + ms) }
+                        AppToast.show("تنحذف الرسالة بعد " + MessageExpiry.durationText((ms / 60_000L).toInt()))
+                        expiryFor = null
+                    },
+                    onRemove = {
+                        act { Repo.setGroupMessageExpiry(groupId, em.id, null) }
+                        AppToast.show("تم إلغاء انتهاء الرسالة")
+                        expiryFor = null
+                    },
+                    onDismiss = { expiryFor = null }
+                )
+            }
+
             // ----- إعدادات المجموعة: خلفية + فقاعات (نفس لوحة المحادثة العادية) -----
             AnimatedVisibility(
                 visible = showSettings,
@@ -1491,6 +1521,13 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                         add(MsgAction(AppIcons.Pin, if (isPinned) "إلغاء التثبيت" else "تثبيت", Color(0xFFFFC107)) {
                             menu = null
                             act { Repo.pinGroupMessage(groupId, if (isPinned) null else mm) }
+                        })
+                    }
+                    // انتهاء الرسالة: تنحذف تلقائياً بعد مدة (رسائلي فقط)
+                    if (mm.from == me && ChatCallLog.parse(mm.text) == null) {
+                        add(MsgAction(AppIcons.Clock, if (mm.expiresAt > 0L) "تعديل الانتهاء" else "انتهاء الرسالة", Color(0xFF5AC8FA)) {
+                            menu = null
+                            expiryFor = mm
                         })
                     }
                     if (a != null && (mm.from == me || a.canDelete)) {
@@ -1744,6 +1781,7 @@ private fun GroupMessageRow(
                         )
                     }
                     if (customStk) CustomStickerImage(m.thumb, 140.dp) else StickerMessage(stickerId!!, 132.dp)
+                    if (m.expiresAt > 0L) ExpiryBadge(m.expiresAt, fg)
                     if (customStk && showSaveStk) SaveStickerPopup(m.thumb) { showSaveStk = false }
                 }
               } else {
@@ -1787,6 +1825,7 @@ private fun GroupMessageRow(
                             TranslationBlock(m.id, textColor)
                         }
                     }
+                    if (m.expiresAt > 0L) ExpiryBadge(m.expiresAt, textColor)
                   }
                 }
               }

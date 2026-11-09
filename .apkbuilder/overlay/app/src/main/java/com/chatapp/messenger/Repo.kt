@@ -118,7 +118,9 @@ data class GroupMsg(
     /** رد على رسالة: معرّفها + نص مقتبس + صاحبها (نفس المحادثة الخاصة) */
     val replyId: String = "", val replyText: String = "", val replyFrom: String = "",
     /** التفاعلات: uid -> ايموجي (ضغطتين = ❤️، ضغطة مطولة = اختيار ايموجي) */
-    val reactions: Map<String, String> = emptyMap()
+    val reactions: Map<String, String> = emptyMap(),
+    /** وقت انتهاء الرسالة بتوقيت السيرفر (0 = ما تنتهي): بعده تختفي وتنحذف تلقائياً */
+    val expiresAt: Long = 0L
 )
 
 /** كل بيانات المجموعة بنفس اللحظة (للأعضاء فقط) */
@@ -189,7 +191,9 @@ data class Msg(
     val wave: String = "",
     /** رسالة ملف (mediaType = "file"): اسم الملف وحجمه بالبايت */
     val fileName: String = "",
-    val fileSize: Long = 0L
+    val fileSize: Long = 0L,
+    /** وقت انتهاء الرسالة بتوقيت السيرفر (0 = ما تنتهي): بعده تختفي وتنحذف تلقائياً */
+    val expiresAt: Long = 0L
 )
 
 /**
@@ -418,7 +422,8 @@ object Repo {
         mediaDur = num("mediaDur").toInt(),
         wave = str("wave"),
         fileName = str("fileName"),
-        fileSize = num("fileSize")
+        fileSize = num("fileSize"),
+        expiresAt = num("expiresAt")
     )
 
     /** الرسائل المثبتة بالمحادثة (حتى لو أقدم من آخر 50 رسالة)، الأحدث تثبيتاً أولاً */
@@ -456,6 +461,48 @@ object Repo {
         // حذف للجميع يمسح ملف الصورة/الفيديو نفسه من السيرفر
         if (mediaId.isNotEmpty()) mediaRef(me, other, mediaId).removeValue()
         if (isLast) updateLastText(me, other, "رسالة مَحذوفة")
+    }
+
+    // ---------- انتهاء الرسائل (رسائل تختفي) ----------
+    @Volatile private var serverOffsetMs = 0L
+    private val offsetWatcher: Boolean by lazy {
+        rtdb.getReference(".info/serverTimeOffset").addValueEventListener(object : ValueEventListener {
+            override fun onDataChange(s: DataSnapshot) { serverOffsetMs = s.getValue(Long::class.java) ?: 0L }
+            override fun onCancelled(e: DatabaseError) {}
+        })
+        true
+    }
+
+    /** الوقت الحالي بتوقيت السيرفر (يتصحح تلقائياً لو ساعة الجوال غلط) */
+    fun serverNow(): Long {
+        @Suppress("UNUSED_EXPRESSION") offsetWatcher
+        return System.currentTimeMillis() + serverOffsetMs
+    }
+
+    /** تحديد وقت انتهاء رسالتي بالمحادثة الخاصة (expiresAt = null يلغي الانتهاء) */
+    fun setMessageExpiry(me: String, other: String, id: String, expiresAt: Long?, onFail: (Exception) -> Unit = {}) {
+        val ref = msgRef(me, other, id).child("expiresAt")
+        (if (expiresAt == null) ref.removeValue() else ref.setValue(expiresAt)).addOnFailureListener(onFail)
+    }
+
+    /**
+     * الرسائل المنتهية: حذف ناعم (يمسح النص والصورة المصغّرة وملف الوسائط) من أي طرف يفتح المحادثة.
+     * وقت الانتهاء يبقى بالرسالة فتبقى مخفية عند الجميع. [newLastText] = معاينة قائمة المحادثات الجديدة (إذا الأخيرة انتهت).
+     */
+    fun purgeExpiredMessages(me: String, other: String, expired: List<Msg>, newLastText: String?) {
+        expired.forEach { m ->
+            msgRef(me, other, m.id).updateChildren(
+                mapOf<String, Any?>("deleted" to true, "text" to "", "pinned" to false, "edited" to false, "thumb" to null)
+            )
+            if (m.mediaId.isNotEmpty()) mediaRef(me, other, m.mediaId).removeValue()
+        }
+        if (newLastText != null) updateLastText(me, other, newLastText)
+    }
+
+    /** تحديد وقت انتهاء رسالتي بالمجموعة (expiresAt = null يلغي الانتهاء) */
+    suspend fun setGroupMessageExpiry(gid: String, mid: String, expiresAt: Long?) {
+        val ref = rtdb.getReference("groupChats/$gid/messages/$mid/expiresAt")
+        gWrite(if (expiresAt == null) ref.removeValue() else ref.setValue(expiresAt))
     }
 
     fun editMessage(me: String, other: String, id: String, newText: String, isLast: Boolean, onFail: (Exception) -> Unit = {}) {
@@ -669,7 +716,8 @@ object Repo {
             thumb = str("thumb"), mediaW = num("mediaW").toInt(), mediaH = num("mediaH").toInt(),
             fileName = str("fileName"), fileSize = num("fileSize"),
             replyId = str("replyId"), replyText = str("replyText"), replyFrom = str("replyFrom"),
-            reactions = readReactions()
+            reactions = readReactions(),
+            expiresAt = num("expiresAt")
         )
     }
 

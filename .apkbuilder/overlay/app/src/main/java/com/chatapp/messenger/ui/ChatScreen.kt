@@ -198,13 +198,28 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
     // عند فتح البحث نحمّل تاريخ أطول (الافتراضي آخر 50 رسالة فقط)
     var historyLimit by remember(other.uid) { mutableIntStateOf(50) }
     val rawMsgs by remember(other.uid, historyLimit) { Repo.messagesFlow(me, other.uid, historyLimit) }.collectAsState(initial = emptyList())
+    // ---- رسائل منتهية الوقت: تختفي عند الجميع وتنحذف تلقائياً ----
+    val expiryList = remember(rawMsgs) { rawMsgs.filter { it.expiresAt > 0L }.map { it.expiresAt } }
+    val expNow = rememberExpiryNow(expiryList)
     val clearedMap by remember(me) { Repo.clearedFlow(me) }.collectAsState(initial = emptyMap())
     val clearedAt = clearedMap[other.uid] ?: 0L
     // رسائل حذفتها "من عندي فقط" (رسائلي أو رسائل الطرف الثاني): تنخفي عندي والطرف الثاني ما يتأثر
     val hiddenIds by remember(other.uid) { Repo.hiddenFlow(me, other.uid) }.collectAsState(initial = emptySet())
     // رسائل أقدم من "حذف المحادثة" + الرسائل المحذوفة من عندي تنخفي عندي فقط
-    val msgs = remember(rawMsgs, clearedAt, hiddenIds) {
-        rawMsgs.filter { it.createdAt > clearedAt && it.id !in hiddenIds }
+    val msgs = remember(rawMsgs, clearedAt, hiddenIds, expNow) {
+        rawMsgs.filter { it.createdAt > clearedAt && it.id !in hiddenIds && !MessageExpiry.isExpired(it.expiresAt, expNow) }
+    }
+    // الرسائل الي انتهت: نحذفها من السيرفر (أي طرف يكون فاتح المحادثة)، ونحدّث معاينة القائمة إذا كانت الأخيرة
+    val swept = remember(other.uid) { mutableSetOf<String>() }
+    LaunchedEffect(rawMsgs, expNow) {
+        val expired = rawMsgs.filter { !it.deleted && MessageExpiry.isExpired(it.expiresAt, expNow) && swept.add(it.id) }
+        if (expired.isNotEmpty()) {
+            val newest = rawMsgs.firstOrNull()
+            val newLast = if (newest != null && expired.any { it.id == newest.id })
+                rawMsgs.firstOrNull { !MessageExpiry.isExpired(it.expiresAt, expNow) }?.let { lastTextOf(it) } ?: ""
+            else null
+            Repo.purgeExpiredMessages(me, other.uid, expired, newLast)
+        }
     }
     // "مقروء": تحت آخر رسالة مني الطرف الثاني قرأها (إذا ما قرأها ما يظهر شي)
     val otherReadAtRaw by remember(other.uid) { Repo.readAtFlow(me, other.uid) }.collectAsState(initial = 0L)
@@ -233,12 +248,14 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
 
     // ---- الرسائل المثبتة / الرد / التعديل / قائمة الضغطة المطولة ----
     val pinnedRaw by remember(other.uid) { Repo.pinnedMessagesFlow(me, other.uid) }.collectAsState(initial = emptyList())
-    val pinnedMsgs = remember(pinnedRaw, clearedAt, hiddenIds) {
-        pinnedRaw.filter { it.createdAt > clearedAt && it.id !in hiddenIds }
+    val pinnedMsgs = remember(pinnedRaw, clearedAt, hiddenIds, expNow) {
+        pinnedRaw.filter { it.createdAt > clearedAt && it.id !in hiddenIds && !MessageExpiry.isExpired(it.expiresAt, expNow) }
     }
     var replyTo by remember(other.uid) { mutableStateOf<Msg?>(null) }
     var editing by remember(other.uid) { mutableStateOf<Msg?>(null) }
     var menu by remember { mutableStateOf<MenuTarget?>(null) }
+    // الرسالة الي أحدد لها وقت انتهاء (يفتح حوار اختيار المدة)
+    var expiryFor by remember(other.uid) { mutableStateOf<Msg?>(null) }
     var showPinned by remember { mutableStateOf(false) }
     var flashId by remember { mutableStateOf<String?>(null) }
 
@@ -1254,6 +1271,13 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                         menu = null
                         Repo.setMessagePinned(me, other.uid, mm.id, !mm.pinned, onWriteFail)
                     })
+                    // انتهاء الرسالة: تنحذف تلقائياً بعد مدة (رسائلي فقط)
+                    if (mt.mine && ChatCallLog.parse(mm.text) == null) {
+                        add(MsgAction(AppIcons.Clock, if (mm.expiresAt > 0L) "تعديل الانتهاء" else "انتهاء الرسالة", Color(0xFF5AC8FA)) {
+                            menu = null
+                            expiryFor = mm
+                        })
+                    }
                     // ترجمة الرسائل الإنجليزية للعربية (أو إخفاء الترجمة إذا ظاهرة)
                     if (mm.mediaType.isEmpty() && ChatSticker.parse(mm.text) == null && ChatCallLog.parse(mm.text) == null && Translator.looksEnglish(mm.text) && mm.id !in Translator.loading) {
                         val shown = Translator.results.containsKey(mm.id)
@@ -1317,6 +1341,24 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
         // ----- قصة مفتوحة من المحادثة -----
         storyOwner?.let { ow ->
             StoryFromChat(ownerUid = ow, onDismiss = { storyOwner = null })
+        }
+
+        // ----- حوار انتهاء الرسالة -----
+        expiryFor?.let { em ->
+            MessageExpiryDialog(
+                backdrop = contentBackdrop, dark = dark, hasExpiry = em.expiresAt > 0L,
+                onSet = { ms ->
+                    Repo.setMessageExpiry(me, other.uid, em.id, Repo.serverNow() + ms, onWriteFail)
+                    AppToast.show("تنحذف الرسالة بعد " + MessageExpiry.durationText((ms / 60_000L).toInt()))
+                    expiryFor = null
+                },
+                onRemove = {
+                    Repo.setMessageExpiry(me, other.uid, em.id, null, onWriteFail)
+                    AppToast.show("تم إلغاء انتهاء الرسالة")
+                    expiryFor = null
+                },
+                onDismiss = { expiryFor = null }
+            )
         }
 
         // ----- قائمة الرسائل المثبتة -----
@@ -1451,7 +1493,8 @@ private fun BubbleBody(
     onJump: (String) -> Unit,
     onLongPress: () -> Unit,
     onOpenMedia: () -> Unit = {},
-    onDoubleTap: () -> Unit = {}
+    onDoubleTap: () -> Unit = {},
+    highlight: String = ""
 ) {
     Column(Modifier.animateContentSize(spring(0.85f, 400f))) {
         if (m.replyId.isNotEmpty() && !m.deleted) {
@@ -1497,6 +1540,7 @@ private fun BubbleBody(
             }
         }
         if (!m.deleted && !isMedia) TranslationBlock(m.id, textColor)
+        if (!m.deleted && m.expiresAt > 0L) ExpiryBadge(m.expiresAt, textColor)
 
         AnimatedVisibility(
             visible = !m.deleted && (m.pinned || m.edited),
@@ -1696,6 +1740,7 @@ private fun MessageRow(
                     )
                 }
                 if (customStk) CustomStickerImage(m.thumb, 140.dp) else StickerMessage(stickerId!!, 132.dp)
+                if (m.expiresAt > 0L) ExpiryBadge(m.expiresAt, fg)
                 if (customStk && showSaveStk) SaveStickerPopup(m.thumb) { showSaveStk = false }
             }
           } else {
@@ -1715,7 +1760,8 @@ private fun MessageRow(
                 BubbleBody(
                     m = m, textColor = textColor, replyName = replyName, replyDeleted = replyDeleted,
                     onJump = onJump, onLongPress = { fireLongPress() }, onOpenMedia = onOpenMedia,
-                    onDoubleTap = { fireDoubleTap() }
+                    onDoubleTap = { fireDoubleTap() },
+                    highlight = highlight
                 )
             }
           }
