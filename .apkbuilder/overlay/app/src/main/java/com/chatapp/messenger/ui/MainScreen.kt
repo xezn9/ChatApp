@@ -47,6 +47,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
@@ -154,6 +156,8 @@ private fun MainContent() {
         if (myUid.isNotEmpty()) Repo.privacyFlow(myUid).collect { PrivacyState.value = it }
     }
     val groupP = remember { Animatable(0f) }
+    // مجموع الرسائل غير المقروءة بكل مجموعاتي (للشارة على تبويب Groups)
+    val groupUnread = rememberGroupUnreadTotal(myUid)
     val backdrop = rememberLayerBackdrop()
     val contentColor = if (isAppDark()) Color.White else Color.Black
     val iconColorFilter = ColorFilter.tint(contentColor)
@@ -375,11 +379,30 @@ private fun MainContent() {
                 // نفس تركيبة الكتالوج: Box + paint بدل Icon، والنص 12sp
                 tabs.forEachIndexed { index, (painter, label) ->
                     LiquidBottomTab({ tab = index }) {
-                        Box(
-                            Modifier
-                                .size(28f.dp)
-                                .paint(painter, colorFilter = iconColorFilter)
-                        )
+                        Box(Modifier.size(28f.dp)) {
+                            Box(
+                                Modifier
+                                    .matchParentSize()
+                                    .paint(painter, colorFilter = iconColorFilter)
+                            )
+                            // شارة عدد رسائل المجموعات غير المقروءة (تختفي إذا ما فيه)
+                            if (index == 1 && groupUnread > 0) {
+                                Box(
+                                    Modifier
+                                        .align(Alignment.TopEnd)
+                                        .offset(x = 9.dp, y = (-5).dp)
+                                        .defaultMinSize(minWidth = 17.dp, minHeight = 17.dp)
+                                        .background(Color(0xFFFF3B30), androidx.compose.foundation.shape.RoundedCornerShape(9.dp))
+                                        .padding(horizontal = 4.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    BasicText(
+                                        if (groupUnread > 99) "99+" else groupUnread.toString(),
+                                        style = TextStyle(Color.White, 10.sp, androidx.compose.ui.text.font.FontWeight.Bold, fontFamily = AppFont)
+                                    )
+                                }
+                            }
+                        }
                         BasicText(label, style = TextStyle(contentColor, 12f.sp, fontFamily = AppFont))
                     }
                 }
