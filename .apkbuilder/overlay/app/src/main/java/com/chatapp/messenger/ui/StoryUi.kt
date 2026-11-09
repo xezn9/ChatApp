@@ -1729,6 +1729,10 @@ private fun MusicPanel(
                 )
             }
         }
+        // حالة تيك توك (للتشخيص): تظهر سبب الفشل إذا ما طلعت نتائجه
+        if (TikTokMusic.status.isNotEmpty()) {
+            Text(TikTokMusic.status, color = fg.copy(0.5f), fontSize = 11.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when {
                 loading && results.isEmpty() -> Text("جاري البحث...", color = fg.copy(0.6f), fontSize = 13.sp, modifier = Modifier.align(Alignment.Center))

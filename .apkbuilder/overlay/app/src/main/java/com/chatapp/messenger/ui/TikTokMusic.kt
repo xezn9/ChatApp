@@ -1,5 +1,8 @@
 package com.chatapp.messenger.ui
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -34,6 +37,10 @@ object TikTokMusic {
     private val gate = Mutex()
     private var lastCall = 0L
 
+    /** حالة آخر بحث بتيك توك (تظهر بلوحة الموسيقى لتشخيص أي خلل بدون Logcat) */
+    var status by mutableStateOf("")
+        private set
+
     private val direct = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, String>>()
 
     private suspend fun get(url: String): JSONObject? = gate.withLock {
@@ -48,8 +55,9 @@ object TikTokMusic {
             try {
                 val j = JSONObject(c.inputStream.bufferedReader().use { it.readText() })
                 if (j.optInt("code", -1) == 0) j else {
+                    val msg = j.optString("msg").ifBlank { j.toString().take(80) }
                     android.util.Log.w("TikTokMusic", "رد غير ناجح: " + j.toString().take(200))
-                    null
+                    throw java.io.IOException("رد الموقع: $msg")
                 }
             } finally {
                 c.disconnect()
@@ -67,13 +75,14 @@ object TikTokMusic {
     /** بحث: أصوات (مو فيديوهات) مدمجة بدون تكرار. أي خلل = قائمة فارغة */
     suspend fun search(term: String): List<MusicTrack> {
         if (term.isBlank()) return emptyList()
-        return withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
+        status = "تيك توك: جاري البحث..."
+        val res = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
             runCatching {
                 val q = URLEncoder.encode(term, "UTF-8")
                 val data = get("$API/feed/search?keywords=$q&count=20&cursor=0&web=1&hd=0")?.optJSONObject("data")
                 val vids = data?.optJSONArray("videos")
                 if (vids == null) {
-                    android.util.Log.w("TikTokMusic", "ما في videos بالرد")
+                    status = "تيك توك: الرد وصل بس بدون نتائج (الموقع غيّر الصيغة؟)"
                     return@runCatching emptyList<MusicTrack>()
                 }
                 val out = ArrayList<MusicTrack>()
@@ -96,8 +105,19 @@ object TikTokMusic {
                     out.add(MusicTrack(PREFIX + id, title, artist, cover, PREFIX + id, SOURCE, dur.coerceIn(5, 600)))
                 }
                 out
-            }.onFailure { android.util.Log.w("TikTokMusic", "فشل البحث: $it") }.getOrDefault(emptyList())
-        } ?: emptyList<MusicTrack>().also { android.util.Log.w("TikTokMusic", "انتهت المهلة") }
+            }.onFailure {
+                android.util.Log.w("TikTokMusic", "فشل البحث: $it")
+                status = when (it) {
+                    is java.net.UnknownHostException -> "تيك توك: ما كدرت أوصل للموقع (محجوب أو ما في إنترنت)"
+                    is java.net.SocketTimeoutException -> "تيك توك: الموقع بطيء/ما رد (مهلة)"
+                    else -> "تيك توك: " + (it.message ?: it.javaClass.simpleName).take(90)
+                }
+            }.getOrDefault(emptyList())
+        }
+        if (res == null) status = "تيك توك: انتهت المهلة (النت بطيء أو الموقع محجوب)"
+        else if (res.isNotEmpty()) status = "تيك توك: ${res.size} نتيجة"
+        else if (status.endsWith("جاري البحث...")) status = "تيك توك: ما لقيت نتائج لهذا البحث"
+        return res ?: emptyList()
     }
 
     /** يرجّع رابط الصوت المباشر لفيديو تيك توك (من نتائج البحث المخزّنة أو من الخدمة) */
