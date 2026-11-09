@@ -278,6 +278,8 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
     var flashId by remember { mutableStateOf<String?>(null) }
     // الرسالة الي أرد عليها (سحب رسالة أو "رد" من قائمة الضغطة المطولة)
     var replyTo by remember(groupId) { mutableStateOf<GroupMsg?>(null) }
+    // قصة مفتوحة من رسالة مشاركة قصة بالمجموعة
+    var storyOwner by remember { mutableStateOf<String?>(null) }
 
     // ---- مؤشر الكتابة ----
     val typingPath = remember(groupId) { "groupTyping/$groupId" }
@@ -1035,7 +1037,14 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                             replyName = replyNameOf(m.replyFrom),
                             canReply = access?.canSend == true,
                             onReply = { replyTo = m },
-                            onJump = { jumpToMessage(it) },
+                            onJump = {
+                                when (it) {
+                                    // رسالة مشاركة قصة: ضغطة على الاقتباس تفتح القصة
+                                    "story" -> if (m.replyFrom.isNotBlank()) storyOwner = m.replyFrom
+                                    "status" -> {}
+                                    else -> jumpToMessage(it)
+                                }
+                            },
                             onLongPress = { rect ->
                                 val a = access
                                 if (a != null && (a.canSend || a.canPin || mine || a.canDelete)) {
@@ -1391,6 +1400,11 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
 
             // ----- شاشة إنشاء ملصق (اختيار صورة + قص) -----
             StickerCreatorHost(stickerCreator)
+
+            // ----- قصة مفتوحة من المحادثة -----
+            storyOwner?.let { ow ->
+                StoryFromChat(ownerUid = ow, onDismiss = { storyOwner = null })
+            }
 
             // ----- إعدادات المجموعة: خلفية + فقاعات (نفس لوحة المحادثة العادية) -----
             AnimatedVisibility(

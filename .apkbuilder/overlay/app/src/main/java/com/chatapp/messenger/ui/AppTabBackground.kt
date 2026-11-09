@@ -119,6 +119,19 @@ val AppBgPresets: List<List<ChatBgPreset>> = listOf(
         pr("a8", "صحراء", 0xFF3A2A14, 0xFFB07A4F, 0xFFFFD8A8, 0xFFE0B040, true),
         pr("a9", "بنفسجي", 0xFF1A0F38, 0xFF5A3FA8, 0xFFB39DFF, 0xFF2EE6A8),
         pr("a10", "رمادي", 0xFF14181F, 0xFF4A5666, 0xFF9AA8BD, 0xFF6F8099, true)
+    ),
+    // Settings: شفق وألوان هادئة متنوعة
+    listOf(
+        pr("s1", "شفق", 0xFF0B1030, 0xFF3A1550, 0xFF4D7CFF, 0xFFB45CFF),
+        pr("s2", "نيلي", 0xFF0A0F2E, 0xFF22408F, 0xFF5E8BFF, 0xFF8A7DFF, true),
+        pr("s3", "عنابي", 0xFF2A0A24, 0xFF8E2D6A, 0xFFFF5C9A, 0xFFB45CFF),
+        pr("s4", "ليل", 0xFF05070F, 0xFF161B33, 0xFF3B4FA8, 0xFF5E5CE6, true),
+        pr("s5", "غروب", 0xFF2A1030, 0xFFE0634F, 0xFFFFA24D, 0xFFFF5C8A),
+        pr("s6", "بحر", 0xFF03202E, 0xFF0F7C8C, 0xFF3DDCFF, 0xFF2EE6A8, true),
+        pr("s7", "زمرد", 0xFF052019, 0xFF127A55, 0xFF30D158, 0xFF3DDCFF),
+        pr("s8", "ذهبي", 0xFF2A1D06, 0xFFB5762A, 0xFFFFD36B, 0xFFFF8A5C, true),
+        pr("s9", "بنفسجي", 0xFF160A33, 0xFF6A2FB0, 0xFFD16BFF, 0xFF6F8BFF),
+        pr("s10", "فحمي", 0xFF0E1015, 0xFF2B3140, 0xFF7E93B5, 0xFF9AA8BD, true)
     )
 )
 
@@ -126,29 +139,29 @@ val AppBgPresets: List<List<ChatBgPreset>> = listOf(
 fun ChatBgPreset.forTheme(dark: Boolean): ChatBgPreset =
     if (dark) this else ChatBgPreset(id, name, lerp(top, Color.White, 0.72f), lerp(bottom, Color.White, 0.55f), circles)
 
-/** إعدادات خلفية كل واجهة (تنحفظ بالجهاز وتتطبق فوراً). tab: 0 Home، 1 Groups، 2 Account */
+/** إعدادات خلفية كل واجهة (تنحفظ بالجهاز وتتطبق فوراً). tab: 0 Home، 1 Groups، 2 Account، 3 Settings */
 object AppBgSettings {
     private const val PREFS = "app_tab_bg"
     private var sp: SharedPreferences? = null
 
-    private val kinds = mutableStateListOf("default", "default", "default")   // default | preset | image
-    private val presets = mutableStateListOf(0, 0, 0)
-    private val blurs = mutableStateListOf(false, false, false)
-    private val versions = mutableStateListOf(0L, 0L, 0L)
-    private val gifs = mutableStateListOf(false, false, false)   // نعرفها من البداية حتى ما ينتظر الرسم فحص الملف
+    private val kinds = mutableStateListOf("default", "default", "default", "default")   // default | preset | image
+    private val presets = mutableStateListOf(0, 0, 0, 0)
+    private val blurs = mutableStateListOf(false, false, false, false)
+    private val versions = mutableStateListOf(0L, 0L, 0L, 0L)
+    private val gifs = mutableStateListOf(false, false, false, false)   // نعرفها من البداية حتى ما ينتظر الرسم فحص الملف
 
-    fun kind(tab: Int): String = kinds[tab.coerceIn(0, 2)]
-    fun preset(tab: Int): Int = presets[tab.coerceIn(0, 2)]
-    fun blur(tab: Int): Boolean = blurs[tab.coerceIn(0, 2)]
-    fun version(tab: Int): Long = versions[tab.coerceIn(0, 2)]
-    fun isGif(tab: Int): Boolean = gifs[tab.coerceIn(0, 2)]
+    fun kind(tab: Int): String = kinds[tab.coerceIn(0, 3)]
+    fun preset(tab: Int): Int = presets[tab.coerceIn(0, 3)]
+    fun blur(tab: Int): Boolean = blurs[tab.coerceIn(0, 3)]
+    fun version(tab: Int): Long = versions[tab.coerceIn(0, 3)]
+    fun isGif(tab: Int): Boolean = gifs[tab.coerceIn(0, 3)]
 
-    fun imageFile(ctx: Context, tab: Int): File = File(ctx.applicationContext.filesDir, "appbg_${tab.coerceIn(0, 2)}.jpg")
+    fun imageFile(ctx: Context, tab: Int): File = File(ctx.applicationContext.filesDir, "appbg_${tab.coerceIn(0, 3)}.jpg")
 
     fun init(ctx: Context) {
         val p = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         sp = p
-        for (t in 0..2) {
+        for (t in 0..3) {
             var k = p.getString("kind_$t", "default") ?: "default"
             // صورة محفوظة بس الملف انحذف: نرجع للافتراضي
             if (k == "image" && !imageFile(ctx, t).exists()) k = "default"
@@ -160,7 +173,7 @@ object AppBgSettings {
         }
         // نفك الصورة (أو أول فريم من الـ GIF) من الحين وبنفس الخيط، بحجم مصغّر يكفي الشاشة (سريع)،
         // حتى تكون الخلفية جاهزة قبل أول رسم للواجهة بدون أي ومضة أو لون بديل
-        for (t in 0..2) {
+        for (t in 0..3) {
             if (kinds[t] == "image") {
                 val soft = !gifs[t] && blurs[t] && Build.VERSION.SDK_INT < Build.VERSION_CODES.S
                 AppBgCache.load(imageFile(ctx, t).path, versions[t], soft)
@@ -177,16 +190,16 @@ object AppBgSettings {
             ?.apply()
     }
 
-    fun setDefault(tab: Int) { val t = tab.coerceIn(0, 2); kinds[t] = "default"; save(t) }
+    fun setDefault(tab: Int) { val t = tab.coerceIn(0, 3); kinds[t] = "default"; save(t) }
     fun setPreset(tab: Int, index: Int) {
-        val t = tab.coerceIn(0, 2)
+        val t = tab.coerceIn(0, 3)
         presets[t] = index.coerceIn(0, AppBgPresets[t].lastIndex); kinds[t] = "preset"; save(t)
     }
-    fun setBlur(tab: Int, on: Boolean) { val t = tab.coerceIn(0, 2); blurs[t] = on; save(t) }
+    fun setBlur(tab: Int, on: Boolean) { val t = tab.coerceIn(0, 3); blurs[t] = on; save(t) }
 
     /** يحفظ صورة (أو GIF متحرك كما هو) من المعرض كخلفية للواجهة. يرجع نص الخطأ أو null إذا نجح */
     suspend fun setImage(ctx: Context, tab: Int, uri: Uri): String? {
-        val t = tab.coerceIn(0, 2)
+        val t = tab.coerceIn(0, 3)
         val err = saveChatBackgroundFromUri(ctx, uri, imageFile(ctx, t))
         if (err != null) return err
         versions[t] = System.currentTimeMillis()
@@ -246,7 +259,7 @@ private fun rememberTabBgImage(path: String, version: Long, softBlur: Boolean): 
  */
 @Composable
 fun AppTabBackground(tab: Int, modifier: Modifier = Modifier) {
-    val t = tab.coerceIn(0, 2)
+    val t = tab.coerceIn(0, 3)
     val dark = isAppDark()
     val kind = AppBgSettings.kind(t)
     val canBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
@@ -290,7 +303,7 @@ fun AppTabBackground(tab: Int, modifier: Modifier = Modifier) {
 //  قسم الإعدادات: داخل صفحة "ثيم التطبيق"
 // ---------------------------------------------------------------------------
 
-private val TabNames = listOf("Home", "Groups", "Account")
+private val TabNames = listOf("Home", "Groups", "Account", "Settings")
 
 @Composable
 internal fun AppBackgroundSection(bd: Backdrop, dark: Boolean, accent: Color, fg: Color) {

@@ -2075,12 +2075,23 @@ object Repo {
     }
 
     /** مشاركة قصة لأصدقائي: تنرسل لكل صديق كرسالة بالمحادثة (مع اقتباس "قصة فلان") */
-    fun shareStory(to: Collection<String>, owner: String, ownerName: String) {
+    fun shareStory(
+        to: Collection<String>, owner: String, ownerName: String,
+        groups: Collection<String> = emptyList(),
+        /** تنادى مرة لكل مجموعة ما قدرنا نرسل لها (مثلاً مقيّد أو الإرسال مغلق) */
+        onGroupFail: (String) -> Unit = {}
+    ) {
         val me = auth.currentUser?.uid ?: return
         val who = ownerName.ifBlank { "مستخدم" }
         val text = if (owner == me) "📸 شاركتلك قصتي" else "📸 شاركتلك قصة $who"
+        val quote = if (owner == me) "قصتي" else "قصة $who"
         to.forEach { friend ->
-            send(me, friend, text, replyId = "story", replyText = if (owner == me) "قصتي" else "قصة $who", replyFrom = owner)
+            send(me, friend, text, replyId = "story", replyText = quote, replyFrom = owner)
+        }
+        // للمجموعات: نفس الرسالة مع اقتباس القصة (الضغط عليه يفتح القصة)
+        val gText = if (owner == me) "📸 شاركت قصتي" else "📸 شاركت قصة $who"
+        groups.forEach { gid ->
+            sendGroupMessage(gid, gText, onFail = { onGroupFail(gid) }, replyId = "story", replyText = quote, replyFrom = owner)
         }
     }
 

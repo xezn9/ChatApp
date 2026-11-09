@@ -246,8 +246,14 @@ private fun AppSettingsScene(content: @Composable (Backdrop) -> Unit) {
         val dark = isAppDark()
         val sky = if (dark) listOf(Color(0xFF0B1030), Color(0xFF241046), Color(0xFF3A1550))
         else listOf(Color(0xFFDDE6FF), Color(0xFFF1DCFF), Color(0xFFFFE3D6))
-        Box(Modifier.matchParentSize().layerBackdrop(bd).background(Brush.verticalGradient(sky))) {
-            Canvas(Modifier.matchParentSize()) {
+        // خلفية مخصصة من ثيم التطبيق (جاهزة أو صورة/GIF)؛ إذا "افتراضية" نبقي شفق الغروب المتحرك
+        val customBg = AppBgSettings.kind(3) != "default"
+        Box(
+            Modifier.matchParentSize().layerBackdrop(bd)
+                .then(if (customBg) Modifier else Modifier.background(Brush.verticalGradient(sky)))
+        ) {
+            if (customBg) AppTabBackground(3, Modifier.matchParentSize())
+            else Canvas(Modifier.matchParentSize()) {
                 val a = phase
                 fun blob(c: Color, cx: Float, cy: Float, r: Float, alpha: Float) {
                     drawCircle(

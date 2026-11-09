@@ -2214,18 +2214,27 @@ fun StoryViewerScreen(
         }
 
         // مشاركة القصة لأصدقائي
-        StorySheet(visible = shareOpen, backdrop = bd, title = "شارك القصة مع أصدقائك", onDismiss = { shareOpen = false }) {
+        StorySheet(visible = shareOpen, backdrop = bd, title = "شارك القصة", onDismiss = { shareOpen = false }) {
             val friendIds by remember(myUid) { Repo.friendsFlow(myUid) }.collectAsState(initial = emptyList())
+            val groupItems by remember(myUid) { Repo.groupsFlow(myUid) }.collectAsState(initial = emptyList())
             val picked = remember { mutableStateListOf<String>() }
-            if (friendIds.isEmpty()) {
+            val pickedG = remember { mutableStateListOf<String>() }
+            val totalPicked = picked.size + pickedG.size
+            if (friendIds.isEmpty() && groupItems.isEmpty()) {
                 Text(
-                    "ما عندك أصدقاء بعد. ضيف أصدقاء من ملفاتهم الشخصية حتى تگدر تشارك القصة.",
+                    "ما عندك أصدقاء أو مجموعات بعد. ضيف أصدقاء من ملفاتهم الشخصية أو انضم لمجموعة حتى تگدر تشارك القصة.",
                     color = Color.White.copy(0.7f), fontSize = 14.sp,
                     modifier = Modifier.fillMaxWidth().padding(24.dp), textAlign = TextAlign.Center
                 )
             } else {
                 LazyColumn(Modifier.heightIn(max = 340.dp)) {
-                    items(friendIds, key = { it }) { fid ->
+                    if (friendIds.isNotEmpty() && groupItems.isNotEmpty()) item(key = "hdr_friends") {
+                        Text(
+                            "الأصدقاء", color = Color.White.copy(0.6f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 4.dp)
+                        )
+                    }
+                    items(friendIds, key = { "f_$it" }) { fid ->
                         val prof by remember(fid) { Repo.basicProfileFlow(fid) }.collectAsState(initial = Profile())
                         val av = rememberB64Image(prof.avatar)
                         val on = fid in picked
@@ -2258,20 +2267,55 @@ fun StoryViewerScreen(
                             }
                         }
                     }
+                    if (groupItems.isNotEmpty()) item(key = "hdr_groups") {
+                        Text(
+                            "المجموعات", color = Color.White.copy(0.6f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 4.dp)
+                        )
+                    }
+                    items(groupItems, key = { "g_${it.id}" }) { g ->
+                        val on = g.id in pickedG
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .clickable { if (on) pickedG.remove(g.id) else pickedG.add(g.id) }
+                                .padding(horizontal = 18.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            GroupAvatar(g.avatar, 42.dp)
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                g.name.ifBlank { "مجموعة" }, color = Color.White, fontSize = 16.sp,
+                                fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Box(
+                                Modifier.size(26.dp).clip(CircleShape)
+                                    .background(if (on) AccentBlue else Color.White.copy(0.14f))
+                                    .border(1.dp, Color.White.copy(if (on) 0f else 0.4f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (on) Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(17.dp))
+                            }
+                        }
+                    }
                 }
                 Spacer(Modifier.height(10.dp))
                 GlassButton(
                     onClick = {
-                        Repo.shareStory(picked.toList(), realOwner, if (mine) "" else (owner?.name ?: ""))
+                        Repo.shareStory(
+                            picked.toList(), realOwner, if (mine) "" else (owner?.name ?: ""),
+                            groups = pickedG.toList(),
+                            onGroupFail = { AppToast.show("ما انرسلت القصة لإحدى المجموعات (الإرسال مغلق أو مقيّد)") }
+                        )
                         AppToast.show("انرسلت القصة")
-                        picked.clear()
+                        picked.clear(); pickedG.clear()
                         shareOpen = false
                     },
-                    backdrop = bd, tint = AccentBlue, enabled = picked.isNotEmpty(),
+                    backdrop = bd, tint = AccentBlue, enabled = totalPicked > 0,
                     modifier = Modifier.padding(horizontal = 18.dp).fillMaxWidth().height(50.dp)
                 ) {
                     Text(
-                        if (picked.isEmpty()) "اختر أصدقاء" else "إرسال (${picked.size})",
+                        if (totalPicked == 0) "اختر أصدقاء أو مجموعات" else "إرسال ($totalPicked)",
                         color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold
                     )
                 }
