@@ -818,7 +818,7 @@ private fun DrawScope.decorWaves(w: Float, h: Float) {
 }
 
 // ---------------------------------------------------------------------------
-// قائمة الأشكال (26)
+// قائمة الأشكال (46 = 26 + 20 جديدة)
 // ---------------------------------------------------------------------------
 
 val BubbleStyles: List<BubbleStyle> = listOf(
@@ -957,7 +957,7 @@ val BubbleStyles: List<BubbleStyle> = listOf(
         sidePad = 38.dp, topPad = 8.dp,
         decor = DrawScope::decorWaves, inner = DrawScope::innerWaves
     )
-)
+) + ExtraBubbleStyles // + 20 شكل جديد من BubbleStylesExtra.kt
 
 fun bubbleStyleById(id: String): BubbleStyle = BubbleStyles.firstOrNull { it.id == id } ?: BubbleStyles[0]
 
