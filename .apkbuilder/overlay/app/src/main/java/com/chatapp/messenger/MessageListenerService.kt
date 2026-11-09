@@ -66,6 +66,7 @@ class MessageListenerService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        running = true
         prefs = getSharedPreferences("notif_cursor_rt", Context.MODE_PRIVATE)
         Repo.auth.addAuthStateListener(authListener)
     }
@@ -83,6 +84,7 @@ class MessageListenerService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        running = false
         Repo.auth.removeAuthStateListener(authListener)
         stopListening()
         scope.cancel()
@@ -426,6 +428,10 @@ class MessageListenerService : Service() {
     companion object {
         private const val NOTIF_ID = 7001
         private const val MAX_GROUPS = 100
+
+        /** هل الخدمة شغالة الحين بهذي العملية؟ (يستعملها فحص الإشعارات) */
+        @Volatile
+        var running = false
 
         fun start(ctx: Context) {
             try {

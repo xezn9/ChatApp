@@ -204,6 +204,9 @@ private fun MainContent() {
         // استقبال الرسائل بالخلفية بدون سيرفر: خدمة تسمع لـ Firestore وتطلع الإشعار
         com.chatapp.messenger.MessageListenerService.start(ctx)
         com.chatapp.messenger.MessageListenerService.askBatteryExemptionOnce(ctx)
+        // إذا فيه إعداد بالجهاز يمنع الإشعارات (بطارية/إشعارات مطفية...) نفتح نافذة الفحص (مرة كل يومين مثل أقصى حد)
+        delay(4000)
+        if (NotifHealth.autoPromptDue(ctx)) NotifHealthUi.show = true
     }
     // متصل / آخر ظهور: أنا "متصل" والتطبيق مفتوح قدامي (نبضة كل دقيقتين)، وأول ما يروح للخلفية أصير "غير متصل"
     LaunchedEffect(myUid, AppState.foreground) {
@@ -594,6 +597,11 @@ private fun MainContent() {
                 },
                 onDismiss = { deleteChat = null }
             )
+        }
+
+        // فحص الإشعارات (من الإعدادات، أو تلقائياً إذا فيه مشكلة)
+        if (NotifHealthUi.show) {
+            NotifHealthDialog(backdrop = backdrop, dark = isAppDark(), onDismiss = { NotifHealthUi.show = false })
         }
 
         // تأكيد تسجيل الخروج (Liquid Glass)
