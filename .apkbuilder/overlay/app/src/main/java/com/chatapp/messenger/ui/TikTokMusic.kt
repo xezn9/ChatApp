@@ -1,12 +1,8 @@
 package com.chatapp.messenger.ui
 
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
@@ -15,12 +11,10 @@ import java.net.URL
 import java.net.URLEncoder
 
 /**
- * بحث أصوات تيك توك (مصدر إضافي بعد يوتيوب). مجاني وبدون مفتاح عبر خدمة tikwm (غير رسمية).
+ * بحث أصوات تيك توك (مصدر إضافي بعد يوتيوب) عبر tikwmapi.com (بمفتاح API).
  *
- * مصمَّم حتى ما يفشل البحث أبداً: كل شي داخل runCatching + مهلة قصيرة، وإذا الخدمة وقعت أو تغيّرت
- * ترجع قائمة فارغة والبحث يكمل بيوتيوب/iTunes عادي.
- *
- * لو الخدمة تغيّر عنوانها: غيّر [API] بس.
+ * مصمَّم حتى ما يفشل البحث أبداً: كل شي داخل runCatching + مهلة، وإذا الخدمة وقعت أو انتهت الحصة
+ * ترجع قائمة فارغة والبحث يكمل بيوتيوب/iTunes عادي، وسبب الفشل يظهر بسطر صغير بلوحة الموسيقى.
  *
  * نخزّن بالقصة "tt:VIDEO_ID" (مو الرابط المباشر لأنه ينتهي)، ونحلّه وقت التشغيل.
  */
@@ -28,40 +22,48 @@ object TikTokMusic {
     const val PREFIX = "tt:"
     const val SOURCE = "tt"
 
-    /** عنوان الخدمة - مكان واحد للتغيير إذا انكسر */
-    private const val API = "https://www.tikwm.com/api"
-    private const val UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36"
+    private const val API = "https://api.tikwmapi.com"
+
+    /**
+     * مفتاح الـAPI. تنبيه: أي مفتاح داخل التطبيق يكدر أي أحد يفكّه ويستعمله (يستهلك حصتك).
+     * الحل الأمن لاحقاً: ينحط بسيرفر وسيط (مثل push-relay) والتطبيق يطلبه منه.
+     */
+    private const val API_KEY = "57ad5dae0a3e48c47349ce43e85c862f"
+
     private const val SEARCH_TIMEOUT_MS = 9_000L
 
-    // الخدمة المجانية تسمح تقريباً بطلب كل ثانية: نفرض فاصل بين الطلبات حتى ما ننحظر
-    private val gate = Mutex()
-    private var lastCall = 0L
-
-    /** حالة آخر بحث بتيك توك (تظهر بلوحة الموسيقى لتشخيص أي خلل بدون Logcat) */
-    var status by mutableStateOf("")
-        private set
+    /** حالة آخر بحث بتيك توك (تظهر بلوحة الموسيقى لتشخيص أي خلل). StateFlow آمن بأي thread. */
+    private val _status = MutableStateFlow("")
+    val status: StateFlow<String> = _status
 
     private val direct = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, String>>()
 
-    private suspend fun get(url: String): JSONObject? = gate.withLock {
-        val wait = 1_100L - (System.currentTimeMillis() - lastCall)
-        if (wait > 0) delay(wait)
-        lastCall = System.currentTimeMillis()
-        withContext(Dispatchers.IO) {
-            val c = URL(url).openConnection() as HttpURLConnection
-            c.connectTimeout = 7_000
-            c.readTimeout = 7_000
-            c.setRequestProperty("User-Agent", UA)
-            try {
-                val j = JSONObject(c.inputStream.bufferedReader().use { it.readText() })
-                if (j.optInt("code", -1) == 0) j else {
-                    val msg = j.optString("msg").ifBlank { j.toString().take(80) }
-                    android.util.Log.w("TikTokMusic", "رد غير ناجح: " + j.toString().take(200))
-                    throw java.io.IOException("رد الموقع: $msg")
-                }
-            } finally {
-                c.disconnect()
+    private class ApiError(msg: String) : java.io.IOException(msg)
+
+    private suspend fun get(url: String): JSONObject = withContext(Dispatchers.IO) {
+        val c = URL(url).openConnection() as HttpURLConnection
+        c.connectTimeout = 7_000
+        c.readTimeout = 7_000
+        c.setRequestProperty("x-tikwmapi-key", API_KEY)
+        c.setRequestProperty("User-Agent", "ChatApp/2.24")
+        try {
+            // أخطاء 4xx (حد الطلبات/انتهاء الحصة) ترجع JSON بـerrorStream
+            val stream = if (c.responseCode in 200..299) c.inputStream else (c.errorStream ?: c.inputStream)
+            val j = JSONObject(stream.bufferedReader().use { it.readText() })
+            val code = j.optInt("code", -1)
+            if (code != 0) {
+                throw ApiError(
+                    when (code) {
+                        10401 -> "المفتاح مفقود أو غلط"
+                        10429 -> "طلبات كثيرة بالدقيقة"
+                        10430 -> "انتهت حصة الـAPI"
+                        else -> j.optString("msg").ifBlank { "كود $code" }
+                    }
+                )
             }
+            j
+        } finally {
+            c.disconnect()
         }
     }
 
@@ -69,20 +71,21 @@ object TikTokMusic {
         u.isBlank() -> ""
         u.startsWith("http") -> u
         u.startsWith("//") -> "https:$u"
-        else -> "https://www.tikwm.com$u"
+        else -> ""
     }
 
-    /** بحث: أصوات (مو فيديوهات) مدمجة بدون تكرار. أي خلل = قائمة فارغة */
+    /** بحث: أصوات (مو فيديوهات) بدون تكرار. أي خلل = قائمة فارغة + سبب بـ[status] */
     suspend fun search(term: String): List<MusicTrack> {
         if (term.isBlank()) return emptyList()
-        status = "تيك توك: جاري البحث..."
+        _status.value = "تيك توك: جاري البحث..."
+        var failure: String? = null
         val res = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
             runCatching {
                 val q = URLEncoder.encode(term, "UTF-8")
-                val data = get("$API/feed/search?keywords=$q&count=20&cursor=0&web=1&hd=0")?.optJSONObject("data")
-                val vids = data?.optJSONArray("videos")
+                val vids = get("$API/feed/search?keywords=$q&count=30&cursor=0")
+                    .optJSONObject("data")?.optJSONArray("videos")
                 if (vids == null) {
-                    status = "تيك توك: الرد وصل بس بدون نتائج (الموقع غيّر الصيغة؟)"
+                    failure = "الرد وصل بس بدون نتائج"
                     return@runCatching emptyList<MusicTrack>()
                 }
                 val out = ArrayList<MusicTrack>()
@@ -107,16 +110,20 @@ object TikTokMusic {
                 out
             }.onFailure {
                 android.util.Log.w("TikTokMusic", "فشل البحث: $it")
-                status = when (it) {
-                    is java.net.UnknownHostException -> "تيك توك: ما كدرت أوصل للموقع (محجوب أو ما في إنترنت)"
-                    is java.net.SocketTimeoutException -> "تيك توك: الموقع بطيء/ما رد (مهلة)"
-                    else -> "تيك توك: " + (it.message ?: it.javaClass.simpleName).take(90)
+                failure = when (it) {
+                    is java.net.UnknownHostException -> "ما كدرت أوصل للموقع (محجوب أو ما في إنترنت)"
+                    is java.net.SocketTimeoutException -> "الموقع بطيء/ما رد"
+                    is ApiError -> it.message
+                    else -> (it.message ?: it.javaClass.simpleName).take(90)
                 }
             }.getOrDefault(emptyList())
         }
-        if (res == null) status = "تيك توك: انتهت المهلة (النت بطيء أو الموقع محجوب)"
-        else if (res.isNotEmpty()) status = "تيك توك: ${res.size} نتيجة"
-        else if (status.endsWith("جاري البحث...")) status = "تيك توك: ما لقيت نتائج لهذا البحث"
+        _status.value = when {
+            res == null -> "تيك توك: انتهت المهلة (النت بطيء)"
+            res.isNotEmpty() -> "تيك توك: ${res.size} نتيجة"
+            failure != null -> "تيك توك: $failure"
+            else -> "تيك توك: ما لقيت نتائج لهذا البحث"
+        }
         return res ?: emptyList()
     }
 
@@ -125,8 +132,7 @@ object TikTokMusic {
         val hit = direct[videoId]
         if (hit != null && System.currentTimeMillis() - hit.first < 3_600_000L) return hit.second
         return runCatching {
-            val u = URLEncoder.encode("https://www.tiktok.com/@_/video/$videoId", "UTF-8")
-            val d = get("$API/?url=$u&hd=0")?.optJSONObject("data") ?: return@runCatching null
+            val d = get("$API/?url=$videoId").optJSONObject("data") ?: return@runCatching null
             val play = abs(d.optJSONObject("music_info")?.optString("play").orEmpty().ifBlank { d.optString("music") })
             if (play.isBlank()) null else { direct[videoId] = System.currentTimeMillis() to play; play }
         }.getOrNull()
