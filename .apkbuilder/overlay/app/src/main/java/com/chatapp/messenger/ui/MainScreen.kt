@@ -296,8 +296,9 @@ private fun MainContent() {
                 animationSpec = androidx.compose.animation.core.tween(500),
                 label = "tabBg"
             ) { t ->
-                // ترتيب التبويبات: 0 Home، 1 Groups، 2 Activity (واجهته ترسم خلفيتها بنفسها)، 3 Account
-                AppTabBackground(when (t) { 2 -> 1; 3 -> 2; else -> t }, Modifier.fillMaxSize())
+                // ترتيب التبويبات: 0 Home، 1 Groups، 2 Activity (تبويبه يرسم خلفيته بنفسه)، 3 Account
+                if (t == 2) Box(Modifier.fillMaxSize().background(appBackground()))
+                else AppTabBackground(if (t == 3) 2 else t, Modifier.fillMaxSize())
             }
             // التبويبات الأربعة تنبني مرة وحدة عند فتح التطبيق وتبقى حيّة بالخلفية:
             // التنقل بينها بس انزلاق/تلاشي (بدون إعادة بناء)، وأي تحديث ببياناتها يصير بالخفاء.

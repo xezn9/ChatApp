@@ -132,6 +132,19 @@ val AppBgPresets: List<List<ChatBgPreset>> = listOf(
         pr("s8", "ذهبي", 0xFF2A1D06, 0xFFB5762A, 0xFFFFD36B, 0xFFFF8A5C, true),
         pr("s9", "بنفسجي", 0xFF160A33, 0xFF6A2FB0, 0xFFD16BFF, 0xFF6F8BFF),
         pr("s10", "فحمي", 0xFF0E1015, 0xFF2B3140, 0xFF7E93B5, 0xFF9AA8BD, true)
+    ),
+    // Activity: بنفسجي ووردي وتركواز (نفس روح الواجهة)
+    listOf(
+        pr("c1", "بنفسجي", 0xFF1A0A3A, 0xFF7B1FA2, 0xFFD16BFF, 0xFF4D7CFF),
+        pr("c2", "عنب", 0xFF240B3F, 0xFF9C27B0, 0xFFE07BFF, 0xFFFF6FB5, true),
+        pr("c3", "فيوشا", 0xFF3A0A33, 0xFFD81B8C, 0xFFFF7BC4, 0xFFB45CFF),
+        pr("c4", "شفق", 0xFF14123F, 0xFF5B3FD6, 0xFF9A8CFF, 0xFFFF5C9A, true),
+        pr("c5", "أزرق ملكي", 0xFF081A52, 0xFF2F5BFF, 0xFF6FA0FF, 0xFFB45CFF),
+        pr("c6", "تركواز", 0xFF052A33, 0xFF0F8CA8, 0xFF4DE6F0, 0xFF8A5CFF, true),
+        pr("c7", "زمرد", 0xFF05261C, 0xFF0F8A66, 0xFF3DDCA0, 0xFF3DB8FF),
+        pr("c8", "غروب", 0xFF2E0F3A, 0xFFE0506F, 0xFFFFA24D, 0xFFB45CFF, true),
+        pr("c9", "ليل", 0xFF070A18, 0xFF1C2147, 0xFF4B5BD6, 0xFF7A5CFF),
+        pr("c10", "ذهبي", 0xFF2E1C08, 0xFFB5702A, 0xFFFFD36B, 0xFFFF8A5C, true)
     )
 )
 
@@ -139,29 +152,29 @@ val AppBgPresets: List<List<ChatBgPreset>> = listOf(
 fun ChatBgPreset.forTheme(dark: Boolean): ChatBgPreset =
     if (dark) this else ChatBgPreset(id, name, lerp(top, Color.White, 0.72f), lerp(bottom, Color.White, 0.55f), circles)
 
-/** إعدادات خلفية كل واجهة (تنحفظ بالجهاز وتتطبق فوراً). tab: 0 Home، 1 Groups، 2 Account، 3 Settings */
+/** إعدادات خلفية كل واجهة (تنحفظ بالجهاز وتتطبق فوراً). tab: 0 Home، 1 Groups، 2 Account، 3 Settings، 4 Activity */
 object AppBgSettings {
     private const val PREFS = "app_tab_bg"
     private var sp: SharedPreferences? = null
 
-    private val kinds = mutableStateListOf("default", "default", "default", "default")   // default | preset | image
-    private val presets = mutableStateListOf(0, 0, 0, 0)
-    private val blurs = mutableStateListOf(false, false, false, false)
-    private val versions = mutableStateListOf(0L, 0L, 0L, 0L)
-    private val gifs = mutableStateListOf(false, false, false, false)   // نعرفها من البداية حتى ما ينتظر الرسم فحص الملف
+    private val kinds = mutableStateListOf("default", "default", "default", "default", "default")   // default | preset | image
+    private val presets = mutableStateListOf(0, 0, 0, 0, 0)
+    private val blurs = mutableStateListOf(false, false, false, false, false)
+    private val versions = mutableStateListOf(0L, 0L, 0L, 0L, 0L)
+    private val gifs = mutableStateListOf(false, false, false, false, false)   // نعرفها من البداية حتى ما ينتظر الرسم فحص الملف
 
-    fun kind(tab: Int): String = kinds[tab.coerceIn(0, 3)]
-    fun preset(tab: Int): Int = presets[tab.coerceIn(0, 3)]
-    fun blur(tab: Int): Boolean = blurs[tab.coerceIn(0, 3)]
-    fun version(tab: Int): Long = versions[tab.coerceIn(0, 3)]
-    fun isGif(tab: Int): Boolean = gifs[tab.coerceIn(0, 3)]
+    fun kind(tab: Int): String = kinds[tab.coerceIn(0, 4)]
+    fun preset(tab: Int): Int = presets[tab.coerceIn(0, 4)]
+    fun blur(tab: Int): Boolean = blurs[tab.coerceIn(0, 4)]
+    fun version(tab: Int): Long = versions[tab.coerceIn(0, 4)]
+    fun isGif(tab: Int): Boolean = gifs[tab.coerceIn(0, 4)]
 
-    fun imageFile(ctx: Context, tab: Int): File = File(ctx.applicationContext.filesDir, "appbg_${tab.coerceIn(0, 3)}.jpg")
+    fun imageFile(ctx: Context, tab: Int): File = File(ctx.applicationContext.filesDir, "appbg_${tab.coerceIn(0, 4)}.jpg")
 
     fun init(ctx: Context) {
         val p = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         sp = p
-        for (t in 0..3) {
+        for (t in 0..4) {
             var k = p.getString("kind_$t", "default") ?: "default"
             // صورة محفوظة بس الملف انحذف: نرجع للافتراضي
             if (k == "image" && !imageFile(ctx, t).exists()) k = "default"
@@ -173,7 +186,7 @@ object AppBgSettings {
         }
         // نفك الصورة (أو أول فريم من الـ GIF) من الحين وبنفس الخيط، بحجم مصغّر يكفي الشاشة (سريع)،
         // حتى تكون الخلفية جاهزة قبل أول رسم للواجهة بدون أي ومضة أو لون بديل
-        for (t in 0..3) {
+        for (t in 0..4) {
             if (kinds[t] == "image") {
                 val soft = !gifs[t] && blurs[t] && Build.VERSION.SDK_INT < Build.VERSION_CODES.S
                 AppBgCache.load(imageFile(ctx, t).path, versions[t], soft)
@@ -190,16 +203,16 @@ object AppBgSettings {
             ?.apply()
     }
 
-    fun setDefault(tab: Int) { val t = tab.coerceIn(0, 3); kinds[t] = "default"; save(t) }
+    fun setDefault(tab: Int) { val t = tab.coerceIn(0, 4); kinds[t] = "default"; save(t) }
     fun setPreset(tab: Int, index: Int) {
-        val t = tab.coerceIn(0, 3)
+        val t = tab.coerceIn(0, 4)
         presets[t] = index.coerceIn(0, AppBgPresets[t].lastIndex); kinds[t] = "preset"; save(t)
     }
-    fun setBlur(tab: Int, on: Boolean) { val t = tab.coerceIn(0, 3); blurs[t] = on; save(t) }
+    fun setBlur(tab: Int, on: Boolean) { val t = tab.coerceIn(0, 4); blurs[t] = on; save(t) }
 
     /** يحفظ صورة (أو GIF متحرك كما هو) من المعرض كخلفية للواجهة. يرجع نص الخطأ أو null إذا نجح */
     suspend fun setImage(ctx: Context, tab: Int, uri: Uri): String? {
-        val t = tab.coerceIn(0, 3)
+        val t = tab.coerceIn(0, 4)
         val err = saveChatBackgroundFromUri(ctx, uri, imageFile(ctx, t))
         if (err != null) return err
         versions[t] = System.currentTimeMillis()
@@ -259,7 +272,7 @@ private fun rememberTabBgImage(path: String, version: Long, softBlur: Boolean): 
  */
 @Composable
 fun AppTabBackground(tab: Int, modifier: Modifier = Modifier) {
-    val t = tab.coerceIn(0, 3)
+    val t = tab.coerceIn(0, 4)
     val dark = isAppDark()
     val kind = AppBgSettings.kind(t)
     val canBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
@@ -303,7 +316,8 @@ fun AppTabBackground(tab: Int, modifier: Modifier = Modifier) {
 //  قسم الإعدادات: داخل صفحة "ثيم التطبيق"
 // ---------------------------------------------------------------------------
 
-private val TabNames = listOf("Home", "Groups", "Account", "Settings")
+/** (رقم خانة الخلفية، اسم الواجهة) بترتيب العرض */
+private val TabNames = listOf(0 to "Home", 1 to "Groups", 4 to "Activity", 2 to "Account", 3 to "Settings")
 
 @Composable
 internal fun AppBackgroundSection(bd: Backdrop, dark: Boolean, accent: Color, fg: Color) {
@@ -321,8 +335,8 @@ internal fun AppBackgroundSection(bd: Backdrop, dark: Boolean, accent: Color, fg
 
     Column(Modifier.fillMaxWidth()) {
         // اختيار الواجهة
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TabNames.forEachIndexed { i, name ->
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            TabNames.forEach { (i, name) ->
                 val on = sel == i
                 Box(
                     Modifier.weight(1f).height(42.dp).clip(pill)
@@ -331,7 +345,7 @@ internal fun AppBackgroundSection(bd: Backdrop, dark: Boolean, accent: Color, fg
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                        name, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1,
                         color = if (on) Color.White else fg.copy(0.85f)
                     )
                 }

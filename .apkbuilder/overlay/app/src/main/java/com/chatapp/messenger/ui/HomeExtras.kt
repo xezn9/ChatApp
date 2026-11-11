@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.asPaddingValues
+import com.kyant.backdrop.backdrops.layerBackdrop
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -418,60 +420,72 @@ internal fun ActivityTab(onOpenProfile: (UserItem) -> Unit) {
     // الفلتر: 0 = الكل، 1 = زيارات، 2 = إعجابات، 3 = متابعين
     var filter by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(0) }
     val allEmpty = visits.isEmpty() && likes.isEmpty() && follows.isEmpty()
+    val bd = com.kyant.backdrop.backdrops.rememberLayerBackdrop()
+    val topInset = androidx.compose.foundation.layout.WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
 
-    LiquidScene(banner = null) { bd ->
-        Column(Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 16.dp)) {
-            Text(
-                "النشاط", fontSize = 28.sp, fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(start = 6.dp, end = 6.dp, top = 14.dp, bottom = 12.dp)
-            )
+    Box(Modifier.fillMaxSize()) {
+        // الخلفية (افتراضية / جاهزة / صورة / GIF حسب اختيار المستخدم) داخل الـ backdrop حتى يشتغل الزجاج فوقها
+        Box(Modifier.matchParentSize().layerBackdrop(bd)) {
+            AppTabBackground(4, Modifier.matchParentSize())
+        }
+        // كل المحتوى بقائمة وحدة بكامل الشاشة: العنوان والبطاقات والصفوف كلها تتحرك مع السحب
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = topInset + 14.dp, bottom = 130.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            item(key = "title") {
+                Text(
+                    "النشاط", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = fg,
+                    modifier = Modifier.padding(horizontal = 6.dp).padding(bottom = 2.dp)
+                )
+            }
             // بطاقات الملخص: تضغط على وحدة حتى تفلتر عليها (ضغطة ثانية ترجع للكل)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                ActStatCard(AppIcons.Eye, "زيارات", visits.size, ActVisitColor, filter == 1, bd, Modifier.weight(1f)) {
-                    filter = if (filter == 1) 0 else 1
-                }
-                ActStatCard(AppIcons.Heart, "إعجابات", likes.size, ActLikeColor, filter == 2, bd, Modifier.weight(1f)) {
-                    filter = if (filter == 2) 0 else 2
-                }
-                ActStatCard(AppIcons.PersonAdd, "متابعين", follows.size, ActFollowColor, filter == 3, bd, Modifier.weight(1f)) {
-                    filter = if (filter == 3) 0 else 3
+            item(key = "stats") {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ActStatCard(AppIcons.Eye, "زيارات", visits.size, ActVisitColor, filter == 1, bd, Modifier.weight(1f)) {
+                        filter = if (filter == 1) 0 else 1
+                    }
+                    ActStatCard(AppIcons.Heart, "إعجابات", likes.size, ActLikeColor, filter == 2, bd, Modifier.weight(1f)) {
+                        filter = if (filter == 2) 0 else 2
+                    }
+                    ActStatCard(AppIcons.PersonAdd, "متابعين", follows.size, ActFollowColor, filter == 3, bd, Modifier.weight(1f)) {
+                        filter = if (filter == 3) 0 else 3
+                    }
                 }
             }
             if (allEmpty) {
-                Column(
-                    Modifier.fillMaxSize().padding(bottom = 120.dp),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Icon(AppIcons.Activity, null, tint = fg.copy(0.35f), modifier = Modifier.size(56.dp))
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        "ما عندك نشاط بعد.\nالزيارات والإعجابات والمتابعات الجديدة تظهر هنا.",
-                        color = fg.copy(0.55f), fontSize = 15.sp, textAlign = TextAlign.Center
-                    )
+                item(key = "empty") {
+                    Column(
+                        Modifier.fillMaxWidth().fillParentMaxHeight(0.5f),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(AppIcons.Activity, null, tint = fg.copy(0.35f), modifier = Modifier.size(56.dp))
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            "ما عندك نشاط بعد.\nالزيارات والإعجابات والمتابعات الجديدة تظهر هنا.",
+                            color = fg.copy(0.55f), fontSize = 15.sp, textAlign = TextAlign.Center
+                        )
+                    }
                 }
             } else {
-                LazyColumn(
-                    contentPadding = PaddingValues(top = 16.dp, bottom = 130.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    if (filter == 0 || filter == 1) {
-                        actSection("visit", AppIcons.Eye, "آخر من زار ملفك", ActVisitColor, fg, visits.size, "ما أحد زار ملفك لحد الآن")
-                        items(visits, key = { "v_${it.uid}" }) { e ->
-                            FriendRow(e.uid, bd, onClick = onOpenProfile, trailing = { _ -> AgoText(e.at, fg, AppIcons.Eye, ActVisitColor) })
-                        }
+                if (filter == 0 || filter == 1) {
+                    actSection("visit", AppIcons.Eye, "آخر من زار ملفك", ActVisitColor, fg, visits.size, "ما أحد زار ملفك لحد الآن")
+                    items(visits, key = { "v_${it.uid}" }) { e ->
+                        FriendRow(e.uid, bd, onClick = onOpenProfile, trailing = { _ -> AgoText(e.at, fg, AppIcons.Eye, ActVisitColor) })
                     }
-                    if (filter == 0 || filter == 2) {
-                        actSection("like", AppIcons.Heart, "آخر من أعجب بقصصك", ActLikeColor, fg, likes.size, "ما أحد أعجب بقصصك لحد الآن")
-                        items(likes, key = { "l_${it.uid}" }) { e ->
-                            FriendRow(e.uid, bd, onClick = onOpenProfile, trailing = { _ -> AgoText(e.at, fg, AppIcons.Heart, ActLikeColor) })
-                        }
+                }
+                if (filter == 0 || filter == 2) {
+                    actSection("like", AppIcons.Heart, "آخر من أعجب بقصصك", ActLikeColor, fg, likes.size, "ما أحد أعجب بقصصك لحد الآن")
+                    items(likes, key = { "l_${it.uid}" }) { e ->
+                        FriendRow(e.uid, bd, onClick = onOpenProfile, trailing = { _ -> AgoText(e.at, fg, AppIcons.Heart, ActLikeColor) })
                     }
-                    if (filter == 0 || filter == 3) {
-                        actSection("follow", AppIcons.PersonAdd, "آخر من تابعك", ActFollowColor, fg, follows.size, "ما أحد تابعك لحد الآن")
-                        items(follows, key = { "f_${it.first}" }) { (uid, at) ->
-                            FriendRow(uid, bd, onClick = onOpenProfile, trailing = { _ -> AgoText(at, fg, AppIcons.PersonAdd, ActFollowColor) })
-                        }
+                }
+                if (filter == 0 || filter == 3) {
+                    actSection("follow", AppIcons.PersonAdd, "آخر من تابعك", ActFollowColor, fg, follows.size, "ما أحد تابعك لحد الآن")
+                    items(follows, key = { "f_${it.first}" }) { (uid, at) ->
+                        FriendRow(uid, bd, onClick = onOpenProfile, trailing = { _ -> AgoText(at, fg, AppIcons.PersonAdd, ActFollowColor) })
                     }
                 }
             }

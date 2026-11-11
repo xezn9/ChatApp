@@ -25,7 +25,8 @@ private val TabBlobs get() = listOf(
     listOf(Color(0xFF1E4FD8), Color(0xFF2B6CB0), Color(0xFF3B4FA8)), // Home (درجات أزرق هادئة)
     listOf(Color(0xFFFF5C8A), Color(0xFFFFB347), Color(0xFF8A5CFF)), // BDF
     listOf(Color(0xFF2EE6A8), AccentBlue, Color(0xFFFFD166)),  // Account
-    listOf(Color(0xFF4D7CFF), Color(0xFFB45CFF), Color(0xFFFF5C8A))  // Settings (معاينة الافتراضية فقط)
+    listOf(Color(0xFF4D7CFF), Color(0xFFB45CFF), Color(0xFFFF5C8A)), // Settings (معاينة الافتراضية فقط)
+    listOf(Color(0xFFB45CFF), Color(0xFF3B6BFF), Color(0xFF00D4AA))  // Activity
 )
 
 /**
