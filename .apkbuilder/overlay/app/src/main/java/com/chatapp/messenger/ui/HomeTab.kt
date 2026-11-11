@@ -162,7 +162,7 @@ fun HomeTab(
     var viewIndex by remember { mutableStateOf<Int?>(null) }
     var storySnapshot by remember { mutableStateOf<List<ActiveStory>>(emptyList()) }
     var lastIdx by remember { mutableStateOf(0) }
-    // ⋮ أعلى اليسار: تحديد الدردشات / مقدمة الدردشة / النشاط + كتم المحادثات
+    // ⋮ أعلى اليسار: تحديد الدردشات / مقدمة الدردشة + كتم المحادثات
     val ctx = LocalContext.current
     val bd = rememberLayerBackdrop()
     LaunchedEffect(Unit) { MuteStore.init(ctx) }
@@ -185,12 +185,10 @@ fun HomeTab(
     }
     var bulkDelete by remember { mutableStateOf(false) }
     var showIntro by remember { mutableStateOf(false) }
-    var showActivity by remember { mutableStateOf(false) }
     LaunchedEffect(menuCmd) {
         when (menuCmd) {
             1 -> { selecting = true; selectedIds = emptySet() }
             2 -> showIntro = true
-            3 -> showActivity = true
         }
         if (menuCmd != 0) onMenuCmdHandled()
     }
@@ -201,7 +199,7 @@ fun HomeTab(
         if (selectedIds.isEmpty()) selecting = false
     }
     BackHandler(enabled = selecting && actionTarget == null && !bulkDelete) { exitSelection() }
-    val anyOverlay = viewIndex != null || showIntro || showActivity
+    val anyOverlay = viewIndex != null || showIntro
     LaunchedEffect(anyOverlay) { onOverlayChange(anyOverlay) }
     DisposableEffect(Unit) { onDispose { onOverlayChange(false) } }
 
@@ -565,12 +563,6 @@ fun HomeTab(
         enter = slideInHorizontally(spring(0.86f, 420f)) { it } + fadeIn(tween(180)),
         exit = slideOutHorizontally(tween(240)) { it } + fadeOut(tween(200))
     ) { ChatIntroScreen(onDismiss = { showIntro = false }) }
-    // النشاط: آخر زيارات / إعجابات القصص / متابعين
-    AnimatedVisibility(
-        visible = showActivity,
-        enter = slideInHorizontally(spring(0.86f, 420f)) { it } + fadeIn(tween(180)),
-        exit = slideOutHorizontally(tween(240)) { it } + fadeOut(tween(200))
-    ) { ActivityScreen(onDismiss = { showActivity = false }, onOpenProfile = { onOpenProfile(it) }) }
     }
 }
 

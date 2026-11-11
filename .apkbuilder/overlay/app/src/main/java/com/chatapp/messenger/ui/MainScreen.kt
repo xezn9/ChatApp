@@ -164,6 +164,7 @@ private fun MainContent() {
     val tabs = listOf(
         rememberVectorPainter(Icons.Filled.Home) to "Home",
         rememberVectorPainter(AppIcons.Group) to "Groups",
+        rememberVectorPainter(AppIcons.Activity) to "Activity",
         rememberVectorPainter(Icons.Filled.Person) to "Account"
     )
     val modeTabs = listOf(
@@ -294,11 +295,14 @@ private fun MainContent() {
                 targetState = tab,
                 animationSpec = androidx.compose.animation.core.tween(500),
                 label = "tabBg"
-            ) { t -> AppTabBackground(t, Modifier.fillMaxSize()) }
-            // التبويبات الثلاثة تنبني مرة وحدة عند فتح التطبيق وتبقى حيّة بالخلفية:
+            ) { t ->
+                // ترتيب التبويبات: 0 Home، 1 Groups، 2 Activity (واجهته ترسم خلفيتها بنفسها)، 3 Account
+                AppTabBackground(when (t) { 2 -> 1; 3 -> 2; else -> t }, Modifier.fillMaxSize())
+            }
+            // التبويبات الأربعة تنبني مرة وحدة عند فتح التطبيق وتبقى حيّة بالخلفية:
             // التنقل بينها بس انزلاق/تلاشي (بدون إعادة بناء)، وأي تحديث ببياناتها يصير بالخفاء.
             Box(Modifier.fillMaxSize()) {
-                for (i in 0..2) {
+                for (i in 0..3) {
                     val selected = tab == i
                     Box(
                         Modifier
@@ -339,6 +343,7 @@ private fun MainContent() {
                                 onOpenGroup = { openGroupId = it.id; groupInfoOpen = false },
                                 onRequestLogout = { confirmLogout = true }
                             )
+                            2 -> ActivityTab(onOpenProfile = { viewProfile = it })
                             else -> AccountTab(
                                 onOverlayChange = { accountOverlay = it },
                                 onOpenProfile = { viewProfile = it },
@@ -371,7 +376,7 @@ private fun MainContent() {
                 selectedTabIndex = { tab },
                 onTabSelected = { tab = it },
                 backdrop = backdrop,
-                tabsCount = 3,
+                tabsCount = 4,
                 modifier = Modifier
                     .navigationBarsPadding()
                     .padding(horizontal = 36f.dp, vertical = 24f.dp)
@@ -462,8 +467,7 @@ private fun MainContent() {
                 dark = isAppDark(),
                 onDismiss = { homeMenuOpen = false },
                 onSelect = { homeMenuOpen = false; homeMenuCmd = 1 },
-                onIntro = { homeMenuOpen = false; homeMenuCmd = 2 },
-                onActivity = { homeMenuOpen = false; homeMenuCmd = 3 }
+                onIntro = { homeMenuOpen = false; homeMenuCmd = 2 }
             )
         }
 
