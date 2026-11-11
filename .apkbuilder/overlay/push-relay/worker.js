@@ -180,7 +180,7 @@ async function sendGroupBatch(sa, project, rtdbUrl, rtTok, gid, msgId, sender, m
   // 4) لكل عضو: توكنات أجهزته ثم الإرسال (data فقط، التطبيق يبني الإشعار)
   const counts = await Promise.all(batch.map(async (uid) => {
     try {
-      const tokens = await listTokens(fsBase, uid, fsTok);
+      const tokens = await listTokens(fsBase, uid, fsTok, MAX_TOKENS_GROUP);
       if (tokens.length === 0) return 0;
       return await deliver(sa, project, fsBase, fsTok, uid, tokens, {
         type: 'gmsg', gid, msgId, from: sender, to: uid,
@@ -234,7 +234,7 @@ async function handleGroupCall(body, sender, sa, project, rtdbUrl) {
     try {
       const blocked = await rtdbGet(rtdbUrl, `blocks/${uid}/${sender}`, rtTok);
       if (blocked === true) return 0;
-      const tokens = await listTokens(fsBase, uid, fsTok);
+      const tokens = await listTokens(fsBase, uid, fsTok, MAX_TOKENS_GROUP);
       if (tokens.length === 0) return 0;
       return await deliver(sa, project, fsBase, fsTok, uid, tokens, {
         type: 'gcall', gid, from: sender, to: uid, fromName: senderName,
@@ -327,10 +327,14 @@ async function deliver(sa, project, fsBase, fsTok, to, tokens, data, ttl) {
 
 // ---------------------------------------------------------------- Firestore / RTDB
 
-// كل أجهزة المستخدم (كل الصفحات). قبل كنا نقرأ أول 20 توكن بس: مع كثرة إعادة التثبيت/التجارب تتراكم توكنات ميتة
-// والتوكن الحالي ممكن يطلع برا أول 20 فما يوصل الإشعار.
-async function listTokens(fsBase, uid, tok) {
-  const out = [];
+// أجهزة المستخدم، الأحدث أول. حد Cloudflare المجاني 50 طلب خارجي لكل استدعاء، وكل توكن = طلب FCM.
+// مع تراكم توكنات ميتة (إعادة تثبيت/تجارب) كان الإرسال يتجاوز الحد وتنقطع آخر التوكنات (ممكن يكون توكن جهازك الحالي).
+// التطبيق يحدّث "at" كل ما ينفتح، فالتوكنات الحية دائماً الأحدث (updateTime).
+const MAX_TOKENS = 8;        // رسالة خاصة
+const MAX_TOKENS_GROUP = 2;  // رسالة/مكالمة مجموعة (10 أعضاء بكل استدعاء)
+
+async function listTokens(fsBase, uid, tok, max = MAX_TOKENS) {
+  const all = [];
   let page = '';
   for (let i = 0; i < 5; i++) {
     const r = await fetch(`${fsBase}/tokens/${uid}/devices?pageSize=100${page}`, { headers: { Authorization: 'Bearer ' + tok } });
@@ -339,11 +343,14 @@ async function listTokens(fsBase, uid, tok) {
       break;
     }
     const j = await r.json();
-    for (const d of (j.documents || [])) out.push(decodeURIComponent(d.name.split('/').pop()));
+    for (const d of (j.documents || [])) {
+      all.push({ t: decodeURIComponent(d.name.split('/').pop()), u: d.updateTime || '' });
+    }
     if (!j.nextPageToken) break;
     page = '&pageToken=' + encodeURIComponent(j.nextPageToken);
   }
-  return out;
+  all.sort((a, b) => (a.u < b.u ? 1 : a.u > b.u ? -1 : 0));
+  return all.slice(0, max).map((x) => x.t);
 }
 
 async function rtdbGet(base, path, tok, query = '') {

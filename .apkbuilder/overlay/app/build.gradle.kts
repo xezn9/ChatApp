@@ -77,6 +77,8 @@ dependencies {
     implementation("com.google.firebase:firebase-database")
     implementation("com.google.firebase:firebase-messaging")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
+    // إرسال طلب الإشعار بشكل مضمون (يكمل حتى لو انقتلت العملية)
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 
     // تسجيل الدخول بحساب گوگل (Credential Manager)
     implementation("androidx.credentials:credentials:1.5.0")

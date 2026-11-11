@@ -17,6 +17,7 @@ class ChatApp : Application() {
     override fun onCreate() {
         super.onCreate()
         CrashLogger.install(this)
+        ConnectionKeeper.install(this)
         com.chatapp.messenger.ui.theme.FontManager.init(this)
         com.chatapp.messenger.ui.theme.ThemeSettings.init(this)
         com.chatapp.messenger.ui.AppBgSettings.init(this)

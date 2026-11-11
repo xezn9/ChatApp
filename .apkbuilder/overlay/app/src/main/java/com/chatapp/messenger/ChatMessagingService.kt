@@ -71,20 +71,27 @@ class ChatMessagingService : FirebaseMessagingService() {
         if (msgId.isNotEmpty() && !ChatNotifier.claim("m:$msgId")) return
         var name = d["fromName"].orEmpty()
 
-        // صورة المرسل من ملفه الشخصي (تنجلب هنا لأن حجمها أكبر من حد إشعارات FCM)
+        // صورة المرسل: من الكاش إذا موجودة (فوري)، وإلا من ملفه الشخصي بمهلة قصيرة حتى ما يتأخر الإشعار
         var avatar: Bitmap? = null
-        try {
-            val doc = Tasks.await(
-                FirebaseFirestore.getInstance().collection("profiles").document(from).get(),
-                8, TimeUnit.SECONDS
-            )
-            doc.getString("name")?.takeIf { it.isNotBlank() }?.let { name = it }
-            val b64 = doc.getString("avatar").orEmpty()
-            if (b64.isNotBlank()) {
-                val bytes = Base64.decode(b64, Base64.NO_WRAP)
-                avatar = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { circle(it, 160) }
+        val cached = ChatNotifier.cachedProfile(from)
+        if (cached != null) {
+            if (cached.first.isNotBlank()) name = cached.first
+            avatar = cached.second
+        } else {
+            try {
+                val doc = Tasks.await(
+                    FirebaseFirestore.getInstance().collection("profiles").document(from).get(),
+                    3, TimeUnit.SECONDS
+                )
+                doc.getString("name")?.takeIf { it.isNotBlank() }?.let { name = it }
+                val b64 = doc.getString("avatar").orEmpty()
+                if (b64.isNotBlank()) {
+                    val bytes = Base64.decode(b64, Base64.NO_WRAP)
+                    avatar = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { circle(it, 160) }
+                }
+                ChatNotifier.cacheProfile(from, name, avatar)
+            } catch (_: Exception) {
             }
-        } catch (_: Exception) {
         }
         if (name.isBlank()) name = "مستخدم"
 
