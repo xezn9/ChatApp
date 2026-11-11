@@ -22,7 +22,9 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.statusBars
 import com.kyant.backdrop.backdrops.layerBackdrop
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
@@ -421,7 +423,7 @@ internal fun ActivityTab(onOpenProfile: (UserItem) -> Unit) {
     var filter by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(0) }
     val allEmpty = visits.isEmpty() && likes.isEmpty() && follows.isEmpty()
     val bd = com.kyant.backdrop.backdrops.rememberLayerBackdrop()
-    val topInset = androidx.compose.foundation.layout.WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
 
     Box(Modifier.fillMaxSize()) {
         // الخلفية (افتراضية / جاهزة / صورة / GIF حسب اختيار المستخدم) داخل الـ backdrop حتى يشتغل الزجاج فوقها
