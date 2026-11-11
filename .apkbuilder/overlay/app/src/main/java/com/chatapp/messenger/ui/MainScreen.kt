@@ -34,6 +34,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
@@ -267,6 +268,8 @@ private fun MainContent() {
 
     // موضع التبويب (حركة الانزلاق): نستعمله أيضاً حتى زر إنشاء مجموعة ما يبين إلا لما تبويب المجموعات يكون ظاهر فعلاً
     val tabPos by animateFloatAsState(tab.toFloat(), spring(dampingRatio = 0.85f, stiffness = 380f), label = "tabPos")
+    // نقرأ بس عبور العتبة (مو القيمة كل فريم) حتى ما ينعاد تركيب الشاشة كلها أثناء حركة التبويب
+    val groupsFabReady by remember { derivedStateOf { tabPos > 0.55f } }
     Box(Modifier.fillMaxSize()) {
         // المحتوى: هذا الي يظهر خلف الزجاج
         Box(
@@ -475,7 +478,7 @@ private fun MainContent() {
         // زر إنشاء مجموعة (Liquid Glass دائري): خارج صندوق layerBackdrop عمداً،
         // لأن الزجاج ما ينفع يقرأ نفس الطبقة الي هو مرسوم داخلها (هذا كان سبب الكراش)
         AnimatedVisibility(
-            visible = tab == 1 && tabPos > 0.55f && open == null && profileOpen == null && chatGroupId == null && supportThread == null && !overlayOpen,
+            visible = tab == 1 && groupsFabReady && open == null && profileOpen == null && chatGroupId == null && supportThread == null && !overlayOpen,
             modifier = Modifier.align(Alignment.BottomEnd),
             enter = slideInVertically(spring(0.8f, 380f)) { it } + fadeIn(tween(200)),
             exit = slideOutVertically(tween(220)) { it } + fadeOut(tween(160))
