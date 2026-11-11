@@ -865,8 +865,246 @@ private fun DrawScope.decorHilal(w: Float, h: Float) {
     xSpark(w * 0.5f, h - 5 * u, 3 * u, Color(0xFFFFF3B0))
 }
 
+// ===========================================================================
+// 21) فراولة
+// ===========================================================================
+private fun DrawScope.innerStrawberry(w: Float, h: Float) {
+    val u = 1.dp.toPx()
+    for (i in 0 until 16) {
+        val x = w * xr(i + 200)
+        val y = h * xr(i + 230)
+        rotate(-20f + 40f * xr(i + 260), Offset(x, y)) {
+            drawOval(Color(0xFFE53956).copy(alpha = 0.22f), Offset(x - 1.2f * u, y - 2f * u), Size(2.4f * u, 4f * u))
+        }
+    }
+}
+
+private fun DrawScope.decorStrawberry(w: Float, h: Float) {
+    val u = 1.dp.toPx()
+    val cy = h / 2
+    // الثمرة
+    val body = Path().apply {
+        moveTo(17 * u, cy + 13 * u)
+        cubicTo(4 * u, cy + 6 * u, 3 * u, cy - 6 * u, 10 * u, cy - 8 * u)
+        cubicTo(14 * u, cy - 9.5f * u, 20 * u, cy - 9.5f * u, 24 * u, cy - 8 * u)
+        cubicTo(31 * u, cy - 6 * u, 30 * u, cy + 6 * u, 17 * u, cy + 13 * u)
+        close()
+    }
+    drawPath(body, Brush.verticalGradient(listOf(Color(0xFFFF5A6E), Color(0xFFD81B45)), startY = cy - 9 * u, endY = cy + 13 * u))
+    drawPath(body, Color(0xFF9E1030), style = Stroke(1f * u, join = StrokeJoin.Round))
+    // البذور
+    listOf(
+        Offset(11 * u, cy - 3 * u), Offset(17 * u, cy - 5 * u), Offset(23 * u, cy - 3 * u),
+        Offset(13 * u, cy + 2 * u), Offset(20 * u, cy + 2 * u), Offset(17 * u, cy + 7 * u)
+    ).forEach { drawOval(Color(0xFFFFF176), Offset(it.x - 1 * u, it.y - 1.6f * u), Size(2 * u, 3.2f * u)) }
+    // الأوراق
+    val leaf = Path().apply {
+        moveTo(17 * u, cy - 8 * u)
+        lineTo(9 * u, cy - 12 * u); lineTo(13 * u, cy - 8.5f * u)
+        lineTo(10 * u, cy - 6 * u); lineTo(15 * u, cy - 7.5f * u)
+        lineTo(17 * u, cy - 4 * u); lineTo(19 * u, cy - 7.5f * u)
+        lineTo(24 * u, cy - 6 * u); lineTo(21 * u, cy - 8.5f * u)
+        lineTo(25 * u, cy - 12 * u)
+        close()
+    }
+    drawPath(leaf, Color(0xFF43A047))
+    drawLine(Color(0xFF2E7D32), Offset(17 * u, cy - 8 * u), Offset(17 * u, cy - 16 * u), 1.8f * u, StrokeCap.Round)
+    // لمعة
+    drawOval(Color.White.copy(alpha = 0.45f), Offset(8 * u, cy - 5 * u), Size(3 * u, 6 * u))
+    xHeart(w - 13 * u, 1 * u, 9 * u, Color(0xFFFF8FA3))
+}
+
+// ===========================================================================
+// 22) صاروخ
+// ===========================================================================
+private fun DrawScope.innerRocket(w: Float, h: Float) {
+    val u = 1.dp.toPx()
+    for (i in 0 until 22) {
+        drawCircle(
+            Color.White.copy(alpha = 0.25f + 0.55f * xr(i + 300)),
+            (0.4f + 0.9f * xr(i + 330)) * u,
+            Offset(w * xr(i + 360), h * xr(i + 390))
+        )
+    }
+    xSpark(w * 0.7f, h * 0.28f, 3 * u, Color(0xFFFFE082))
+}
+
+private fun DrawScope.decorRocket(w: Float, h: Float) {
+    val u = 1.dp.toPx()
+    val cy = h / 2
+    rotate(-40f, Offset(17 * u, cy)) {
+        // اللهب
+        val flame = Path().apply {
+            moveTo(13 * u, cy + 10 * u); lineTo(17 * u, cy + 21 * u); lineTo(21 * u, cy + 10 * u); close()
+        }
+        drawPath(flame, Brush.verticalGradient(listOf(Color(0xFFFFEB3B), Color(0xFFFF5722)), startY = cy + 10 * u, endY = cy + 21 * u))
+        // الجناحان
+        val wingL = Path().apply { moveTo(12 * u, cy + 1 * u); lineTo(5 * u, cy + 12 * u); lineTo(12 * u, cy + 10 * u); close() }
+        val wingR = Path().apply { moveTo(22 * u, cy + 1 * u); lineTo(29 * u, cy + 12 * u); lineTo(22 * u, cy + 10 * u); close() }
+        drawPath(wingL, Color(0xFFE53935)); drawPath(wingR, Color(0xFFE53935))
+        // الجسم
+        val body = Path().apply {
+            moveTo(17 * u, cy - 15 * u)
+            cubicTo(26 * u, cy - 8 * u, 24 * u, cy + 4 * u, 22 * u, cy + 11 * u)
+            lineTo(12 * u, cy + 11 * u)
+            cubicTo(10 * u, cy + 4 * u, 8 * u, cy - 8 * u, 17 * u, cy - 15 * u)
+            close()
+        }
+        drawPath(body, Brush.horizontalGradient(listOf(Color(0xFFFFFFFF), Color(0xFFCFD8DC)), startX = 10 * u, endX = 24 * u))
+        drawPath(body, Color(0xFF455A64), style = Stroke(1f * u, join = StrokeJoin.Round))
+        // المقدمة والنافذة
+        drawArc(Color(0xFFE53935), -125f, 70f, true, Offset(10 * u, cy - 15 * u), Size(14 * u, 14 * u))
+        drawCircle(Color(0xFF4FC3F7), 3.4f * u, Offset(17 * u, cy - 2 * u))
+        drawCircle(Color(0xFF37474F), 3.4f * u, Offset(17 * u, cy - 2 * u), style = Stroke(1.1f * u))
+        drawCircle(Color.White.copy(alpha = 0.7f), 1f * u, Offset(16 * u, cy - 3 * u))
+    }
+    xStar5(w - 9 * u, 8 * u, 4 * u, Color(0xFFFFE082))
+    xSpark(w * 0.55f, h - 6 * u, 3 * u, Color.White)
+}
+
+// ===========================================================================
+// 23) بومة
+// ===========================================================================
+private fun DrawScope.innerOwl(w: Float, h: Float) {
+    val u = 1.dp.toPx()
+    val c = Color.White.copy(alpha = 0.07f)
+    var y = 0f
+    var row = 0
+    while (y < h + 6 * u) {
+        var x = if (row % 2 == 0) 0f else 4 * u
+        while (x < w + 8 * u) {
+            drawArc(c, 0f, 180f, false, Offset(x - 4 * u, y - 4 * u), Size(8 * u, 8 * u), style = Stroke(1f * u))
+            x += 8 * u
+        }
+        y += 4 * u
+        row++
+    }
+}
+
+private fun DrawScope.decorOwl(w: Float, h: Float) {
+    val u = 1.dp.toPx()
+    val cy = h / 2
+    val brown = Color(0xFF6D4C41)
+    // أذنان
+    val earL = Path().apply { moveTo(6 * u, cy - 8 * u); lineTo(8 * u, cy - 17 * u); lineTo(14 * u, cy - 10 * u); close() }
+    val earR = Path().apply { moveTo(28 * u, cy - 8 * u); lineTo(26 * u, cy - 17 * u); lineTo(20 * u, cy - 10 * u); close() }
+    drawPath(earL, brown); drawPath(earR, brown)
+    // الوجه
+    drawOval(Color(0xFF8D6E63), Offset(4 * u, cy - 12 * u), Size(26 * u, 24 * u))
+    // العينان
+    drawCircle(Color(0xFFFFF3E0), 6.5f * u, Offset(11 * u, cy - 3 * u))
+    drawCircle(Color(0xFFFFF3E0), 6.5f * u, Offset(23 * u, cy - 3 * u))
+    drawCircle(Color(0xFF3E2723), 6.5f * u, Offset(11 * u, cy - 3 * u), style = Stroke(1.2f * u))
+    drawCircle(Color(0xFF3E2723), 6.5f * u, Offset(23 * u, cy - 3 * u), style = Stroke(1.2f * u))
+    drawCircle(Color(0xFFFFB300), 3.6f * u, Offset(11 * u, cy - 3 * u))
+    drawCircle(Color(0xFFFFB300), 3.6f * u, Offset(23 * u, cy - 3 * u))
+    drawCircle(Color.Black, 2f * u, Offset(11 * u, cy - 3 * u))
+    drawCircle(Color.Black, 2f * u, Offset(23 * u, cy - 3 * u))
+    drawCircle(Color.White, 0.8f * u, Offset(10.2f * u, cy - 3.8f * u))
+    drawCircle(Color.White, 0.8f * u, Offset(22.2f * u, cy - 3.8f * u))
+    // المنقار
+    val beak = Path().apply { moveTo(14.5f * u, cy + 1 * u); lineTo(19.5f * u, cy + 1 * u); lineTo(17 * u, cy + 6.5f * u); close() }
+    drawPath(beak, Color(0xFFFF9800))
+    xStar5(w - 8 * u, 8 * u, 3.5f * u, Color(0xFFFFE082))
+}
+
+// ===========================================================================
+// 24) بوظة
+// ===========================================================================
+private fun DrawScope.innerIceCream(w: Float, h: Float) {
+    val u = 1.dp.toPx()
+    val cols = listOf(Color(0xFFFF5A8A), Color(0xFF42A5F5), Color(0xFFFFB300), Color(0xFF66BB6A), Color(0xFFAB47BC))
+    for (i in 0 until 20) {
+        val x = w * xr(i + 400)
+        val y = h * xr(i + 430)
+        rotate(180f * xr(i + 460), Offset(x, y)) {
+            drawLine(cols[i % cols.size].copy(alpha = 0.55f), Offset(x - 2 * u, y), Offset(x + 2 * u, y), 1.5f * u, StrokeCap.Round)
+        }
+    }
+}
+
+private fun DrawScope.decorIceCream(w: Float, h: Float) {
+    val u = 1.dp.toPx()
+    val cy = h / 2
+    // الكوب (قمع الوافل)
+    val cone = Path().apply { moveTo(9 * u, cy + 1 * u); lineTo(25 * u, cy + 1 * u); lineTo(17 * u, cy + 17 * u); close() }
+    drawPath(cone, Color(0xFFE0A85C))
+    drawPath(cone, Color(0xFF9C6B2E), style = Stroke(1f * u, join = StrokeJoin.Round))
+    drawLine(Color(0xFF9C6B2E), Offset(12 * u, cy + 3 * u), Offset(19 * u, cy + 12 * u), 0.9f * u)
+    drawLine(Color(0xFF9C6B2E), Offset(22 * u, cy + 3 * u), Offset(15 * u, cy + 12 * u), 0.9f * u)
+    // الكرتان
+    drawCircle(Color(0xFFFF8FB1), 8.5f * u, Offset(17 * u, cy - 1 * u))
+    drawCircle(Color(0xFF8FE3C0), 7.5f * u, Offset(17 * u, cy - 9 * u))
+    drawArc(Color(0xFFFF8FB1), 0f, 180f, true, Offset(8 * u, cy - 3 * u), Size(18 * u, 8 * u))
+    drawOval(Color.White.copy(alpha = 0.5f), Offset(12 * u, cy - 13 * u), Size(3 * u, 4 * u))
+    // الكرز
+    drawCircle(Color(0xFFD32F2F), 3 * u, Offset(17 * u, cy - 18 * u))
+    drawLine(Color(0xFF558B2F), Offset(17 * u, cy - 20 * u), Offset(20 * u, cy - 24 * u), 1.1f * u, StrokeCap.Round)
+    drawCircle(Color.White.copy(alpha = 0.7f), 0.9f * u, Offset(16 * u, cy - 19 * u))
+    xHeart(w - 13 * u, 1 * u, 9 * u, Color(0xFFFF8FB1))
+}
+
+// ===========================================================================
+// 25) قهوة
+// ===========================================================================
+private fun DrawScope.innerCoffee(w: Float, h: Float) {
+    val u = 1.dp.toPx()
+    for (i in 0 until 3) {
+        val bx = w * (0.35f + 0.25f * i)
+        val p = Path().apply {
+            moveTo(bx, h)
+            var y = h
+            while (y > 0f) {
+                y -= 3 * u
+                lineTo(bx + 4 * u * sin(y / (6 * u) + i), y)
+            }
+        }
+        drawPath(p, Color.White.copy(alpha = 0.07f), style = Stroke(3 * u, cap = StrokeCap.Round))
+    }
+    for (i in 0 until 5) {
+        val x = w * xr(i + 500)
+        val y = h * xr(i + 520)
+        rotate(60f * i, Offset(x, y)) {
+            drawOval(Color.Black.copy(alpha = 0.18f), Offset(x - 3 * u, y - 4 * u), Size(6 * u, 8 * u))
+            drawLine(Color.White.copy(alpha = 0.10f), Offset(x, y - 3 * u), Offset(x, y + 3 * u), 0.9f * u)
+        }
+    }
+}
+
+private fun DrawScope.decorCoffee(w: Float, h: Float) {
+    val u = 1.dp.toPx()
+    val cy = h / 2
+    // البخار
+    for (i in 0 until 2) {
+        val bx = 12 * u + i * 7 * u
+        val p = Path().apply {
+            moveTo(bx, cy - 4 * u)
+            quadraticTo(bx - 3 * u, cy - 9 * u, bx, cy - 13 * u)
+            quadraticTo(bx + 3 * u, cy - 17 * u, bx, cy - 21 * u)
+        }
+        drawPath(p, Color.White.copy(alpha = 0.7f), style = Stroke(1.5f * u, cap = StrokeCap.Round))
+    }
+    // الصحن
+    drawOval(Color(0xFFF5E6D3), Offset(4 * u, cy + 11 * u), Size(26 * u, 6 * u))
+    // الكوب
+    val cup = Path().apply {
+        moveTo(7 * u, cy - 3 * u); lineTo(27 * u, cy - 3 * u)
+        lineTo(25 * u, cy + 11 * u)
+        quadraticTo(17 * u, cy + 15 * u, 9 * u, cy + 11 * u)
+        close()
+    }
+    drawPath(cup, Color(0xFFFFF8F0))
+    drawPath(cup, Color(0xFF6D4C41), style = Stroke(1.2f * u, join = StrokeJoin.Round))
+    drawOval(Color(0xFF4E342E), Offset(7 * u, cy - 5 * u), Size(20 * u, 4.5f * u))
+    // المقبض
+    drawArc(Color(0xFF6D4C41), -80f, 160f, false, Offset(22 * u, cy - 1 * u), Size(10 * u, 9 * u), style = Stroke(1.8f * u, cap = StrokeCap.Round))
+    // قلب على الكوب
+    xHeart(13 * u, cy + 1.5f * u, 8 * u, Color(0xFFE57373))
+    xSpark(w - 9 * u, 8 * u, 4 * u, Color(0xFFFFE0B2))
+}
+
 // ---------------------------------------------------------------------------
-// قائمة الأشكال الجديدة (20) - تُضاف بآخر قائمة BubbleStyles
+// قائمة الأشكال الجديدة (25) - تُضاف بآخر قائمة BubbleStyles
 // ---------------------------------------------------------------------------
 
 internal val ExtraBubbleStyles: List<BubbleStyle> = listOf(
@@ -989,5 +1227,35 @@ internal val ExtraBubbleStyles: List<BubbleStyle> = listOf(
         fill = listOf(Color(0xFF0B3D2E), Color(0xFF145A44)), text = Color(0xFFFFF4CC),
         border = 1.5.dp, borderColor = Color(0xFFFFC93C), sidePad = 34.dp, topPad = 16.dp,
         decor = DrawScope::decorHilal, inner = DrawScope::innerHilal
+    ),
+    BubbleStyle(
+        id = "strawberry", name = "فراولة", shape = RoundedCornerShape(24.dp),
+        fill = listOf(Color(0xFFFFE0E6), Color(0xFFFFC2CF)), text = Color(0xFF7A1530),
+        border = 2.dp, borderColor = Color(0xFFE53956), sidePad = 36.dp, topPad = 12.dp,
+        decor = DrawScope::decorStrawberry, inner = DrawScope::innerStrawberry
+    ),
+    BubbleStyle(
+        id = "rocket", name = "صاروخ", shape = RoundedCornerShape(22.dp),
+        fill = listOf(Color(0xFF0D1B3E), Color(0xFF2A1A5E)), text = Color(0xFFEAF2FF),
+        border = 1.5.dp, borderColor = Color(0xFF7C9CFF), sidePad = 38.dp, topPad = 4.dp,
+        decor = DrawScope::decorRocket, inner = DrawScope::innerRocket
+    ),
+    BubbleStyle(
+        id = "owl", name = "بومة", shape = RoundedCornerShape(24.dp),
+        fill = listOf(Color(0xFF5D4037), Color(0xFF3E2723)), text = Color(0xFFFFF3E0),
+        border = 2.dp, borderColor = Color(0xFFBCAAA4), sidePad = 38.dp, topPad = 10.dp,
+        decor = DrawScope::decorOwl, inner = DrawScope::innerOwl
+    ),
+    BubbleStyle(
+        id = "icecream", name = "بوظة", shape = RoundedCornerShape(26.dp),
+        fill = listOf(Color(0xFFFFF1F5), Color(0xFFFFE0EC)), text = Color(0xFF5A2A3C),
+        border = 2.dp, borderColor = Color(0xFFFF8FB1), sidePad = 36.dp, topPad = 12.dp,
+        decor = DrawScope::decorIceCream, inner = DrawScope::innerIceCream
+    ),
+    BubbleStyle(
+        id = "coffee", name = "قهوة", shape = RoundedCornerShape(20.dp),
+        fill = listOf(Color(0xFF6D4C41), Color(0xFF3E2723)), text = Color(0xFFFFEFD9),
+        border = 1.5.dp, borderColor = Color(0xFFD7B899), sidePad = 36.dp, topPad = 8.dp,
+        decor = DrawScope::decorCoffee, inner = DrawScope::innerCoffee
     )
 )
