@@ -47,6 +47,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -111,12 +112,28 @@ internal fun ThemeSettingsPage(onBack: () -> Unit) {
     val dark = isAppDark()
     val accent = AccentBlue
     val fg = MaterialTheme.colorScheme.onBackground
-    val t = rememberInfiniteTransition(label = "themeScene")
-    val phase by t.animateFloat(
-        initialValue = 0f, targetValue = (2 * PI).toFloat(),
-        animationSpec = infiniteRepeatable(tween(40_000, easing = LinearEasing), RepeatMode.Restart),
-        label = "themePhase"
-    )
+    val scroll = androidx.compose.foundation.rememberScrollState()
+    // حركة الخلفية (40 ثانية للدورة) تقف لحظياً أثناء التمرير وسحب السلايدر: كل قطع الزجاج تقرأ هالخلفية،
+    // فلو تتحرك وقت اللمس كل الزجاج ينعاد حسابه كل فريم. تكمل من نفس المكان بعد ما توقف الحركة.
+    var phase by androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        var lastFrame = 0L
+        var lastGlassChange = 0L
+        launch {
+            androidx.compose.runtime.snapshotFlow {
+                ThemeSettings.refraction + ThemeSettings.blur * 3f + ThemeSettings.transparency * 7f
+            }.collect { lastGlassChange = System.nanoTime() }
+        }
+        while (true) {
+            androidx.compose.runtime.withFrameNanos { now ->
+                val busy = scroll.isScrollInProgress || System.nanoTime() - lastGlassChange < 400_000_000L
+                if (lastFrame != 0L && !busy) {
+                    phase = (phase + (now - lastFrame) / 40_000_000_000f * (2 * PI).toFloat()) % (2 * PI).toFloat()
+                }
+                lastFrame = now
+            }
+        }
+    }
     val sky = if (dark) listOf(Color(0xFF0B1030), Color(0xFF1B1040), Color(0xFF2A1248))
     else listOf(Color(0xFFDDE6FF), Color(0xFFF1DCFF), Color(0xFFFFE3D6))
     val a2 = accent.shiftHue(60f)
@@ -141,15 +158,15 @@ internal fun ThemeSettingsPage(onBack: () -> Unit) {
             }
         }
         CompositionLocalProvider(LocalContentColor provides fg) {
-            ThemeSettingsContent(bd, dark, accent, fg, onBack)
+            ThemeSettingsContent(bd, dark, accent, fg, onBack, scroll)
         }
     }
 }
 
 @Composable
-private fun ThemeSettingsContent(bd: Backdrop, dark: Boolean, accent: Color, fg: Color, onBack: () -> Unit) {
+private fun ThemeSettingsContent(bd: Backdrop, dark: Boolean, accent: Color, fg: Color, onBack: () -> Unit, scroll: androidx.compose.foundation.ScrollState) {
     val ctx = LocalContext.current
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().navigationBarsPadding()) {
+    Column(Modifier.fillMaxSize().verticalScroll(scroll).statusBarsPadding().navigationBarsPadding()) {
         AppSettingsHeader("ثيم التطبيق", bd, onBack)
 
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {

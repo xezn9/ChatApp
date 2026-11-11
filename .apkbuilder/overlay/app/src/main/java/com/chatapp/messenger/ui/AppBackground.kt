@@ -12,6 +12,8 @@ import com.chatapp.messenger.ui.theme.isAppDark
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
@@ -19,6 +21,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import com.chatapp.messenger.ui.theme.appBackground
+
+/** true = شاشة كاملة تغطي الرئيسية، فالحركات الخلفية الدائمة توقف مؤقتاً */
+val LocalAmbientPaused = staticCompositionLocalOf { false }
 
 /** ألوان كل تبويب: Home / BDF / Account. تتبدل بسلاسة عند التنقل */
 private val TabBlobs get() = listOf(
@@ -40,12 +45,24 @@ fun AnimatedAppBackground(tab: Int, modifier: Modifier = Modifier) {
     val c1 by animateColorAsState(set[0], tween(900), label = "b1")
     val c2 by animateColorAsState(set[1], tween(900), label = "b2")
     val c3 by animateColorAsState(set[2], tween(900), label = "b3")
-    val t = rememberInfiniteTransition(label = "appBg")
-    val phase by t.animateFloat(
-        0f, 1f,
-        infiniteRepeatable(tween(18000, easing = LinearEasing), RepeatMode.Reverse),
-        label = "phase"
-    )
+    // ساعة خاصة بدل InfiniteTransition: توقف تماماً لما شاشة كاملة (محادثة/إعدادات) تغطي الرئيسية،
+    // حتى ما تنرسم الخلفية وتنعاد معالجتها كل فريم وراها بدون ما أحد يشوفها. تكمل من نفس المكان.
+    // نفس الحركة القديمة بالضبط: ذهاب وإياب خطي بدورة 18 ثانية لكل اتجاه.
+    val paused by androidx.compose.runtime.rememberUpdatedState(LocalAmbientPaused.current)
+    var phase by androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        var clock = 0f
+        var last = 0L
+        while (true) {
+            androidx.compose.runtime.withFrameNanos { now ->
+                if (last != 0L && !paused) {
+                    clock = (clock + (now - last) / 1_000_000_000f) % 36f
+                    phase = if (clock < 18f) clock / 18f else (36f - clock) / 18f
+                }
+                last = now
+            }
+        }
+    }
     val a = (if (dark) 0.42f else 0.50f) * (if (tab == 0) 0.8f else 1f)
 
     Box(

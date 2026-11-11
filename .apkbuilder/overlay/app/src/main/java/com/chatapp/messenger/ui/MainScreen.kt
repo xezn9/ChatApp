@@ -294,6 +294,7 @@ private fun MainContent() {
             ) {
             // خلفية متحركة بألوان مختلفة لكل تبويب
             // كل واجهة لها خلفيتها (افتراضية/جاهزة/صورة أو GIF)، والتبديل بينها بتلاشي ناعم
+            androidx.compose.runtime.CompositionLocalProvider(LocalAmbientPaused provides (coverOpen || overlayOpen)) {
             androidx.compose.animation.Crossfade(
                 targetState = tab,
                 animationSpec = androidx.compose.animation.core.tween(500),
@@ -302,6 +303,7 @@ private fun MainContent() {
                 // ترتيب التبويبات: 0 Home، 1 Groups، 2 Activity (تبويبه يرسم خلفيته بنفسه)، 3 Account
                 if (t == 2) Box(Modifier.fillMaxSize().background(appBackground()))
                 else AppTabBackground(if (t == 3) 2 else t, Modifier.fillMaxSize())
+            }
             }
             // التبويبات الأربعة تنبني مرة وحدة عند فتح التطبيق وتبقى حيّة بالخلفية:
             // التنقل بينها بس انزلاق/تلاشي (بدون إعادة بناء)، وأي تحديث ببياناتها يصير بالخفاء.
