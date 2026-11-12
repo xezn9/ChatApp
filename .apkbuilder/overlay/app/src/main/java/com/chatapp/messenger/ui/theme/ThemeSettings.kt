@@ -110,7 +110,7 @@ object ThemeSettings {
         skipSplash = p.getBoolean("skip_splash", false)
     }
 
-    fun setSkipSplash(v: Boolean) { skipSplash = v; sp?.edit()?.putBoolean("skip_splash", v)?.apply() }
+    fun applySkipSplash(v: Boolean) { skipSplash = v; sp?.edit()?.putBoolean("skip_splash", v)?.apply() }
 
     fun applyMode(v: Int) { mode = v; sp?.edit()?.putInt("mode", v)?.apply() }
     fun setAccent(i: Int) {

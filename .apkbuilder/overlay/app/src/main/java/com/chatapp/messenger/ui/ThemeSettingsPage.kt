@@ -299,7 +299,7 @@ private fun ThemeSettingsContent(bd: Backdrop, dark: Boolean, accent: Color, fg:
                     Spacer(Modifier.width(12.dp))
                     LiquidToggle(
                         selected = { ThemeSettings.skipSplash },
-                        onSelect = { ThemeSettings.setSkipSplash(it) },
+                        onSelect = { ThemeSettings.applySkipSplash(it) },
                         backdrop = bd, dark = dark, accent = accent
                     )
                 }
