@@ -100,7 +100,7 @@ class MessageListenerService : Service() {
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val n = NotificationCompat.Builder(this, ChatApp.CHANNEL_LISTENER)
+        val n = NotificationCompat.Builder(this, PigeonApp.CHANNEL_LISTENER)
             .setSmallIcon(R.drawable.ic_notification)
             .setColor(androidx.core.content.ContextCompat.getColor(this, R.color.notification_accent))
             .setContentTitle("متصل لاستقبال الرسائل")
@@ -128,7 +128,7 @@ class MessageListenerService : Service() {
     private fun startSupportListening(me: String) {
         stopSupportListening()
         val fs = FirebaseFirestore.getInstance()
-        // 1) رد المطور على محادثتي مع "ChatApp"
+        // 1) رد المطور على محادثتي مع "Pigeon"
         var firstMine = true
         supportRegs.add(fs.collection("support").document(me).addSnapshotListener { d, err ->
             val baseline = firstMine
@@ -160,7 +160,7 @@ class MessageListenerService : Service() {
         val text = d.getString("lastText").orEmpty()
         if (text.isBlank()) return
         val title = if (asDev) "دعم · " + d.getString("name").orEmpty().ifBlank { d.getString("username").orEmpty() }.ifBlank { "مستخدم" }
-        else "ChatApp"
+        else "Pigeon"
         showSupportNotification(uid, title, text, fromApp = !asDev)
     }
 
@@ -177,7 +177,7 @@ class MessageListenerService : Service() {
         val icon = if (fromApp) try {
             android.graphics.BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher_foreground)
         } catch (_: Exception) { null } else null
-        val n = NotificationCompat.Builder(this, ChatApp.CHANNEL_MESSAGES)
+        val n = NotificationCompat.Builder(this, PigeonApp.CHANNEL_MESSAGES)
             .setSmallIcon(R.drawable.ic_notification)
             .setColor(ContextCompat.getColor(this, R.color.notification_accent))
             .setContentTitle(title)

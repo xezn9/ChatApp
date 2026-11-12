@@ -38,7 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationManagerCompat
 import com.chatapp.messenger.AppState
-import com.chatapp.messenger.ChatApp
+import com.chatapp.messenger.PigeonApp
 import com.chatapp.messenger.MessageListenerService
 import com.chatapp.messenger.ui.glass.GlassButton
 import com.kyant.backdrop.Backdrop
@@ -69,7 +69,7 @@ object NotifHealth {
         val notifOn = NotificationManagerCompat.from(app).areNotificationsEnabled()
         var channelOk = true
         if (Build.VERSION.SDK_INT >= 26) {
-            val ch = app.getSystemService(NotificationManager::class.java)?.getNotificationChannel(ChatApp.CHANNEL_MESSAGES)
+            val ch = app.getSystemService(NotificationManager::class.java)?.getNotificationChannel(PigeonApp.CHANNEL_MESSAGES)
             if (ch != null && ch.importance == NotificationManager.IMPORTANCE_NONE) channelOk = false
         }
         val pm = app.getSystemService(Context.POWER_SERVICE) as? PowerManager

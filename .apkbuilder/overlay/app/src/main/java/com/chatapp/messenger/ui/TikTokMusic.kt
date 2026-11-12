@@ -45,7 +45,7 @@ object TikTokMusic {
         c.connectTimeout = 7_000
         c.readTimeout = 7_000
         c.setRequestProperty("x-tikwmapi-key", API_KEY)
-        c.setRequestProperty("User-Agent", "ChatApp/2.24")
+        c.setRequestProperty("User-Agent", "Pigeon/2.24")
         try {
             // أخطاء 4xx (حد الطلبات/انتهاء الحصة) ترجع JSON بـerrorStream
             val stream = if (c.responseCode in 200..299) c.inputStream else (c.errorStream ?: c.inputStream)

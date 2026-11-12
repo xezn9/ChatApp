@@ -13,7 +13,7 @@ object AppState {
     var foreground: Boolean by mutableStateOf(false)
 }
 
-class ChatApp : Application() {
+class PigeonApp : Application() {
     override fun onCreate() {
         super.onCreate()
         CrashLogger.install(this)

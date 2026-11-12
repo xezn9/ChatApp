@@ -115,7 +115,7 @@ class ChatMessagingService : FirebaseMessagingService() {
             this, id, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         avatar?.let { ChatNotifier.largeIcons[id] = it }
-        val n = NotificationCompat.Builder(this, ChatApp.CHANNEL_MESSAGES)
+        val n = NotificationCompat.Builder(this, PigeonApp.CHANNEL_MESSAGES)
             .setSmallIcon(R.drawable.ic_notification)
             .setColor(androidx.core.content.ContextCompat.getColor(this, R.color.notification_accent))
             .setContentTitle(name)

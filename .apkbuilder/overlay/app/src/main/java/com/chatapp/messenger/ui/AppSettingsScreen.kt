@@ -514,7 +514,7 @@ private fun AppSettingsHome(
         Spacer(Modifier.height(28.dp))
         SetIn(4 + settingsSections.size, Modifier.fillMaxWidth()) {
             Text(
-                "ChatApp", fontSize = 13.sp, color = fg.copy(0.4f),
+                "Pigeon", fontSize = 13.sp, color = fg.copy(0.4f),
                 textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()
             )
         }
