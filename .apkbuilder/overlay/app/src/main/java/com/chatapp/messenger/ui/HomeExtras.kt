@@ -571,7 +571,8 @@ internal fun HomeMoreMenu(
     dark: Boolean,
     onDismiss: () -> Unit,
     onSelect: () -> Unit,
-    onIntro: () -> Unit
+    onIntro: () -> Unit,
+    onActivity: () -> Unit = {}
 ) {
     val fg = glassFg(dark)
     val enter = remember { Animatable(0f) }
@@ -611,6 +612,7 @@ internal fun HomeMoreMenu(
                 ) {
                     HomeMenuRow(AppIcons.CheckBox, "تحديد الدردشات", fg, onSelect)
                     HomeMenuRow(AppIcons.ChatLines, "مقدمة الدردشة", fg, onIntro)
+                    HomeMenuRow(AppIcons.Activity, "Activity", fg, onActivity)
                 }
             }
         }

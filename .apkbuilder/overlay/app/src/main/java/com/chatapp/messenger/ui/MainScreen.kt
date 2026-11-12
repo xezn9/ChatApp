@@ -148,6 +148,7 @@ private fun MainContent() {
     var homeMode by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(0) }
     // زر ⋮ بصفحة Home: الحالة هنا لأن الزر والقائمة يُرسمان فوق المبدّل
     var homeMenuOpen by remember { mutableStateOf(false) }
+    androidx.activity.compose.BackHandler(enabled = tab == 2) { tab = 0 }
     var homeMenuCmd by remember { mutableStateOf(0) }
     var homeSelecting by remember { mutableStateOf(false) }
     // عدد طلبات الرسائل الجديدة (يظهر على زر "الطلبات")
@@ -165,9 +166,11 @@ private fun MainContent() {
     val tabs = listOf(
         rememberVectorPainter(Icons.Filled.Home) to "Home",
         rememberVectorPainter(AppIcons.Group) to "Groups",
-        rememberVectorPainter(AppIcons.Activity) to "Activity",
         rememberVectorPainter(Icons.Filled.Person) to "Account"
     )
+    // الشريط السفلي 3 تبويبات فقط؛ Activity (tab = 2) صار يُفتح من قائمة ⋮
+    val barToTab = intArrayOf(0, 1, 3)
+    fun tabToBar(t: Int) = when (t) { 1 -> 1; 3 -> 2; else -> 0 }
     val modeTabs = listOf(
         rememberVectorPainter(AppIcons.ChatBubble) to "المحادثات",
         rememberVectorPainter(AppIcons.Inbox) to if (requestCount > 0) "الطلبات ($requestCount)" else "الطلبات"
@@ -379,17 +382,17 @@ private fun MainContent() {
             exit = slideOutVertically(tween(220)) { it } + fadeOut(tween(160))
         ) {
             LiquidBottomTabs(
-                selectedTabIndex = { tab },
-                onTabSelected = { tab = it },
+                selectedTabIndex = { tabToBar(tab) },
+                onTabSelected = { tab = barToTab[it] },
                 backdrop = backdrop,
-                tabsCount = 4,
+                tabsCount = 3,
                 modifier = Modifier
                     .navigationBarsPadding()
                     .padding(horizontal = 36f.dp, vertical = 24f.dp)
             ) {
                 // نفس تركيبة الكتالوج: Box + paint بدل Icon، والنص 12sp
                 tabs.forEachIndexed { index, (painter, label) ->
-                    LiquidBottomTab({ tab = index }) {
+                    LiquidBottomTab({ tab = barToTab[index] }) {
                         Box(Modifier.size(28f.dp)) {
                             Box(
                                 Modifier
@@ -473,7 +476,8 @@ private fun MainContent() {
                 dark = isAppDark(),
                 onDismiss = { homeMenuOpen = false },
                 onSelect = { homeMenuOpen = false; homeMenuCmd = 1 },
-                onIntro = { homeMenuOpen = false; homeMenuCmd = 2 }
+                onIntro = { homeMenuOpen = false; homeMenuCmd = 2 },
+                onActivity = { homeMenuOpen = false; tab = 2 }
             )
         }
 
