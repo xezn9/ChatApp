@@ -5,22 +5,37 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.chatapp.messenger.ui.App
 import com.chatapp.messenger.ui.Nav
+import com.chatapp.messenger.ui.SplashScreen
 import com.chatapp.messenger.ui.theme.ChatTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        // ثيم الإقلاع (خلفية داكنة تطابق السبلاش) يرجع للثيم العادي قبل بناء الواجهة
+        setTheme(R.style.Theme_Chat)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         handleIntent(intent)
         setContent {
             ChatTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    App()
+                // السبلاش يظهر مرة وحدة عند فتح التطبيق (rememberSaveable عشان تدوير الشاشة ما يعيده)
+                var showSplash by rememberSaveable { mutableStateOf(true) }
+                Box(Modifier.fillMaxSize()) {
+                    Surface(modifier = Modifier.fillMaxSize()) {
+                        App()
+                    }
+                    if (showSplash) {
+                        SplashScreen(onFinished = { showSplash = false })
+                    }
                 }
             }
         }

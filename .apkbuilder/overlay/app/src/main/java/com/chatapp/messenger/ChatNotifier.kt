@@ -136,7 +136,7 @@ object ChatNotifier {
             ctx, id, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         info.avatar?.let { largeIcons[id] = it }
-        val n = NotificationCompat.Builder(ctx, PigeonApp.CHANNEL_MESSAGES)
+        val n = NotificationCompat.Builder(ctx, ChatApp.CHANNEL_MESSAGES)
             .setSmallIcon(R.drawable.ic_notification)
             .setColor(androidx.core.content.ContextCompat.getColor(ctx, R.color.notification_accent))
             .setContentTitle(info.name)
@@ -246,7 +246,7 @@ object ChatNotifier {
             style.addMessage(text, System.currentTimeMillis(), sender)
 
             (g.avatar ?: si.avatar)?.let { largeIcons[id] = it }
-            val n = NotificationCompat.Builder(ctx, PigeonApp.CHANNEL_MESSAGES)
+            val n = NotificationCompat.Builder(ctx, ChatApp.CHANNEL_MESSAGES)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setColor(androidx.core.content.ContextCompat.getColor(ctx, R.color.notification_accent))
                 .setContentTitle(g.name)

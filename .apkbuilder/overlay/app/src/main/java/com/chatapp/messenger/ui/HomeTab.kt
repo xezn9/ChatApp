@@ -220,7 +220,7 @@ fun HomeTab(
     }
 
 
-    // الدعم الفني: محادثتي مع "Pigeon" (إذا راسلت أو وصلني رد)، وللمطور صندوق دعم بكل المستخدمين
+    // الدعم الفني: محادثتي مع "ChatApp" (إذا راسلت أو وصلني رد)، وللمطور صندوق دعم بكل المستخدمين
     val isDev = rememberIsDev()
     val myThread by remember(myUid) { Support.threadFlow(myUid) }.collectAsState(initial = null)
     val devThreads by remember(isDev) {
@@ -359,7 +359,7 @@ fun HomeTab(
                         contentPadding = PaddingValues(bottom = 130.dp)
                     ) {
                         if (myShownThread != null) {
-                            item(key = "supportMine") { SupportChatRow(myShownThread, onLongClick = { onRequestDeleteChat("support:$myUid", "Pigeon", myShownThread.lastAt) }) { onOpenSupport(myUid) } }
+                            item(key = "supportMine") { SupportChatRow(myShownThread, onLongClick = { onRequestDeleteChat("support:$myUid", "ChatApp", myShownThread.lastAt) }) { onOpenSupport(myUid) } }
                         }
                         items(inbox, key = { "support_" + it.uid }) { th ->
                             SupportInboxRow(th, onLongClick = { onRequestDeleteChat("support:${th.uid}", th.name.ifBlank { th.username }.ifBlank { "مستخدم" }, th.lastAt) }) { onOpenSupport(th.uid) }

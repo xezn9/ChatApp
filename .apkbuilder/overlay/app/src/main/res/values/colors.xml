@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- أزرق التطبيق (نفس لون أيقونة التطبيق) -->
+    <color name="notification_accent">#FF1AA7FF</color>
+    <!-- خلفية السبلاش -->
+    <color name="splash_bg">#FF00061F</color>
+</resources>

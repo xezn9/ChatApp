@@ -1,0 +1,9 @@
+<resources>
+    <!-- أندرويد 12+: خلفية شاشة الإقلاع الأصلية تطابق السبلاش -->
+    <style name="Theme.Chat.Splash" parent="Theme.Chat">
+        <item name="android:windowBackground">@color/splash_bg</item>
+        <item name="android:statusBarColor">@color/splash_bg</item>
+        <item name="android:navigationBarColor">@color/splash_bg</item>
+        <item name="android:windowSplashScreenBackground">@color/splash_bg</item>
+    </style>
+</resources>
