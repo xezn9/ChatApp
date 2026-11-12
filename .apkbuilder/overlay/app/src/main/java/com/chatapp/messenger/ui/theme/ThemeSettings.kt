@@ -86,6 +86,9 @@ object ThemeSettings {
         private set
     var iconIndex by mutableIntStateOf(0)
         private set
+    /** true = المستخدم الغى شاشة السبلاش (ما تظهر عند فتح التطبيق) */
+    var skipSplash by mutableStateOf(false)
+        private set
 
     val accent: Color get() = customAccent?.let { Color(it) } ?: accents[accentIndex.coerceIn(0, accents.lastIndex)].color
 
@@ -104,7 +107,10 @@ object ThemeSettings {
         blur = p.getFloat("blur", DEFAULT_GLASS)
         transparency = p.getFloat("transparency", DEFAULT_GLASS)
         iconIndex = p.getInt("icon", 0).coerceIn(0, icons.lastIndex)
+        skipSplash = p.getBoolean("skip_splash", false)
     }
+
+    fun setSkipSplash(v: Boolean) { skipSplash = v; sp?.edit()?.putBoolean("skip_splash", v)?.apply() }
 
     fun applyMode(v: Int) { mode = v; sp?.edit()?.putInt("mode", v)?.apply() }
     fun setAccent(i: Int) {

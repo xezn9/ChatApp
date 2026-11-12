@@ -28,7 +28,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             ChatTheme {
                 // السبلاش يظهر مرة وحدة عند فتح التطبيق (rememberSaveable عشان تدوير الشاشة ما يعيده)
-                var showSplash by rememberSaveable { mutableStateOf(true) }
+                var showSplash by rememberSaveable { mutableStateOf(!com.chatapp.messenger.ui.theme.ThemeSettings.skipSplash) }
                 Box(Modifier.fillMaxSize()) {
                     Surface(modifier = Modifier.fillMaxSize()) {
                         App()

@@ -72,6 +72,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.chatapp.messenger.ui.glass.LiquidToggle
 import com.chatapp.messenger.ui.theme.AppIconOption
 import com.chatapp.messenger.ui.theme.GlassFx
 import com.chatapp.messenger.ui.theme.ThemeSettings
@@ -275,6 +276,31 @@ private fun ThemeSettingsContent(bd: Backdrop, dark: Boolean, accent: Color, fg:
                         "ممكن تاخذ الأيقونة لحظات حتى تتبدل بالشاشة الرئيسية حسب لانشر جهازك.",
                         fontSize = 12.sp, color = fg.copy(0.55f), textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp, start = 8.dp, end = 8.dp)
+                    )
+                }
+            }
+            // ------------------------------------------------------------ شاشة البداية (Splash)
+            ThemeSection(5, "شاشة البداية (Splash)", "للي ما يريد يشوف السبلاش عند فتح التطبيق", fg) {
+                val shape = RoundedCornerShape(30.dp)
+                val skip = ThemeSettings.skipSplash
+                Row(
+                    Modifier.fillMaxWidth()
+                        .liquidCard(bd, shape, dark, borderColor = if (skip) accent.copy(alpha = 0.75f) else null)
+                        .padding(horizontal = 18.dp, vertical = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("إلغاء السبلاش", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "يفتح التطبيق مباشرة بدون شاشة البداية المتحركة",
+                            fontSize = 13.sp, color = fg.copy(0.62f), modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    LiquidToggle(
+                        selected = { ThemeSettings.skipSplash },
+                        onSelect = { ThemeSettings.setSkipSplash(it) },
+                        backdrop = bd, dark = dark, accent = accent
                     )
                 }
             }
