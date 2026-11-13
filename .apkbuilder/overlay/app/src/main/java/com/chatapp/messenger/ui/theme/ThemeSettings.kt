@@ -60,11 +60,11 @@ object ThemeSettings {
 
     val icons: List<AppIconOption> = listOf(
         AppIconOption("IconDefault", "الأساسية", R.drawable.ic_prev_default),
-        AppIconOption("IconBubble", "فقاعة", R.drawable.ic_prev_bubble),
-        AppIconOption("IconPlane", "طيارة", R.drawable.ic_prev_plane),
-        AppIconOption("IconChecks", "تم الاستلام", R.drawable.ic_prev_checks),
-        AppIconOption("IconDuo", "محادثة", R.drawable.ic_prev_duo),
-        AppIconOption("IconRing", "حلقة", R.drawable.ic_prev_ring)
+        AppIconOption("IconBubble", "مصاص دماء", R.drawable.ic_prev_bubble),
+        AppIconOption("IconPlane", "زجاجي", R.drawable.ic_prev_plane),
+        AppIconOption("IconChecks", "هواء ورعد", R.drawable.ic_prev_checks),
+        AppIconOption("IconDuo", "البيئة", R.drawable.ic_prev_duo),
+        AppIconOption("IconRing", "برمجي", R.drawable.ic_prev_ring)
     )
 
     const val DEFAULT_GLASS = 0.5f
