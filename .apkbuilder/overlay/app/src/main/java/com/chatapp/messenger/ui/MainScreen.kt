@@ -270,7 +270,10 @@ private fun MainContent() {
     BackHandler(enabled = groupInfoOpen && viewProfile == null) { groupInfoOpen = false }
 
     // موضع التبويب (حركة الانزلاق): نستعمله أيضاً حتى زر إنشاء مجموعة ما يبين إلا لما تبويب المجموعات يكون ظاهر فعلاً
-    val tabPos by animateFloatAsState(tab.toFloat(), spring(dampingRatio = 0.85f, stiffness = 380f), label = "tabPos")
+    // موقع كل تبويب على محور الانزلاق: Activity (2) يقع يسار Home بموقع -1،
+    // حتى الانتقال Home/Groups <-> Account ما يمرّ عليه ويومّضه
+    fun tabSlot(t: Int) = when (t) { 2 -> -1f; 3 -> 2f; else -> t.toFloat() }
+    val tabPos by animateFloatAsState(tabSlot(tab), spring(dampingRatio = 0.85f, stiffness = 380f), label = "tabPos")
     // نقرأ بس عبور العتبة (مو القيمة كل فريم) حتى ما ينعاد تركيب الشاشة كلها أثناء حركة التبويب
     val groupsFabReady by remember { derivedStateOf { tabPos > 0.55f } }
     Box(Modifier.fillMaxSize()) {
@@ -319,7 +322,7 @@ private fun MainContent() {
                             // التبويب الحالي دائماً فوق الباقين
                             .zIndex(if (selected) 1f else 0f)
                             .graphicsLayer {
-                                val d = i - tabPos
+                                val d = tabSlot(i) - tabPos
                                 alpha = (1f - kotlin.math.abs(d)).coerceIn(0f, 1f)
                                 translationX = d * size.width * 0.25f
                             }
@@ -376,7 +379,7 @@ private fun MainContent() {
 
         // الشريط السفلي يختفي بحركة نزول عند فتح محادثة/بروفايل ويرجع بحركة طلوع
         AnimatedVisibility(
-            visible = open == null && profileOpen == null && chatGroupId == null && supportThread == null && !overlayOpen,
+            visible = tab != 2 && open == null && profileOpen == null && chatGroupId == null && supportThread == null && !overlayOpen,
             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
             enter = slideInVertically(spring(0.8f, 380f)) { it } + fadeIn(tween(200)),
             exit = slideOutVertically(tween(220)) { it } + fadeOut(tween(160))
