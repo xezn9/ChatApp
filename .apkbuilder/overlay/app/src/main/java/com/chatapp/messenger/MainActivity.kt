@@ -15,6 +15,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.chatapp.messenger.ui.App
 import com.chatapp.messenger.ui.Nav
+import com.chatapp.messenger.ui.PerfMonitor
+import com.chatapp.messenger.ui.perfTracker
 import com.chatapp.messenger.ui.SplashScreen
 import com.chatapp.messenger.ui.theme.ChatTheme
 
@@ -29,7 +31,7 @@ class MainActivity : ComponentActivity() {
             ChatTheme {
                 // السبلاش يظهر مرة وحدة عند فتح التطبيق (rememberSaveable عشان تدوير الشاشة ما يعيده)
                 var showSplash by rememberSaveable { mutableStateOf(!com.chatapp.messenger.ui.theme.ThemeSettings.skipSplash) }
-                Box(Modifier.fillMaxSize()) {
+                Box(Modifier.fillMaxSize().perfTracker()) {
                     Surface(modifier = Modifier.fillMaxSize()) {
                         App()
                     }
@@ -50,12 +52,14 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         AppState.foreground = true
+        PerfMonitor.attach(window)
         ConnectionKeeper.onForeground()
     }
 
     override fun onStop() {
         super.onStop()
         AppState.foreground = false
+        PerfMonitor.detach()
         ConnectionKeeper.onBackground()
     }
 

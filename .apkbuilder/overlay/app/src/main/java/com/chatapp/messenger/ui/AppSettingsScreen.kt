@@ -319,6 +319,8 @@ internal fun AppSettingsScreen(profile: Profile, onDismiss: () -> Unit, onLogout
         var themeOrigin by remember { mutableStateOf<Rect?>(null) }
         // محادثة الدعم (من زر "الدعم والشكاوي" بصفحة حول التطبيق)
         var supportOpen by remember { mutableStateOf(false) }
+        // انتقال صفحات (فتح/إغلاق قسم): نجمّد حركة الخلفية خلال الحركة حتى الزجاج ما ينعاد حسابه والصفحة تنزلق
+        LaunchedEffect(selected, themeOpen, supportOpen) { PerfGate.hold(650) }
         BackHandler(enabled = !supportOpen) {
             if (themeOpen) themeOpen = false
             else if (selected != null) selected = null

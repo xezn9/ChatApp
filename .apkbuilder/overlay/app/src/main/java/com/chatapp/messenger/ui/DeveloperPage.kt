@@ -136,6 +136,8 @@ internal fun DeveloperPage(onBack: () -> Unit) {
 
     val t = rememberInfiniteTransition(label = "dev")
     val slow by rememberSlowPhase(40_000)
+    // لمعان النجوم داخل الـ backdrop: 15 تحديث/ثانية ومتوقف أثناء اللمس (قبل: 60 والزجاج كله ينعاد كل فريم)
+    val twinkle by rememberSlowPhase(11_000, stepMs = 66L)
     val spin by t.animateFloat(0f, 360f, infiniteRepeatable(tween(6000, easing = LinearEasing), RepeatMode.Restart), label = "spin")
     val orbit by t.animateFloat(0f, (2 * PI).toFloat(), infiniteRepeatable(tween(11_000, easing = LinearEasing), RepeatMode.Restart), label = "orbit")
     val shine by t.animateFloat(-1f, 2f, infiniteRepeatable(tween(3400, easing = FastOutSlowInEasing), RepeatMode.Restart), label = "shine")
@@ -198,10 +200,11 @@ internal fun DeveloperPage(onBack: () -> Unit) {
                 blob(Color(0xFFFF2D92), w * (0.15f + 0.12f * cos(slow * 2)), h * (0.72f + 0.06f * sin(slow * 3)), w * 0.65f, 0.35f)
                 blob(Color(0xFFFFA24D), w * (0.65f + 0.14f * sin(slow * 2)), h * (0.97f + 0.03f * cos(slow)), w * 0.85f, 0.35f)
                 val starColor = if (dark) Color.White else Color(0xFF6A4CFF)
+                val tw = twinkle
                 stars.forEach { s ->
                     val x = w * s[0]
                     val y = (h * s[1] + slow * 6f * s[2]) % h
-                    val a = 0.25f + 0.75f * abs(sin(orbit * 2f + s[3]))
+                    val a = 0.25f + 0.75f * abs(sin(tw * 2f + s[3]))
                     drawCircle(starColor.copy(alpha = a * 0.8f), s[2].dp.toPx() * 0.6f, Offset(x, y))
                 }
             }

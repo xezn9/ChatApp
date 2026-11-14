@@ -158,6 +158,9 @@ private fun MainContent() {
     LaunchedEffect(myUid) {
         if (myUid.isNotEmpty()) Repo.privacyFlow(myUid).collect { PrivacyState.value = it }
     }
+    // أي انتقال (تبويب/محادثة/بروفايل/مجموعة/نوافذ): نجمّد الخلفيات خلال الحركة
+    val navKey = listOf(tab, chatWith?.uid, viewProfile?.uid, openGroupId, supportThread, groupOpen, stickerOpen, groupInfoOpen)
+    LaunchedEffect(navKey) { PerfGate.hold(650) }
     val groupP = remember { Animatable(0f) }
     // مجموع الرسائل غير المقروءة بكل مجموعاتي (للشارة على تبويب Groups)
     val groupUnread = rememberGroupUnreadTotal(myUid)

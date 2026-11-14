@@ -118,7 +118,7 @@ internal fun ThemeSettingsPage(onBack: () -> Unit) {
     // فلو تتحرك وقت اللمس كل الزجاج ينعاد حسابه كل فريم. تكمل من نفس المكان بعد ما توقف الحركة.
     var phase by androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
     androidx.compose.runtime.LaunchedEffect(Unit) {
-        var lastFrame = 0L
+        var lastPhaseWrite = 0L
         var lastGlassChange = 0L
         launch {
             androidx.compose.runtime.snapshotFlow {
@@ -127,11 +127,15 @@ internal fun ThemeSettingsPage(onBack: () -> Unit) {
         }
         while (true) {
             androidx.compose.runtime.withFrameNanos { now ->
-                val busy = scroll.isScrollInProgress || System.nanoTime() - lastGlassChange < 400_000_000L
-                if (lastFrame != 0L && !busy) {
-                    phase = (phase + (now - lastFrame) / 40_000_000_000f * (2 * PI).toFloat()) % (2 * PI).toFloat()
+                val busy = scroll.isScrollInProgress || System.nanoTime() - lastGlassChange < 400_000_000L ||
+                    !PerfGate.ambientRunning
+                if (lastPhaseWrite == 0L || busy) {
+                    lastPhaseWrite = now
+                } else if (now - lastPhaseWrite >= 66_000_000L) {
+                    // ~15 تحديث/ثانية بدل كل فريم
+                    phase = (phase + (now - lastPhaseWrite) / 40_000_000_000f * (2 * PI).toFloat()) % (2 * PI).toFloat()
+                    lastPhaseWrite = now
                 }
-                lastFrame = now
             }
         }
     }

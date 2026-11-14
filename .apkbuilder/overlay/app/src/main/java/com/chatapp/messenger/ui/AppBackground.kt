@@ -50,16 +50,19 @@ fun AnimatedAppBackground(tab: Int, modifier: Modifier = Modifier) {
     // نفس الحركة القديمة بالضبط: ذهاب وإياب خطي بدورة 18 ثانية لكل اتجاه.
     val paused by androidx.compose.runtime.rememberUpdatedState(LocalAmbientPaused.current)
     var phase by androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    // 20 تحديث بالثانية بدل 60: الحركة بطيئة جداً (~1 بكسل للخطوة) فما تنلاحظ، وكل تحديث يعني إعادة حساب كل الزجاج.
+    // وتتوقف أثناء اللمس/التمرير/الانتقال (PerfGate) وتكمل من نفس المكان بدون قفزة.
     androidx.compose.runtime.LaunchedEffect(Unit) {
         var clock = 0f
-        var last = 0L
+        var last = System.nanoTime()
         while (true) {
-            androidx.compose.runtime.withFrameNanos { now ->
-                if (last != 0L && !paused) {
-                    clock = (clock + (now - last) / 1_000_000_000f) % 36f
-                    phase = if (clock < 18f) clock / 18f else (36f - clock) / 18f
-                }
-                last = now
+            kotlinx.coroutines.delay(if (PerfGate.lite) 100L else 50L)
+            val now = System.nanoTime()
+            val dt = ((now - last) / 1_000_000_000f).coerceAtMost(0.5f)
+            last = now
+            if (!paused && PerfGate.ambientRunning) {
+                clock = (clock + dt) % 36f
+                phase = if (clock < 18f) clock / 18f else (36f - clock) / 18f
             }
         }
     }

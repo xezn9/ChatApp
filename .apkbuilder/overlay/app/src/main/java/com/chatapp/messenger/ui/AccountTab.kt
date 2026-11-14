@@ -791,12 +791,7 @@ internal fun Modifier.liquidCard(
 @Composable
 internal fun LiquidScene(banner: ImageBitmap?, content: @Composable (Backdrop) -> Unit) {
     val bd = rememberLayerBackdrop()
-    val t = rememberInfiniteTransition(label = "blobs")
-    val p by t.animateFloat(
-        initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Reverse),
-        label = "blobsP"
-    )
+    val p by rememberGatedPingPong(9_000)
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.matchParentSize().layerBackdrop(bd).background(appBackground())) {
             if (banner != null) {
