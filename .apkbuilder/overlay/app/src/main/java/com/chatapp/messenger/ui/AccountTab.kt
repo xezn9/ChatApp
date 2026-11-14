@@ -275,7 +275,7 @@ fun AccountTab(
     // نرفع الـ backdrop لهنا حتى نافذة الحالة (برا الصندوق) تكدر تنكسر الشاشة من خلفها بالزجاج
     val glass = rememberLayerBackdrop()
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-        BoxWithConstraints(Modifier.fillMaxSize()) {
+        BoxWithConstraints(Modifier.fillMaxSize().hideWhenCovered(showSettings, 1000L)) {
             val u = maxWidth / 1440f
             val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
             // البانر مثل تيك توك: قصير، يبدأ من أعلى الشاشة (خلف شريط الحالة) ويذوب بالخلفية

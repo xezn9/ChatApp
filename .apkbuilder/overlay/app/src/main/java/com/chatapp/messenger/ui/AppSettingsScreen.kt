@@ -229,14 +229,10 @@ internal fun LiquidRevealOverlay(
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun AppSettingsScene(content: @Composable (Backdrop) -> Unit) {
+private fun AppSettingsScene(covered: Boolean = false, content: @Composable (Backdrop) -> Unit) {
     val bd = rememberLayerBackdrop()
-    val t = rememberInfiniteTransition(label = "settingsScene")
-    val phase by t.animateFloat(
-        initialValue = 0f, targetValue = (2 * PI).toFloat(),
-        animationSpec = infiniteRepeatable(tween(40_000, easing = LinearEasing), RepeatMode.Restart),
-        label = "settingsPhase"
-    )
+    // covered = صفحة معتمة كاملة مفتوحة فوق: نوقف رسم الخلفية والكرات وحركتها
+    val phase by rememberSlowPhase(40_000, active = !covered)
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
         val w = with(density) { maxWidth.toPx() }
@@ -251,6 +247,7 @@ private fun AppSettingsScene(content: @Composable (Backdrop) -> Unit) {
         Box(
             Modifier.matchParentSize().layerBackdrop(bd)
                 .then(if (customBg) Modifier else Modifier.background(Brush.verticalGradient(sky)))
+                .hideWhenCovered(covered, 700L)
         ) {
             if (customBg) AppTabBackground(3, Modifier.matchParentSize())
             else Canvas(Modifier.matchParentSize()) {
@@ -273,6 +270,7 @@ private fun AppSettingsScene(content: @Composable (Backdrop) -> Unit) {
         fun Orb(sizeDp: Int, bx: Float, by: Float, ax: Float, ay: Float, k: Int, ph: Float) {
             Box(
                 Modifier
+                    .hideWhenCovered(covered, 700L)
                     .offset {
                         IntOffset(
                             (w * bx + w * ax * sin(phase * k + ph)).roundToInt(),
@@ -308,6 +306,9 @@ private fun AppSettingsScene(content: @Composable (Backdrop) -> Unit) {
 //  الشاشة
 // ---------------------------------------------------------------------------
 
+/** صفحات الإعدادات الي خلفيتها معتمة وبملء الشاشة (غير صفحات القسم العامة الي تستعمل زجاج الخلفية الأم) */
+private val OpaqueSettingsPages = setOf("الحساب", "الخصوصية", "مطور التطبيق", "حول التطبيق")
+
 @Composable
 internal fun AppSettingsScreen(profile: Profile, onDismiss: () -> Unit, onLogout: () -> Unit = {}) {
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
@@ -326,7 +327,9 @@ internal fun AppSettingsScreen(profile: Profile, onDismiss: () -> Unit, onLogout
         val myUidForSupport = remember { com.chatapp.messenger.Repo.auth.currentUser?.uid ?: "" }
 
         Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { } }) {
-            AppSettingsScene { bd ->
+            // صفحات معتمة تغطي الشاشة كلها: الرئيسية والخلفية والكرات تحتها ما لها داعي ترسم
+            val opaquePageOpen = (selected != null && last.title in OpaqueSettingsPages) || themeOpen || supportOpen
+            AppSettingsScene(covered = opaquePageOpen) { bd ->
                 val shift by animateFloatAsState(
                     if (selected != null) 1f else 0f, spring(dampingRatio = 0.9f, stiffness = 260f), label = "homeShift"
                 )
@@ -336,7 +339,7 @@ internal fun AppSettingsScreen(profile: Profile, onDismiss: () -> Unit, onLogout
                         val s = 1f - 0.06f * shift
                         scaleX = s; scaleY = s
                         translationX = shift * size.width * 0.12f
-                    }
+                    }.hideWhenCovered(opaquePageOpen, 700L)
                 ) {
                     AppSettingsHome(
                         profile = profile, bd = bd, onBack = onDismiss, onLogout = onLogout,

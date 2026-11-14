@@ -135,7 +135,7 @@ internal fun DeveloperPage(onBack: () -> Unit) {
     val bd = rememberLayerBackdrop()
 
     val t = rememberInfiniteTransition(label = "dev")
-    val slow by t.animateFloat(0f, (2 * PI).toFloat(), infiniteRepeatable(tween(40_000, easing = LinearEasing), RepeatMode.Restart), label = "slow")
+    val slow by rememberSlowPhase(40_000)
     val spin by t.animateFloat(0f, 360f, infiniteRepeatable(tween(6000, easing = LinearEasing), RepeatMode.Restart), label = "spin")
     val orbit by t.animateFloat(0f, (2 * PI).toFloat(), infiniteRepeatable(tween(11_000, easing = LinearEasing), RepeatMode.Restart), label = "orbit")
     val shine by t.animateFloat(-1f, 2f, infiniteRepeatable(tween(3400, easing = FastOutSlowInEasing), RepeatMode.Restart), label = "shine")

@@ -22,6 +22,7 @@ import androidx.compose.ui.zIndex
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -296,7 +297,7 @@ private fun MainContent() {
             Box(
                 Modifier.fillMaxSize().graphicsLayer {
                     scaleX = backScale; scaleY = backScale; alpha = backAlpha
-                }
+                }.hideWhenCovered(coverOpen)
             ) {
             // خلفية متحركة بألوان مختلفة لكل تبويب
             // كل واجهة لها خلفيتها (افتراضية/جاهزة/صورة أو GIF)، والتبديل بينها بتلاشي ناعم
@@ -325,6 +326,10 @@ private fun MainContent() {
                                 val d = tabSlot(i) - tabPos
                                 alpha = (1f - kotlin.math.abs(d)).coerceIn(0f, 1f)
                                 translationX = d * size.width * 0.25f
+                            }
+                            // التبويب المخفي تماماً (alpha = 0) ما يرسم ولا يسجّل شي: يوفر blur/lens 3 تبويبات
+                            .drawWithContent {
+                                if (kotlin.math.abs(tabSlot(i) - tabPos) < 1f) drawContent()
                             }
                             // التبويبات المخفية ما تستقبل لمس (حتى ما تنضغط أزرارها بالغلط)
                             .then(
@@ -552,7 +557,7 @@ private fun MainContent() {
                     Modifier.fillMaxSize().graphicsLayer {
                         shape = RoundedCornerShape((p * 44f).dp)
                         clip = p > 0.001f
-                    }
+                    }.hideWhenCovered(profileOpen != null)
                 ) {
                     ChatScreen(other = c, onBack = { chatWith = null }, onOpenProfile = { viewProfile = c })
                 }
@@ -565,12 +570,14 @@ private fun MainContent() {
             exit = slideOutHorizontally(tween(240)) { it } + fadeOut(tween(200))
         ) {
             if (lastGroupId.isNotEmpty()) {
+                Box(Modifier.fillMaxSize().hideWhenCovered(profileOpen != null)) {
                 GroupChatScreen(
                     groupId = lastGroupId,
                     onBack = { groupInfoOpen = false; openGroupId = null },
                     onOpenInfo = { groupInfoOpen = true },
                     onOpenProfile = { viewProfile = it }
                 )
+                }
             }
         }
         AnimatedVisibility(
