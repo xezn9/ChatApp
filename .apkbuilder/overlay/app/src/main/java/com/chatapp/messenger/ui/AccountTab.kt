@@ -431,6 +431,9 @@ fun AccountTab(
                                 textAlign = TextAlign.End
                             )
                             Spacer(Modifier.height(18.dp))
+                        } else {
+                            // بدون نبذة: نحجز مكان سطر نبذة حتى ما تطلع الأزرار فوق وتتداخل مع الصورة
+                            Spacer(Modifier.height(u * 52f * 1.3f + 18.dp))
                         }
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         // زر باركود الحساب

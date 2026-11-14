@@ -110,6 +110,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -1124,9 +1126,17 @@ fun ChatScreen(other: UserItem, onBack: () -> Unit, onOpenProfile: () -> Unit = 
                         contentAlignment = Alignment.CenterStart
                     ) {
                         if (text.isEmpty()) Text("اكتب رسالة", color = fg.copy(alpha = 0.5f), fontSize = 16.sp, modifier = Modifier.padding(end = 40.dp))
+                        // مؤشر الكتابة: عند "تعديل الرسالة" أو أي تغيير برمجي للنص يروح لنهاية الكلام
+                        var tfv by remember { mutableStateOf(TextFieldValue(text, TextRange(text.length))) }
+                        LaunchedEffect(text) {
+                            if (tfv.text != text) tfv = TextFieldValue(text, TextRange(text.length))
+                        }
+                        LaunchedEffect(editing?.id) {
+                            if (editing != null) tfv = TextFieldValue(text, TextRange(text.length))
+                        }
                         BasicTextField(
-                            value = text,
-                            onValueChange = { text = it },
+                            value = tfv,
+                            onValueChange = { tfv = it; if (text != it.text) text = it.text },
                             maxLines = 4,
                             textStyle = TextStyle(fontFamily = AppFont, color = fg, fontSize = 16.sp),
                             cursorBrush = SolidColor(Blue),

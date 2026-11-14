@@ -563,6 +563,12 @@
             ".validate": "newData.isNumber()"
           }
         },
+        "readAt": {
+          "$uid": {
+            ".write": "auth != null && auth.token.email_verified === true && $uid === auth.uid && root.child('groups').child($gid).child('members').child(auth.uid).exists()",
+            ".validate": "newData.isNumber()"
+          }
+        },
         "$other": {
           ".validate": false
         }

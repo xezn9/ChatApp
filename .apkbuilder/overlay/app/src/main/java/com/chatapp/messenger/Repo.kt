@@ -1526,6 +1526,32 @@ object Repo {
         }
     }
 
+    // ---------- مؤشر القراءة بالمجموعات (صور من شاف رسالتي) ----------
+
+    /** أسجل إني شفت رسائل المجموعة لحد [upTo] (createdAt لآخر رسالة ظاهرة عندي). ما ينزل أبداً. */
+    fun markGroupRead(me: String, gid: String, upTo: Long) {
+        if (me.isBlank() || upTo <= 0L || PrivacyState.value.hideRead) return
+        rtdb.getReference("groupChats/$gid/readAt/$me").runTransaction(object : com.google.firebase.database.Transaction.Handler {
+            override fun doTransaction(d: com.google.firebase.database.MutableData): com.google.firebase.database.Transaction.Result {
+                val cur = (d.getValue() as? Number)?.toLong() ?: 0L
+                if (upTo <= cur) return com.google.firebase.database.Transaction.abort()
+                d.value = upTo
+                return com.google.firebase.database.Transaction.success(d)
+            }
+            override fun onComplete(e: DatabaseError?, committed: Boolean, s: DataSnapshot?) {}
+        })
+    }
+
+    /** uid -> وقت آخر رسالة قراها هذا العضو بالمجموعة */
+    fun groupReadAtFlow(gid: String): Flow<Map<String, Long>> =
+        rtFlow(rtdb.getReference("groupChats/$gid/readAt")) { snap ->
+            snap.children.mapNotNull { c ->
+                val k = c.key ?: return@mapNotNull null
+                val v = (c.value as? Number)?.toLong() ?: return@mapNotNull null
+                k to v
+            }.toMap()
+        }
+
     /** لكل شخص: وقت آخر "حذف محادثة" عندي. الرسائل الأقدم منه تنخفي عندي فقط */
     fun clearedFlow(me: String): Flow<Map<String, Long>> = callbackFlow {
         if (me.isBlank()) { close(); return@callbackFlow }

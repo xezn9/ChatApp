@@ -30,6 +30,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -302,21 +303,15 @@ fun GroupCreatePanel(
             val u = geo.u
             val fin = remember(geo) { frame(geo, FRAMES - 1f, false, 0f) }
 
-            // من هنا نقرأ progress (التركيب يعاد بس لهذا الجزء)
-            val f = progress.value
-            val closing = !open
-            val ct = if (closing) closeT(f) else 0f
-            // الزجاج الحقيقي (Rounded + lens): بالفتح من ROUND_FROM، وبالإغلاق بأول 25% فقط ثم نرجع لشكل الفيديو
-            val rounded = if (closing) ct < 0.12f else f >= ROUND_FROM
-            val lensK = if (closing) (1f - ct / 0.12f).coerceIn(0f, 1f) else ((f - LENS_FROM) / 6f).coerceIn(0f, 1f)
-            val cornerPx = if (closing) CORNER * u
-            else (40f + (CORNER - 40f) * ((f - ROUND_FROM) / 8f).coerceIn(0f, 1f)) * u
-            val fr = frame(geo, f, closing, if (rounded) cornerPx else 0f)
-            val nodeL = fr.minX.roundToInt()
-            val nodeT = fr.minY.roundToInt()
-            val nodeW = max(1, fr.maxX.roundToInt() - nodeL)
-            val nodeH = max(1, fr.maxY.roundToInt() - nodeT)
-            val pathRel = Path().apply { addPath(fr.path, Offset(-nodeL.toFloat(), -nodeT.toFloat())) }
+            // لقطة الإطار الحالي: تُحسب مرة وحدة لكل إطار وتنقرأ من مراحل layout/draw فقط
+            // (بدون إعادة تركيب للمحتوى كل إطار = هذا الي كان يسبب هبوط الفريمات)
+            val snapState = remember(geo, open, u) {
+                derivedStateOf { computeSnap(geo, u, progress.value, open) }
+            }
+            val iconVisible by remember { derivedStateOf { table(progress.value, I_K, I_A) > 0.01f } }
+            val contentVisible by remember { derivedStateOf { table(progress.value, C_K, C_A) > 0.005f } }
+            val xVisible by remember { derivedStateOf { table(progress.value, X_K, X_A) > 0.01f } }
+            val xEnabled by remember { derivedStateOf { table(progress.value, X_K, X_A) > 0.6f } }
 
             Box(
                 Modifier
@@ -330,98 +325,46 @@ fun GroupCreatePanel(
                         } else Modifier
                     )
             ) {
-                // (A) الزجاج: عقدة بحجم صندوق الشكل فقط (أخف بكثير من ملء الشاشة)
-                Box(
-                    Modifier
-                        .layout { m, _ ->
-                            val pl = m.measure(Constraints.fixed(nodeW, nodeH))
-                            layout(nodeW, nodeH) { pl.place(nodeL, nodeT) }
-                        }
-                        // drop shadow خارج الشكل فقط
-                        .drawBehind {
-                            if (!rounded) clipPath(pathRel, ClipOp.Difference) {
-                                val n = 8
-                                for (i in n downTo 1) {
-                                    drawPath(
-                                        pathRel,
-                                        Color.Black.copy(alpha = 0.017f),
-                                        style = Stroke(width = 24f * u * i / n * 2f)
-                                    )
-                                }
-                            }
-                        }
-                        .drawBackdrop(
-                            backdrop = backdrop,
-                            shape = { if (rounded) RoundedCornerShape(CornerSize(cornerPx)) else PathShape(pathRel) },
-                            effects = {
-                                vibrancy()
-                                blur((16f.dp.toPx()) * GlassFx.blurK)
-                                if (rounded && lensK > 0.01f) lens((12f.dp.toPx() * lensK) * GlassFx.refractK, (24f.dp.toPx() * lensK) * GlassFx.refractK)
-                            },
-                            onDrawSurface = { glassSurfaceLayer {
-                                val s = (fr.h / max(fin.h, 1f)).coerceIn(0f, 1.2f)
-                                val vid = if (s < 0.2f) 0.74f
-                                else 0.74f + (0.555f - 0.74f) * ((s - 0.2f) / 0.75f).coerceIn(0f, 1f)
-                                // مثل بقية التطبيق: طبقة خفيفة فوق الزجاج
-                                if (dark) drawRect(Color.Black.copy(alpha = (0.30f + (vid - 0.555f) * 0.4f).coerceIn(0f, 1f)))
-                                else drawRect(Color.White.copy(alpha = (0.42f + (vid - 0.555f) * 0.7f).coerceIn(0f, 1f)))
-                            } }
-                        )
-                        .drawWithContent {
-                            drawContent()
-                            if (rounded) {
-                                // نفس حد نوافذ التطبيق (مثل GlassConfirmDialog) وبنفس شكل الزجاج بالضبط
-                                drawPath(
-                                    pathRel,
-                                    Brush.verticalGradient(listOf(Color.White.copy(0.45f), Color.White.copy(0.08f))),
-                                    style = Stroke(width = 0.8f * dp1)
-                                )
-                            } else {
-                                val rim = if (dark) 0.5f else 1f
-                                clipPath(pathRel) {
-                                    drawPath(pathRel, Color.White.copy(alpha = 0.05f * rim), style = Stroke(width = 9f * u))
-                                    drawPath(pathRel, Color.White.copy(alpha = 0.07f * rim), style = Stroke(width = 5f * u))
-                                    drawPath(pathRel, Color.White.copy(alpha = 0.10f * rim), style = Stroke(width = 2f * u))
-                                }
-                                drawPath(pathRel, Color.White.copy(alpha = 0.55f), style = Stroke(width = 0.8f * dp1))
-                            }
-                        }
-                )
+                // (A) الزجاج: عقدة صغيرة بتركيب مستقل (فقط هذا الجزء يعاد تركيبه كل إطار)
+                GroupGlassNode(snapState, fin, backdrop, dark, u, dp1)
 
-                // (B) أيقونة الزر + المحتوى + زر X، مقصوصة بالشكل
+                // (B) أيقونة الزر + المحتوى + زر X، مقصوصة بالشكل (كلها تقرأ الحالة داخل graphicsLayer/offset)
                 Box(
                     Modifier
                         .fillMaxSize()
-                        .drawWithContent { clipPath(fr.path) { this@drawWithContent.drawContent() } }
+                        .drawWithContent { clipPath(snapState.value.fr.path) { this@drawWithContent.drawContent() } }
                 ) {
-                    val iconA = table(f, I_K, I_A)
-                    if (iconA > 0.01f) {
+                    if (iconVisible) {
                         val iconPx = 26f * dp1
                         Icon(
                             AppIcons.GroupAdd, null,
                             tint = if (dark) Color.White else Color.Black,
                             modifier = Modifier
-                                .offset { IntOffset((fr.cx - iconPx / 2f).roundToInt(), (fr.cy - iconPx / 2f).roundToInt()) }
+                                .offset {
+                                    val fr = snapState.value.fr
+                                    IntOffset((fr.cx - iconPx / 2f).roundToInt(), (fr.cy - iconPx / 2f).roundToInt())
+                                }
                                 .size(26.dp)
-                                .graphicsLayer { alpha = iconA }
+                                .graphicsLayer { alpha = table(snapState.value.f, I_K, I_A) }
                         )
                     }
 
-                    val ca = table(f, C_K, C_A)
-                    if (ca > 0.005f) {
-                        val bx = table(f, C_K, C_BX) * u
-                        val by = table(f, C_K, C_BY) * u
+                    if (contentVisible) {
                         Box(
                             Modifier
                                 .offset { IntOffset(fin.minX.roundToInt(), fin.minY.roundToInt()) }
                                 .size(with(density) { fin.w.toDp() }, with(density) { fin.h.toDp() })
                                 .graphicsLayer {
+                                    val sn = snapState.value
+                                    val fr = sn.fr
+                                    val bx = table(sn.f, C_K, C_BX) * u
+                                    val by = table(sn.f, C_K, C_BY) * u
                                     transformOrigin = TransformOrigin.Center
                                     scaleX = (fr.w / max(fin.w, 1f)).coerceAtLeast(0.01f)
                                     scaleY = (fr.h / max(fin.h, 1f)).coerceAtLeast(0.01f)
                                     translationX = fr.midX - fin.midX
                                     translationY = fr.midY - fin.midY
-                                    alpha = ca
+                                    alpha = table(sn.f, C_K, C_A)
                                     renderEffect = if (bx > 0.3f || by > 0.3f)
                                         BlurEffect(max(bx, 0.01f), max(by, 0.01f), TileMode.Decal) else null
                                 }
@@ -431,8 +374,7 @@ fun GroupCreatePanel(
                     }
 
                     // زر الإغلاق (X) بالزاوية العليا (جهة بداية اللغة: يمين بالعربي)
-                    val xa = table(f, X_K, X_A)
-                    if (xa > 0.01f) {
+                    if (xVisible) {
                         val sizePx = 36f * dp1
                         val pad = 14f * dp1
                         val left = if (rtl) fin.maxX - pad - sizePx else fin.minX + pad
@@ -440,13 +382,13 @@ fun GroupCreatePanel(
                             Modifier
                                 .offset { IntOffset(left.roundToInt(), (fin.minY + pad).roundToInt()) }
                                 .size(36.dp)
-                                .graphicsLayer { alpha = xa }
+                                .graphicsLayer { alpha = table(snapState.value.f, X_K, X_A) }
                                 .clip(CircleShape)
                                 .background(if (dark) Color.White.copy(0.16f) else Color.Black.copy(0.10f))
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null,
-                                    enabled = open && xa > 0.6f,
+                                    enabled = open && xEnabled,
                                     onClick = onDismiss
                                 ),
                             contentAlignment = androidx.compose.ui.Alignment.Center
@@ -462,4 +404,95 @@ fun GroupCreatePanel(
             }
         }
     }
+}
+
+/** لقطة كاملة لإطار واحد من الحركة */
+private class Snap(
+    val f: Float, val closing: Boolean, val rounded: Boolean, val lensK: Float, val cornerPx: Float,
+    val fr: Fr, val nodeL: Int, val nodeT: Int, val nodeW: Int, val nodeH: Int, val pathRel: Path
+)
+
+private fun computeSnap(geo: Geo, u: Float, f: Float, open: Boolean): Snap {
+    val closing = !open
+    val ct = if (closing) closeT(f) else 0f
+    // الزجاج الحقيقي (Rounded + lens): بالفتح من ROUND_FROM، وبالإغلاق بأول 12% فقط ثم نرجع لشكل الفيديو
+    val rounded = if (closing) ct < 0.12f else f >= ROUND_FROM
+    val lensK = if (closing) (1f - ct / 0.12f).coerceIn(0f, 1f) else ((f - LENS_FROM) / 6f).coerceIn(0f, 1f)
+    val cornerPx = if (closing) CORNER * u
+    else (40f + (CORNER - 40f) * ((f - ROUND_FROM) / 8f).coerceIn(0f, 1f)) * u
+    val fr = frame(geo, f, closing, if (rounded) cornerPx else 0f)
+    val nodeL = fr.minX.roundToInt()
+    val nodeT = fr.minY.roundToInt()
+    val nodeW = max(1, fr.maxX.roundToInt() - nodeL)
+    val nodeH = max(1, fr.maxY.roundToInt() - nodeT)
+    val pathRel = Path().apply { addPath(fr.path, Offset(-nodeL.toFloat(), -nodeT.toFloat())) }
+    return Snap(f, closing, rounded, lensK, cornerPx, fr, nodeL, nodeT, nodeW, nodeH, pathRel)
+}
+
+@Composable
+private fun GroupGlassNode(snapState: State<Snap>, fin: Fr, backdrop: Backdrop, dark: Boolean, u: Float, dp1: Float) {
+    val sn = snapState.value   // القراءة هنا فقط: يعاد تركيب هذه الدالة الصغيرة كل إطار
+    val fr = sn.fr
+    val rounded = sn.rounded
+    val cornerPx = sn.cornerPx
+    val lensK = sn.lensK
+    val pathRel = sn.pathRel
+    val nodeW = sn.nodeW
+    val nodeH = sn.nodeH
+    val nodeL = sn.nodeL
+    val nodeT = sn.nodeT
+    Box(
+        Modifier
+            .layout { m, _ ->
+                val pl = m.measure(Constraints.fixed(nodeW, nodeH))
+                layout(nodeW, nodeH) { pl.place(nodeL, nodeT) }
+            }
+            // drop shadow خارج الشكل فقط
+            .drawBehind {
+                if (!rounded) clipPath(pathRel, ClipOp.Difference) {
+                    val n = 8
+                    for (i in n downTo 1) {
+                        drawPath(
+                            pathRel,
+                            Color.Black.copy(alpha = 0.017f),
+                            style = Stroke(width = 24f * u * i / n * 2f)
+                        )
+                    }
+                }
+            }
+            .drawBackdrop(
+                backdrop = backdrop,
+                shape = { if (rounded) RoundedCornerShape(CornerSize(cornerPx)) else PathShape(pathRel) },
+                effects = {
+                    vibrancy()
+                    blur((16f.dp.toPx()) * GlassFx.blurK)
+                    if (rounded && lensK > 0.01f) lens((12f.dp.toPx() * lensK) * GlassFx.refractK, (24f.dp.toPx() * lensK) * GlassFx.refractK)
+                },
+                onDrawSurface = { glassSurfaceLayer {
+                    val s = (fr.h / max(fin.h, 1f)).coerceIn(0f, 1.2f)
+                    val vid = if (s < 0.2f) 0.74f
+                    else 0.74f + (0.555f - 0.74f) * ((s - 0.2f) / 0.75f).coerceIn(0f, 1f)
+                    if (dark) drawRect(Color.Black.copy(alpha = (0.30f + (vid - 0.555f) * 0.4f).coerceIn(0f, 1f)))
+                    else drawRect(Color.White.copy(alpha = (0.42f + (vid - 0.555f) * 0.7f).coerceIn(0f, 1f)))
+                } }
+            )
+            .drawWithContent {
+                drawContent()
+                if (rounded) {
+                    drawPath(
+                        pathRel,
+                        Brush.verticalGradient(listOf(Color.White.copy(0.45f), Color.White.copy(0.08f))),
+                        style = Stroke(width = 0.8f * dp1)
+                    )
+                } else {
+                    val rim = if (dark) 0.5f else 1f
+                    clipPath(pathRel) {
+                        drawPath(pathRel, Color.White.copy(alpha = 0.05f * rim), style = Stroke(width = 9f * u))
+                        drawPath(pathRel, Color.White.copy(alpha = 0.07f * rim), style = Stroke(width = 5f * u))
+                        drawPath(pathRel, Color.White.copy(alpha = 0.10f * rim), style = Stroke(width = 2f * u))
+                    }
+                    drawPath(pathRel, Color.White.copy(alpha = 0.55f), style = Stroke(width = 0.8f * dp1))
+                }
+            }
+    )
 }

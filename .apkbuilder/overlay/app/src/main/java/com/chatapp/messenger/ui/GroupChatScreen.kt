@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.core.app.NotificationManagerCompat
 import com.chatapp.messenger.AppState
 import com.chatapp.messenger.GroupReads
+import com.chatapp.messenger.PrivacyState
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.runtime.mutableFloatStateOf
@@ -392,7 +393,11 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
     val contentBackdrop = rememberLayerBackdrop() // الخلفية + الرسائل (الأشرطة تستخدمها)
 
     // ملفات المرسلين (اسم + صورة + شكل الفقاعة)
-    val senderIds = remember(messages) { (messages.map { it.from } + messages.map { it.replyFrom }.filter { it.isNotEmpty() && it != "story" && it != "status" } + me).distinct() }
+    // مؤشر القراءة: uid -> وقت آخر رسالة قراها (يختفي كله إذا مشغّل "إخفاء حالة مقروء")
+    val hideRead = PrivacyState.value.hideRead
+    val readAtRaw by remember(groupId) { Repo.groupReadAtFlow(groupId) }.collectAsState(initial = emptyMap())
+    val readAtMap = remember(readAtRaw, hideRead) { if (hideRead) emptyMap() else readAtRaw.filterKeys { it != me } }
+    val senderIds = remember(messages, readAtMap.keys.toList()) { (messages.map { it.from } + readAtMap.keys + messages.map { it.replyFrom }.filter { it.isNotEmpty() && it != "story" && it != "status" } + me).distinct() }
     val profiles = rememberProfiles(senderIds)
     val avatars = rememberSenderAvatars(profiles, senderIds)
     val myStyleId = profiles[me]?.bubbleStyle ?: "glass"
@@ -408,7 +413,19 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
     // مفتاح كل رسالة ثابت (معرّفها)، فما تنعاد حركتها لما السيرفر يأكد الإرسال
     val stable = remember(messages, expNow) { messages.filter { !MessageExpiry.isExpired(it.expiresAt, expNow) } }
     val rev = remember(stable) { stable.asReversed() }
+    val lastMineKey = remember(rev) { rev.firstOrNull { it.from == me }?.key }
     val listState = rememberLazyListState()
+
+    // أسجل "قريت" لآخر رسالة بالمجموعة: بس والتطبيق مفتوح وأنا نازل لآخر المحادثة
+    val latestAt = remember(stable) { stable.maxOfOrNull { it.createdAt } ?: 0L }
+    LaunchedEffect(groupId, latestAt) {
+        if (latestAt <= 0L) return@LaunchedEffect
+        snapshotFlow { AppState.foreground && listState.firstVisibleItemIndex <= 1 }
+            .distinctUntilChanged()
+            .collectLatest { atBottom ->
+                if (atBottom) Repo.markGroupRead(me, groupId, latestAt)
+            }
+    }
     // الرسائل الي انتهت: نحذفها من السيرفر (أي عضو يكون فاتح المجموعة)
     val swept = remember(groupId) { mutableSetOf<String>() }
     LaunchedEffect(messages, expNow) {
@@ -1085,6 +1102,11 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
                             onHeart = { on -> Repo.setGroupMessageReaction(groupId, m.key, if (on) HEART else null, onReactFail) },
                             onCallBack = { GroupCallActivity.open(ctx, groupId, g?.item?.name ?: "") }
                         )
+                        // مؤشر القراءة: فقط تحت آخر رسالة دزيتها أنا (ينتقل للجديدة وينختفي من القديمة)
+                        if (mine && m.key == lastMineKey) {
+                            val readers = readAtMap.filter { (_, t) -> t >= m.createdAt }.keys.toList()
+                            GroupReadersRow(readers, avatars, profiles, fg)
+                        }
                         }
                     }
                 }
@@ -1911,6 +1933,42 @@ private fun UnreadArrow(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(if (count > 99) "99+" else "$count", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+
+/** صور الأعضاء الي شافوا آخر رسالة لي (أقصى 6 صور + عدّاد الباقي) */
+@Composable
+private fun GroupReadersRow(readers: List<String>, avatars: Map<String, ImageBitmap>, profiles: Map<String, Profile>, fg: Color) {
+    androidx.compose.animation.AnimatedVisibility(
+        visible = readers.isNotEmpty(),
+        enter = androidx.compose.animation.fadeIn(tween(180)) + androidx.compose.animation.scaleIn(spring(0.7f, 500f), initialScale = 0.6f),
+        exit = androidx.compose.animation.fadeOut(tween(120))
+    ) {
+        val shown = readers.take(6)
+        val extra = readers.size - shown.size
+        // الصف يبدأ من جهة رسائلي (نهاية السطر) مع مسافة بسيطة من الحافة
+        Row(
+            Modifier.fillMaxWidth().padding(end = 46.dp, top = 8.dp, bottom = 2.dp),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (extra > 0) Text("+$extra", color = fg.copy(alpha = 0.7f), fontSize = 11.sp, modifier = Modifier.padding(end = 4.dp))
+            shown.forEach { uid ->
+                val img = avatars[uid]
+                Box(
+                    Modifier.padding(start = 2.dp).size(16.dp).clip(CircleShape)
+                        .background(nameColor(uid).copy(alpha = 0.85f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (img != null) Image(img, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    else Text(
+                        (profiles[uid]?.name?.firstOrNull()?.toString() ?: "؟"),
+                        color = Color.White, fontSize = 9.sp
+                    )
                 }
             }
         }
