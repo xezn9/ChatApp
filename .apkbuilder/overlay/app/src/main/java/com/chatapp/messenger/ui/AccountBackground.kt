@@ -21,9 +21,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sin
 import kotlin.random.Random
 
 /**
@@ -65,47 +69,79 @@ internal fun randomAccountPalette(avoidHue: Float? = null): AccountPalette {
     )
 }
 
+/** عنقود لون من البانر: درجة اللون (h) + التشبع + السطوع + نسبة حضوره بين الألوان الملونة */
+private class HueCluster(val h: Float, val s: Float, val v: Float, val share: Float)
+
 /**
  * يحلل صورة البانر ويطلع منها ألوان الخلفية تلقائياً (بدون مكتبات خارجية):
- * نصغّر الصورة، نجمع البكسلات الملونة حسب درجة اللون، ونأخذ أقوى 3 ألوان مختلفة.
+ * - يحلل الجزء الظاهر فعلاً من البانر فقط (نفس قص ContentScale.Crop + موضع التركيز)،
+ *   لأن الألوان اللي خارج القص ما يشوفها المستخدم وكانت تغيّر الخلفية بدون سبب.
+ * - يجمع البكسلات الملونة في عناقيد حسب درجة اللون (متوسط دائري، فما ينكسر اللون الأحمر عند 0°/360°).
+ * - اللون الثاني والثالث ما ينضافون إلا إذا لهم حضور حقيقي في البانر؛ غير كذا نشتقهم
+ *   من اللون الأساسي بإزاحة بسيطة، فتبقى الخلفية بنفس جو البانر (بانر أزرق = خلفية زرقاء).
  * الخلفية تبقى غامقة بما يكفي حتى تبقى الكتابة البيضاء مقروءة.
+ *
+ * [boxAspect] = عرض/ارتفاع البانر المعروض (0 = نحلل الصورة كاملة)،
+ * [focusX]/[focusY] = نفس قيم BiasAlignment المستعملة في عرض البانر (من -1 إلى 1).
  */
-internal fun extractBannerPalette(img: ImageBitmap): AccountPalette {
+internal fun extractBannerPalette(
+    img: ImageBitmap,
+    boxAspect: Float = 0f,
+    focusX: Float = 0f,
+    focusY: Float = 0f
+): AccountPalette {
     val src = img.asAndroidBitmap()
-    val small = android.graphics.Bitmap.createScaledBitmap(src, 48, 48, true)
-    val px = IntArray(48 * 48)
-    small.getPixels(px, 0, 48, 0, 0, 48, 48)
-    if (small !== src) small.recycle()
+
+    // الجزء الظاهر من الصورة (نفس حساب ContentScale.Crop مع BiasAlignment)
+    var sx = 0; var sy = 0; var sw = src.width; var sh = src.height
+    if (boxAspect > 0f && sw > 0 && sh > 0) {
+        val imgAspect = sw.toFloat() / sh
+        if (imgAspect > boxAspect) {
+            sw = (sh * boxAspect).toInt().coerceIn(1, src.width)
+            sx = ((src.width - sw) * (focusX.coerceIn(-1f, 1f) + 1f) / 2f).toInt()
+        } else {
+            sh = (sw / boxAspect).toInt().coerceIn(1, src.height)
+            sy = ((src.height - sh) * (focusY.coerceIn(-1f, 1f) + 1f) / 2f).toInt()
+        }
+    }
+    val n = 64
+    val small = android.graphics.Bitmap.createBitmap(n, n, android.graphics.Bitmap.Config.ARGB_8888)
+    android.graphics.Canvas(small).drawBitmap(
+        src,
+        android.graphics.Rect(sx, sy, sx + sw, sy + sh),
+        android.graphics.Rect(0, 0, n, n),
+        android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
+    )
+    val px = IntArray(n * n)
+    small.getPixels(px, 0, n, 0, 0, n, n)
+    small.recycle()
 
     val bins = 24
     val wSum = FloatArray(bins)
-    val hSum = FloatArray(bins)
+    val cosSum = FloatArray(bins)
+    val sinSum = FloatArray(bins)
     val sSum = FloatArray(bins)
     val vSum = FloatArray(bins)
     var avgV = 0f
     val hsvArr = FloatArray(3)
-    for (c in px) {
+    for ((i, c) in px.withIndex()) {
         android.graphics.Color.colorToHSV(c, hsvArr)
         val h = hsvArr[0]; val s = hsvArr[1]; val v = hsvArr[2]
         avgV += v
         // البكسلات الرمادية أو الغامقة جداً ما تحدد لون الخلفية
-        if (s < 0.18f || v < 0.15f) continue
-        val w = s * (0.35f + v)
+        if (s < 0.15f || v < 0.15f) continue
+        // الجزء السفلي من البانر هو اللي يذوب بالخلفية، فوزنه أعلى شوي
+        val y = (i / n) / (n - 1f)
+        val w = s * (0.35f + v) * (0.6f + 0.8f * y)
         val b = ((h / 360f) * bins).toInt().coerceIn(0, bins - 1)
-        wSum[b] += w; hSum[b] += h * w; sSum[b] += s * w; vSum[b] += v * w
+        val rad = h * (PI.toFloat() / 180f)
+        wSum[b] += w; cosSum[b] += cos(rad) * w; sinSum[b] += sin(rad) * w
+        sSum[b] += s * w; vSum[b] += v * w
     }
     avgV /= px.size
 
-    // أقوى الألوان (مع ابتعاد 40° على الأقل بين لون ولون)
-    val order = (0 until bins).filter { wSum[it] > 0f }.sortedByDescending { wSum[it] }
-    val picks = ArrayList<Triple<Float, Float, Float>>() // h, s, v
-    for (b in order) {
-        val h = hSum[b] / wSum[b]
-        if (picks.none { hueDist(it.first, h) < 40f }) picks.add(Triple(h, sSum[b] / wSum[b], vSum[b] / wSum[b]))
-        if (picks.size == 3) break
-    }
     val total = wSum.sum()
-    if (picks.isEmpty() || total < 6f) {
+    if (total < 0.0026f * px.size) {
         // بانر رمادي/أسود/أبيض تقريباً: خلفية محايدة مائلة لدرجة سطوع الصورة
         val g = (0.10f + avgV * 0.12f)
         return AccountPalette(
@@ -113,15 +149,44 @@ internal fun extractBannerPalette(img: ImageBitmap): AccountPalette {
             listOf(Color(0xFF5A6477), Color(0xFF3F4757), Color(0xFF6B7488)), hue = 0f
         )
     }
-    val main = picks[0]
-    val second = picks.getOrNull(1) ?: Triple((main.first + 32f) % 360f, main.second, main.third)
-    val third = picks.getOrNull(2) ?: Triple(((main.first - 32f) + 360f) % 360f, main.second, main.third)
-    fun blob(t: Triple<Float, Float, Float>) = hsv(t.first, max(t.second, 0.55f), max(t.third, 0.80f))
+
+    // نختار أقوى 3 عناقيد ألوان مختلفة (فرق 45° على الأقل)، وكل لون ثانوي لازم يكون له حضور فعلي
+    val clusters = ArrayList<HueCluster>()
+    while (clusters.size < 3) {
+        var best = -1; var bestW = 0f
+        for (b in 0 until bins) {
+            val w = wSum[(b + bins - 1) % bins] + wSum[b] + wSum[(b + 1) % bins]
+            if (w > bestW) { bestW = w; best = b }
+        }
+        if (best < 0) break
+        val minShare = when (clusters.size) { 0 -> 0f; 1 -> 0.15f; else -> 0.12f }
+        if (bestW / total < minShare) break
+        var w = 0f; var cs = 0f; var sn = 0f; var s = 0f; var v = 0f
+        for (d in -2..2) {
+            val b = (best + d + bins) % bins
+            w += wSum[b]; cs += cosSum[b]; sn += sinSum[b]; s += sSum[b]; v += vSum[b]
+        }
+        if (w <= 0f) break
+        val hue = ((atan2(sn, cs) * 180f / PI.toFloat()) + 360f) % 360f
+        clusters.add(HueCluster(hue, s / w, v / w, w / total))
+        for (d in -3..3) {
+            val b = (best + d + bins) % bins
+            wSum[b] = 0f; cosSum[b] = 0f; sinSum[b] = 0f; sSum[b] = 0f; vSum[b] = 0f
+        }
+    }
+    if (clusters.isEmpty()) return NeutralAccountPalette
+
+    val main = clusters[0]
+    // إذا البانر ما فيه لون ثاني/ثالث واضح نشتقهم من الأساسي بإزاحة بسيطة (تدرج من نفس العائلة)
+    fun analog(off: Float) = HueCluster(((main.h + off) % 360f + 360f) % 360f, main.s, main.v, 0f)
+    val second = clusters.getOrNull(1) ?: analog(20f)
+    val third = clusters.getOrNull(2) ?: analog(-20f)
+    fun blob(c: HueCluster) = hsv(c.h, max(c.s, 0.55f), max(c.v, 0.80f))
     return AccountPalette(
-        top = hsv(main.first, (main.second * 0.9f).coerceIn(0.35f, 0.85f), 0.17f),
-        bottom = hsv(second.first, (second.second * 0.9f).coerceIn(0.35f, 0.85f), 0.27f),
+        top = hsv(main.h, (main.s * 0.9f).coerceIn(0.35f, 0.85f), 0.17f),
+        bottom = hsv(second.h, (second.s * 0.9f).coerceIn(0.35f, 0.85f), 0.27f),
         blobs = listOf(blob(main), blob(second), blob(third)),
-        hue = main.first
+        hue = main.h
     )
 }
 

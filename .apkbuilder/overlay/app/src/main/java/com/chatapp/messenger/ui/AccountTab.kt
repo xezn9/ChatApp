@@ -236,10 +236,16 @@ fun AccountTab(
     // ألوان الخلفية: من ألوان البانر تلقائياً، وإذا ما فيه بانر تتغير عشوائياً كل ما تدخل التبويب
     val bannerImg = rememberB64Image(profile.banner)
     val bannerGif = rememberBannerGif(myUid, profile.bannerGifV)
-    val bannerPalette by androidx.compose.runtime.produceState<AccountPalette?>(null, bannerImg) {
+    // نحلل الجزء الظاهر فقط من البانر: نفس أبعاد صندوق البانر (u*620 + شريط الحالة) ونفس موضع التركيز
+    val paletteStatusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val paletteScreenW = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp
+    val bannerAspect = paletteScreenW / (paletteScreenW * (620f / 1440f) + paletteStatusTop)
+    val bannerPalette by androidx.compose.runtime.produceState<AccountPalette?>(
+        null, bannerImg, bannerAspect, profile.bannerFx, profile.bannerFy
+    ) {
         val b = bannerImg
         value = if (b == null) null else kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-            runCatching { extractBannerPalette(b) }.getOrNull()
+            runCatching { extractBannerPalette(b, bannerAspect, profile.bannerFx, profile.bannerFy) }.getOrNull()
         }
     }
     var randomPalette by remember { mutableStateOf(randomAccountPalette()) }
