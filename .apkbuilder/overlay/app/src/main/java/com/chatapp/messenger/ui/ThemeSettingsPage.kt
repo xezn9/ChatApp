@@ -118,25 +118,22 @@ internal fun ThemeSettingsPage(onBack: () -> Unit) {
     // فلو تتحرك وقت اللمس كل الزجاج ينعاد حسابه كل فريم. تكمل من نفس المكان بعد ما توقف الحركة.
     var phase by androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
     androidx.compose.runtime.LaunchedEffect(Unit) {
-        var lastPhaseWrite = 0L
         var lastGlassChange = 0L
         launch {
             androidx.compose.runtime.snapshotFlow {
                 ThemeSettings.refraction + ThemeSettings.blur * 3f + ThemeSettings.transparency * 7f
             }.collect { lastGlassChange = System.nanoTime() }
         }
+        // حلقة بالوقت (بدون طلب فريم كل 16ms): كل تحديث للخلفية = إعادة حساب كل بطاقات الزجاج،
+        // فنخليه ~7 مرات بالثانية فقط (الحركة بطيئة جداً فما تنلاحظ)
+        var last = System.nanoTime()
         while (true) {
-            androidx.compose.runtime.withFrameNanos { now ->
-                val busy = scroll.isScrollInProgress || System.nanoTime() - lastGlassChange < 400_000_000L ||
-                    !PerfGate.ambientRunning
-                if (lastPhaseWrite == 0L || busy) {
-                    lastPhaseWrite = now
-                } else if (now - lastPhaseWrite >= 66_000_000L) {
-                    // ~15 تحديث/ثانية بدل كل فريم
-                    phase = (phase + (now - lastPhaseWrite) / 40_000_000_000f * (2 * PI).toFloat()) % (2 * PI).toFloat()
-                    lastPhaseWrite = now
-                }
-            }
+            kotlinx.coroutines.delay(if (PerfGate.lite) 300L else 150L)
+            val now = System.nanoTime()
+            val dt = (now - last).coerceAtMost(900_000_000L)
+            last = now
+            val busy = scroll.isScrollInProgress || now - lastGlassChange < 400_000_000L || !PerfGate.ambientRunning
+            if (!busy) phase = (phase + dt / 40_000_000_000f * (2 * PI).toFloat()) % (2 * PI).toFloat()
         }
     }
     val sky = if (dark) listOf(Color(0xFF0B1030), Color(0xFF1B1040), Color(0xFF2A1248))
@@ -482,12 +479,10 @@ private fun GlassSliderRow(
 @Composable
 private fun GlassPreview(dark: Boolean, accent: Color) {
     val pbd = rememberLayerBackdrop()
-    val t = rememberInfiniteTransition(label = "glassPreview")
-    val p by t.animateFloat(
-        0f, 1f,
-        infiniteRepeatable(tween(6500, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "glassPreviewP"
-    )
+    // يتحرك فقط وقت ما الصفحة ساكنة (يوقف أثناء التمرير واللمس) وبـ ~30 تحديث بالثانية بدل 60 مستمرة
+    val rawP = rememberGatedPingPong(6500, 33L)
+    // القراءة داخل lambda الموضع (مرحلة layout) حتى ما يعاد تركيب النموذج كل تحديث
+    fun pv(): Float = FastOutSlowInEasing.transform(rawP.value)
     val a2 = accent.shiftHue(70f)
     val a3 = accent.shiftHue(-70f)
     val outer = RoundedCornerShape(30.dp)
@@ -521,7 +516,7 @@ private fun GlassPreview(dark: Boolean, accent: Color) {
         val cardShape = RoundedCornerShape(34.dp)
         Box(
             Modifier
-                .offset { IntOffset((boxW.toPx() * (0.05f + 0.30f * p)).roundToInt(), 52.dp.roundToPx()) }
+                .offset { IntOffset((boxW.toPx() * (0.05f + 0.30f * pv())).roundToInt(), 52.dp.roundToPx()) }
                 .size(176.dp, 112.dp)
                 .drawBackdrop(
                     backdrop = pbd,
@@ -538,7 +533,7 @@ private fun GlassPreview(dark: Boolean, accent: Color) {
         // الكرة
         Box(
             Modifier
-                .offset { IntOffset((boxW.toPx() * (0.74f - 0.38f * p)).roundToInt(), 118.dp.roundToPx()) }
+                .offset { IntOffset((boxW.toPx() * (0.74f - 0.38f * pv())).roundToInt(), 118.dp.roundToPx()) }
                 .size(86.dp)
                 .drawBackdrop(
                     backdrop = pbd,
@@ -556,7 +551,7 @@ private fun GlassPreview(dark: Boolean, accent: Color) {
         val pill = RoundedCornerShape(50)
         Box(
             Modifier
-                .offset { IntOffset((boxW.toPx() * (0.07f + 0.10f * p)).roundToInt(), 184.dp.roundToPx()) }
+                .offset { IntOffset((boxW.toPx() * (0.07f + 0.10f * pv())).roundToInt(), 184.dp.roundToPx()) }
                 .size(124.dp, 44.dp)
                 .drawBackdrop(
                     backdrop = pbd,

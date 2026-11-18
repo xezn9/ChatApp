@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -69,6 +70,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.coerceIn
@@ -901,13 +903,16 @@ private fun CodeBg(T: () -> Float, lite: Boolean, bg: Color) {
 @Composable
 fun SplashPreview(style: Int, modifier: Modifier = Modifier) {
     val cfg = LocalConfiguration.current
-    val density = LocalDensity.current.density
+    val dens = LocalDensity.current
     val sw = cfg.screenWidthDp.toFloat().coerceAtLeast(320f)
     val sh = cfg.screenHeightDp.toFloat().coerceAtLeast(560f)
     val previewH = 330f
     val s = previewH / sh
     val previewW = sw * s
-    val screenPx = sh * density
+    val screenPx = sh * dens.density
+
+    // نرسم السبلاش مباشرة بالحجم الصغير (بتصغير الكثافة) بدل رسمه بحجم الشاشة الكامل وتصغيره: أخف بـ ~7 أضعاف
+    val scaled = remember(dens, s) { Density(dens.density * s, dens.fontScale) }
 
     val tState = remember { mutableFloatStateOf(0f) }
     var visible by remember { mutableStateOf(true) }
@@ -915,10 +920,21 @@ fun SplashPreview(style: Int, modifier: Modifier = Modifier) {
     LaunchedEffect(style, visible) {
         if (!visible) return@LaunchedEffect
         val loop = SPLASH_TOTAL + .9f
-        val start = withFrameNanos { it }
+        var clock = tState.floatValue
+        var last = withFrameNanos { it }
         while (true) {
-            val t = (withFrameNanos { it } - start) / 1_000_000_000f
-            tState.floatValue = t % loop
+            // أثناء التمرير/اللمس تتوقف الحركة حتى تبقى الصفحة سلسة، وتكمل من نفس المكان
+            if (!PerfGate.ambientRunning) {
+                kotlinx.coroutines.delay(100L)
+                last = withFrameNanos { it }
+                continue
+            }
+            val now = withFrameNanos { it }
+            val dn = now - last
+            if (dn < 33_000_000L) continue   // ~30 فريم/ثانية تكفي لمعاينة مصغرة
+            last = now
+            clock = (clock + dn / 1_000_000_000f) % loop
+            tState.floatValue = clock
         }
     }
 
@@ -936,12 +952,10 @@ fun SplashPreview(style: Int, modifier: Modifier = Modifier) {
             .border(1.dp, Color.White.copy(alpha = .18f), shape),
         contentAlignment = Alignment.Center
     ) {
-        Box(
-            Modifier
-                .requiredSize(sw.dp, sh.dp)
-                .graphicsLayer { scaleX = s; scaleY = s }
-        ) {
-            SplashContent(style, { tState.floatValue }, Modifier, false, true)
+        CompositionLocalProvider(LocalDensity provides scaled) {
+            Box(Modifier.requiredSize(sw.dp, sh.dp)) {
+                SplashContent(style, { tState.floatValue }, Modifier, false, true)
+            }
         }
     }
 }
