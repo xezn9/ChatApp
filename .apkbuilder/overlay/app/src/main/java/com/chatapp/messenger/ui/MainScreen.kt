@@ -158,6 +158,10 @@ private fun MainContent() {
     LaunchedEffect(myUid) {
         if (myUid.isNotEmpty()) Repo.privacyFlow(myUid).collect { PrivacyState.value = it }
     }
+    // شكل باركودي المخصص ينرفع للسيرفر (إذا تغيّر) حتى الباقين يشوفونه بشكلي
+    LaunchedEffect(myUid) {
+        if (myUid.isNotEmpty()) { delay(5000); QrStyleSync.publish(ctx) }
+    }
     // أي انتقال (تبويب/محادثة/بروفايل/مجموعة/نوافذ): نجمّد الخلفيات خلال الحركة
     val navKey = listOf(tab, chatWith?.uid, viewProfile?.uid, openGroupId, supportThread, groupOpen, stickerOpen, groupInfoOpen)
     LaunchedEffect(navKey) { PerfGate.hold(650) }

@@ -76,6 +76,12 @@ service cloud.firestore {
       allow write: if verified() && request.auth.uid == uid;
     }
 
+    // شكل باركود الحساب (الثيم/الخلفية/الملصقات): كل مفعّل يقرأ (إلا إذا صاحبه حاظرني)، وكل واحد يكتب شكله بس
+    match /qrStyles/{uid} {
+      allow read: if verified() && (request.auth.uid == uid || !blockedBy(uid));
+      allow write: if verified() && request.auth.uid == uid;
+    }
+
     // فهرس القصص: يخلّي كل المستخدمين يعرفون منو عنده قصة (محتوى القصة نفسه بـ profiles ومحمي بالحظر)
     match /stories/{uid} {
       allow read: if verified();

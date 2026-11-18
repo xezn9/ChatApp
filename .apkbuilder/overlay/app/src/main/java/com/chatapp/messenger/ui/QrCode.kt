@@ -179,6 +179,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.ByteArrayOutputStream
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.tasks.await
+import com.google.firebase.firestore.FirebaseFirestore
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.math.PI
@@ -293,6 +299,116 @@ private object QrStyle {
         }.toMap()
     fun saveDrag(ctx: Context, m: Map<Int, Offset>) {
         sp(ctx).edit().putString("stDrag", m.entries.joinToString(";") { "${it.key}:${it.value.x}:${it.value.y}" }).apply()
+    }
+}
+
+/* ───────────────────────── نشر شكل الباركود (حتى الباقين يشوفون باركودي بشكلي) ───────────────────────── */
+
+/** شكل باركود شخص مخزّن بالسيرفر. الصور المخصصة (خلفية / شكل) مضغوطة JPEG */
+internal class RemoteQrStyle(
+    val theme: Int,
+    val bg: String,
+    val bgImg: ByteArray?,
+    val dots: String,
+    val eye: String,
+    val shapeImg: ByteArray?,
+    val imgMode: Int,
+    val stickers: List<String>,
+    val drag: Map<Int, Offset>
+)
+
+/**
+ * شكلي (محفوظ محلياً بـ QrStyle) ينرفع لـ qrStyles/<uid>. أي شخص يفتح باركودي يشوفه بنفس شكلي.
+ * الصور المخصصة تتصغّر وتنضغط حتى تدخل بوثيقة وحدة (حد Firestore 1MB).
+ */
+internal object QrStyleSync {
+    private const val SIG_PREFS = "qr_style_sync"
+    private const val MAX_IMG_BYTES = 240_000
+
+    private fun encodeJpeg(file: File, maxSide: Int, startQuality: Int): String? = runCatching {
+        var bmp = decodeScaled(file, maxSide) ?: return null
+        val m = max(bmp.width, bmp.height)
+        if (m > maxSide) {
+            val k = maxSide.toFloat() / m
+            bmp = Bitmap.createScaledBitmap(bmp, (bmp.width * k).toInt().coerceAtLeast(1), (bmp.height * k).toInt().coerceAtLeast(1), true)
+        }
+        var q = startQuality
+        var result: String? = null
+        while (result == null) {
+            val out = ByteArrayOutputStream()
+            bmp.compress(Bitmap.CompressFormat.JPEG, q, out)
+            val b = out.toByteArray()
+            if (b.size <= MAX_IMG_BYTES || q <= 35) result = android.util.Base64.encodeToString(b, android.util.Base64.NO_WRAP)
+            else q -= 10
+        }
+        result
+    }.getOrNull()
+
+    /** يرفع شكلي الحالي (إذا تغيّر من آخر مرة). آمن يتنادى كل مرة: يتجاهل إذا ما تغيّر شي */
+    suspend fun publish(ctx: Context) {
+        val uid = Repo.auth.currentUser?.uid ?: return
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val bg = QrStyle.loadBg(ctx)
+                val shape = QrStyle.loadShapeImg(ctx)
+                val bgB64 = if (bg.startsWith("img:")) encodeJpeg(File(QrStyle.bgDir(ctx), bg.removePrefix("img:")), 720, 72) else null
+                val shB64 = if (shape.isNotEmpty()) encodeJpeg(File(QrStyle.shapeDir(ctx), shape), 512, 78) else null
+                val stickers = QrStyle.loadStickers(ctx)
+                val drag = QrStyle.loadDrag(ctx).entries.joinToString(";") { "${it.key}:${it.value.x}:${it.value.y}" }
+                val data = hashMapOf<String, Any>(
+                    "theme" to QrStyle.loadTheme(ctx),
+                    "bg" to (if (bg.startsWith("img:")) (if (bgB64 != null) "img" else "grad") else bg),
+                    "dots" to QrStyle.loadDots(ctx),
+                    "eye" to QrStyle.loadEye(ctx),
+                    "imgMode" to QrStyle.loadImgMode(ctx),
+                    "stickers" to stickers,
+                    "drag" to drag
+                )
+                if (bgB64 != null) data["bgImg"] = bgB64
+                if (shB64 != null) data["shapeImg"] = shB64
+                val sig = data.hashCode().toString()
+                val sp = ctx.getSharedPreferences(SIG_PREFS, Context.MODE_PRIVATE)
+                val last = sp.getString("sig_$uid", null)
+                val isDefault = data["theme"] == 0 && data["bg"] == "grad" && data["dots"] == "round" &&
+                    data["eye"] == "round" && shB64 == null && stickers.isEmpty()
+                // الشكل الافتراضي ولا مرة نشرت شي: ما نكتب شي (الكل يشوف الافتراضي أصلاً)
+                if (sig == last || (isDefault && last == null)) return@runCatching
+                FirebaseFirestore.getInstance().collection("qrStyles").document(uid).set(data).await()
+                sp.edit().putString("sig_$uid", sig).apply()
+            }
+        }
+    }
+
+    /** شكل باركود [uid] (null = ما نشر شكل = الافتراضي) */
+    fun flow(uid: String): Flow<RemoteQrStyle?> = callbackFlow {
+        if (uid.isBlank()) { trySend(null); close(); return@callbackFlow }
+        val reg = FirebaseFirestore.getInstance().collection("qrStyles").document(uid)
+            .addSnapshotListener { d, err ->
+                if (err != null || d == null || !d.exists()) { trySend(null); return@addSnapshotListener }
+                fun bytes(k: String) = d.getString(k)?.takeIf { it.isNotEmpty() }
+                    ?.let { runCatching { android.util.Base64.decode(it, android.util.Base64.NO_WRAP) }.getOrNull() }
+                val drag = (d.getString("drag") ?: "").split(";").mapNotNull { e ->
+                    val p = e.split(":")
+                    val i = p.getOrNull(0)?.toIntOrNull()
+                    val x = p.getOrNull(1)?.toFloatOrNull()
+                    val y = p.getOrNull(2)?.toFloatOrNull()
+                    if (i != null && x != null && y != null) i to Offset(x, y) else null
+                }.toMap()
+                trySend(
+                    RemoteQrStyle(
+                        theme = (d.getLong("theme") ?: 0L).toInt().coerceIn(0, qrThemeCount - 1),
+                        bg = d.getString("bg") ?: "grad",
+                        bgImg = bytes("bgImg"),
+                        dots = (d.getString("dots") ?: "round").takeIf { k -> qrDotShapes.any { it.first == k } } ?: "round",
+                        eye = (d.getString("eye") ?: "round").takeIf { k -> qrEyeShapes.any { it.first == k } } ?: "round",
+                        shapeImg = bytes("shapeImg"),
+                        imgMode = (d.getLong("imgMode") ?: 0L).toInt().coerceIn(0, 1),
+                        stickers = (d.get("stickers") as? List<*>)?.filterIsInstance<String>()?.filter { it.startsWith("s:") }?.take(2) ?: emptyList(),
+                        drag = drag
+                    )
+                )
+            }
+        awaitClose { reg.remove() }
     }
 }
 
@@ -1306,7 +1422,7 @@ fun QrCodeScreen(
     val fontFam = QrFont.family ?: FontFamily.Default
     LaunchedEffect(Unit) { QrFont.ensure(ctx) }
 
-    var fromIdx by remember { mutableIntStateOf(QrStyle.loadTheme(ctx)) }
+    var fromIdx by remember { mutableIntStateOf(if (isOther) 0 else QrStyle.loadTheme(ctx)) }
     var toIdx by remember { mutableIntStateOf(fromIdx) }
     val reveal = remember { Animatable(1f) }
     val pulse = remember { Animatable(1f) }
@@ -1315,16 +1431,16 @@ fun QrCodeScreen(
     var bgSize by remember { mutableStateOf(Size(1f, 1f)) }
     var qrPos by remember { mutableStateOf(Offset.Zero) }
 
-    var bgKey by remember { mutableStateOf(QrStyle.loadBg(ctx)) }
-    var customBgs by remember { mutableStateOf(QrStyle.customBgs(ctx)) }
-    var dotsKey by remember { mutableStateOf(QrStyle.loadDots(ctx)) }
-    var eyeKey by remember { mutableStateOf(QrStyle.loadEye(ctx)) }
-    var shapeImgKey by remember { mutableStateOf(QrStyle.loadShapeImg(ctx)) }
-    var imgMode by remember { mutableIntStateOf(QrStyle.loadImgMode(ctx)) }
-    var customShapes by remember { mutableStateOf(QrStyle.customShapes(ctx)) }
+    var bgKey by remember { mutableStateOf(if (isOther) "grad" else QrStyle.loadBg(ctx)) }
+    var customBgs by remember { mutableStateOf(if (isOther) emptyList() else QrStyle.customBgs(ctx)) }
+    var dotsKey by remember { mutableStateOf(if (isOther) "round" else QrStyle.loadDots(ctx)) }
+    var eyeKey by remember { mutableStateOf(if (isOther) "round" else QrStyle.loadEye(ctx)) }
+    var shapeImgKey by remember { mutableStateOf(if (isOther) "" else QrStyle.loadShapeImg(ctx)) }
+    var imgMode by remember { mutableIntStateOf(if (isOther) 0 else QrStyle.loadImgMode(ctx)) }
+    var customShapes by remember { mutableStateOf(if (isOther) emptyList() else QrStyle.customShapes(ctx)) }
     var cropSrc by remember { mutableStateOf<Bitmap?>(null) }
-    var stickerIds by remember { mutableStateOf(QrStyle.loadStickers(ctx)) }
-    val stDrag = remember { mutableStateMapOf<Int, Offset>().apply { putAll(QrStyle.loadDrag(ctx)) } }
+    var stickerIds by remember { mutableStateOf(if (isOther) emptyList() else QrStyle.loadStickers(ctx)) }
+    val stDrag = remember { mutableStateMapOf<Int, Offset>().apply { if (!isOther) putAll(QrStyle.loadDrag(ctx)) } }
     var stDragging by remember { mutableIntStateOf(-1) }
     val stField = remember { mutableStateOf(IntSize.Zero) }
     val blockedCoords = remember { mutableMapOf<String, LayoutCoordinates>() }
@@ -1361,15 +1477,45 @@ fun QrCodeScreen(
     var busyImage by remember { mutableStateOf(false) }
     var copied by remember { mutableStateOf(false) }
 
-    val bgImage by produceState<ImageBitmap?>(null, bgKey) {
-        value = if (!bgKey.startsWith("img:")) null else withContext(Dispatchers.IO) {
-            decodeScaled(File(QrStyle.bgDir(ctx), bgKey.removePrefix("img:")), 1600)?.asImageBitmap()
+    // باركود شخص ثاني: نعرضه بالشكل اللي هو مخصصه (من qrStyles/<uid>) مو بشكلي
+    var remoteBg by remember { mutableStateOf<ByteArray?>(null) }
+    var remoteShape by remember { mutableStateOf<ByteArray?>(null) }
+    if (isOther) {
+        LaunchedEffect(uid) {
+            QrStyleSync.flow(uid).collect { st ->
+                remoteBg = st?.bgImg
+                remoteShape = st?.shapeImg
+                val th = st?.theme ?: 0
+                fromIdx = th; toIdx = th
+                bgKey = if (st?.bgImg != null) "img:remote" else (st?.bg?.takeIf { !it.startsWith("img") } ?: "grad")
+                dotsKey = st?.dots ?: "round"
+                eyeKey = st?.eye ?: "round"
+                shapeImgKey = if (st?.shapeImg != null) "remote" else ""
+                imgMode = st?.imgMode ?: 0
+                stickerIds = st?.stickers ?: emptyList()
+                stDrag.clear()
+                st?.drag?.let { stDrag.putAll(it) }
+            }
+        }
+    } else {
+        // شكلي: أنشره للسيرفر بعد أي تغيير (بتأخير بسيط حتى ما نكتب مع كل لمسة)
+        LaunchedEffect(toIdx, bgKey, dotsKey, eyeKey, shapeImgKey, imgMode, stickerIds, stDrag.toMap()) {
+            delay(1500)
+            QrStyleSync.publish(ctx)
         }
     }
 
-    val shapeImage by produceState<ImageBitmap?>(null, shapeImgKey) {
+    val bgImage by produceState<ImageBitmap?>(null, bgKey, remoteBg) {
+        value = if (!bgKey.startsWith("img:")) null else withContext(Dispatchers.IO) {
+            if (isOther) remoteBg?.let { b -> runCatching { BitmapFactory.decodeByteArray(b, 0, b.size)?.asImageBitmap() }.getOrNull() }
+            else decodeScaled(File(QrStyle.bgDir(ctx), bgKey.removePrefix("img:")), 1600)?.asImageBitmap()
+        }
+    }
+
+    val shapeImage by produceState<ImageBitmap?>(null, shapeImgKey, remoteShape) {
         value = if (shapeImgKey.isEmpty()) null else withContext(Dispatchers.IO) {
-            decodeScaled(File(QrStyle.shapeDir(ctx), shapeImgKey), 900)?.asImageBitmap()
+            if (isOther) remoteShape?.let { b -> runCatching { BitmapFactory.decodeByteArray(b, 0, b.size)?.asImageBitmap() }.getOrNull() }
+            else decodeScaled(File(QrStyle.shapeDir(ctx), shapeImgKey), 900)?.asImageBitmap()
         }
     }
     val qrShape = QrShape(dotsKey, eyeKey, shapeImage, imgMode)
@@ -1461,7 +1607,7 @@ fun QrCodeScreen(
 
     Box(
         Modifier.fillMaxSize().pointerInput(stickerIds) {
-            if (stickerIds.isEmpty()) return@pointerInput
+            if (stickerIds.isEmpty() || isOther) return@pointerInput
             // سحب الملصقات: نلتقط اللمسة أولاً (Initial) إذا نزلت على ملصق وبمكان ما فيه عنصر تفاعلي
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
@@ -1833,8 +1979,11 @@ fun QrCodeScreen(
 
                 // ───── فقاعات زجاجية تطفو ─────
                 Row(Modifier.blockSt("btns"), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.Top) {
-                    OrbAction(AppIcons.PaintBrush, "التصميم", bd, fontFam, eBtn[0].value, bob, 0f) { sheet = QrSheet.Brush }
-                    OrbAction(StickerFaceIcon, "ملصقات", bd, fontFam, eBtn[1].value, bob, 0.25f) { sheet = QrSheet.Stickers }
+                    // التعديل (تصميم/ملصقات) لباركودي فقط، باركود غيري أشوفه بشكله وما أگدر أعدّله
+                    if (!isOther) {
+                        OrbAction(AppIcons.PaintBrush, "التصميم", bd, fontFam, eBtn[0].value, bob, 0f) { sheet = QrSheet.Brush }
+                        OrbAction(StickerFaceIcon, "ملصقات", bd, fontFam, eBtn[1].value, bob, 0.25f) { sheet = QrSheet.Stickers }
+                    }
                     OrbAction(AppIcons.Share, "مشاركة", bd, fontFam, eBtn[2].value, bob, 0.5f) { sheet = QrSheet.Share }
                     OrbAction(
                         if (copied) Icons.Filled.Check else AppIcons.CopyIcon, if (copied) "اننسخ" else "نسخ", bd, fontFam,
