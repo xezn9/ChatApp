@@ -318,19 +318,14 @@ object Support {
 // ---------------------------------------------------------------------------
 @Composable
 internal fun AppLogo(size: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
-    val fg = ImageBitmap_fg()
-    Box(
-        modifier.size(size).clip(CircleShape)
-            .background(Brush.verticalGradient(listOf(Color(0xFF01144E), Color(0xFF000E3E)))),
-        contentAlignment = Alignment.Center
-    ) {
-        // الأيقونة التكيفية تحتاج تكبير حتى تملا الدائرة
-        Image(
-            fg, null,
-            Modifier.size(size * 1.5f),
-            contentScale = ContentScale.Fit
-        )
-    }
+    // نفس الأيقونة اللي اختارها المستخدم بإعدادات الثيم (تتغير مباشرة)
+    val icons = com.chatapp.messenger.ui.theme.ThemeSettings.icons
+    val res = icons[com.chatapp.messenger.ui.theme.ThemeSettings.iconIndex.coerceIn(0, icons.lastIndex)].previewRes
+    Image(
+        androidx.compose.ui.res.painterResource(res), null,
+        modifier.size(size).clip(CircleShape),
+        contentScale = ContentScale.Crop
+    )
 }
 
 @Composable

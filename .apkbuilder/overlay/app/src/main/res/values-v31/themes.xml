@@ -5,5 +5,8 @@
         <item name="android:statusBarColor">@color/splash_bg</item>
         <item name="android:navigationBarColor">@color/splash_bg</item>
         <item name="android:windowSplashScreenBackground">@color/splash_bg</item>
+        <!-- أيقونة فارغة: نلغي ظهور أيقونة التطبيق بشاشة الإقلاع الأصلية -->
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_empty</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@android:color/transparent</item>
     </style>
 </resources>

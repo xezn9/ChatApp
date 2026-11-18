@@ -175,7 +175,12 @@ class MessageListenerService : Service() {
         }
         val pi = PendingIntent.getActivity(this, id, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val icon = if (fromApp) try {
-            android.graphics.BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher_foreground)
+            android.graphics.BitmapFactory.decodeResource(
+                resources,
+                com.chatapp.messenger.ui.theme.ThemeSettings.icons[
+                    com.chatapp.messenger.ui.theme.ThemeSettings.iconIndex.coerceIn(0, com.chatapp.messenger.ui.theme.ThemeSettings.icons.lastIndex)
+                ].previewRes
+            )
         } catch (_: Exception) { null } else null
         val n = NotificationCompat.Builder(this, ChatApp.CHANNEL_MESSAGES)
             .setSmallIcon(R.drawable.ic_notification)
