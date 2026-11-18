@@ -283,7 +283,12 @@ data class Profile(
     /** true إذا هذا المستخدم حاظرني (ما أقدر أشوف ملفه) */
     val restricted: Boolean = false,
     /** true إذا الحساب معطّل أو محذوف (ما يظهر ملفه ولا يمكن مراسلته) */
-    val unavailable: Boolean = false
+    val unavailable: Boolean = false,
+    /**
+     * حساب خاص: قائمة المتابعين/أتابعهُ وقصته ما تبين إلا للي صاحب الحساب يتابعهم.
+     * (يُخزَّن بـ profiles/<uid>.private حتى يقدر الكل يقرأه)
+     */
+    val isPrivate: Boolean = false
 )
 
 /** كل التعامل مع Firebase هنا. الواجهات فقط تستدعي هذي الدوال. */
@@ -1792,7 +1797,8 @@ object Repo {
                         badge = d.getString("badge") ?: "",
                         introOn = d.getBoolean("introOn") == true,
                         intro = d.getString("intro") ?: "",
-                        introSticker = d.getString("introSticker") ?: ""
+                        introSticker = d.getString("introSticker") ?: "",
+                        isPrivate = d.getBoolean("private") == true
                     )
                 )
             }
@@ -1820,17 +1826,64 @@ object Repo {
         awaitClose { reg.remove() }
     }
 
-    /** الملف الشخصي + القصة. قصة غير الأصدقاء تنقرأ فقط إذا كانت عامة، وإلا تطلع null */
+    /**
+     * الملف الشخصي + القصة:
+     * - حسابي: قصتي دائماً.
+     * - حساب عادي: الصديق يشوف القصة دائماً، وغير الصديق فقط إذا القصة عامة.
+     * - حساب خاص: القصة تبين فقط إذا صاحب الحساب يتابعني (علاقتي معه RECEIVED أو FRIENDS)، وحتى القصة "العامة" ما تبين لغيرهم.
+     */
     @OptIn(ExperimentalCoroutinesApi::class)
     fun profileFlow(uid: String): Flow<Profile> {
-        val story: Flow<Story?> =
-            if (uid == auth.currentUser?.uid) storyDocFlow(uid)
-            else isFriendFlow(uid).flatMapLatest { friend ->
-                // الصديق يشوف القصة دائماً. غير الصديق يشوفها فقط إذا القصة عامة (حسب الفهرس العام)
-                if (friend) storyDocFlow(uid)
-                else storyPublicFlow(uid).flatMapLatest { pub -> if (pub) storyDocFlow(uid) else flowOf(null) }
+        if (uid == auth.currentUser?.uid) {
+            return combine(basicProfileFlow(uid), storyDocFlow(uid)) { p, s -> p.copy(story = s) }
+        }
+        return combine(basicProfileFlow(uid), relationFlow(uid)) { p, rel -> p to rel }
+            .distinctUntilChanged()
+            .flatMapLatest { (p, rel) ->
+                val ownerFollowsMe = rel == Relation.RECEIVED || rel == Relation.FRIENDS
+                val story: Flow<Story?> = when {
+                    p.restricted -> flowOf(null)
+                    p.isPrivate -> if (ownerFollowsMe) storyDocFlow(uid) else flowOf(null)
+                    rel == Relation.FRIENDS -> storyDocFlow(uid)
+                    else -> storyPublicFlow(uid).flatMapLatest { pub -> if (pub) storyDocFlow(uid) else flowOf(null) }
+                }
+                story.map { st -> p.copy(story = st) }
             }
-        return combine(basicProfileFlow(uid), story) { p, s -> p.copy(story = s) }
+    }
+
+    /** هل أگدر أشوف متابعين/أتابعهُ هذا الشخص؟ (حسابه عادي، أو خاص وهو يتابعني) */
+    fun canSeeFollows(p: Profile, rel: Relation, isMe: Boolean): Boolean =
+        isMe || !p.isPrivate || rel == Relation.RECEIVED || rel == Relation.FRIENDS
+
+    /** تشغيل/إيقاف "حساب خاص" لحسابي (يُحفظ بملفي الشخصي حتى يقراه الباقون) */
+    fun setPrivateAccount(value: Boolean) {
+        val u = auth.currentUser ?: return
+        db.collection("profiles").document(u.uid)
+            .set(mapOf("private" to value), SetOptions.merge())
+    }
+
+    /**
+     * قائمة متابعين [followers]=true أو أتابعهُ [followers]=false لأي مستخدم.
+     * تطلع null إذا القواعد رفضت القراءة (حساب خاص لا يتابعني / حاظرني).
+     */
+    fun userFollowsFlow(uid: String, followers: Boolean): Flow<List<String>?> = callbackFlow {
+        if (uid.isBlank()) { close(); return@callbackFlow }
+        val field = if (followers) "to" else "from"
+        val other = if (followers) "from" else "to"
+        val reg = db.collection("follows").whereEqualTo(field, uid)
+            .addSnapshotListener { snap, err ->
+                if (err != null) trySend(null)
+                else if (snap != null) {
+                    trySend(
+                        snap.documents.mapNotNull { d ->
+                            val id = d.getString(other) ?: return@mapNotNull null
+                            id to (d.getTimestamp("at", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                                ?.toDate()?.time ?: 0L)
+                        }.sortedByDescending { it.second }.map { it.first }
+                    )
+                }
+            }
+        awaitClose { reg.remove() }
     }
 
     /** ينقل قصة قديمة (كانت داخل profiles) للمكان الجديد المحمي، مرة وحدة */

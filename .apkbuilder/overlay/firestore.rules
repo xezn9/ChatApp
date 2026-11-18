@@ -31,6 +31,23 @@ service cloud.firestore {
       return exists(/databases/$(database)/documents/friendships/$(a < b ? a + '_' + b : b + '_' + a));
     }
 
+    // هل حساب [owner] خاص؟ (profiles/<owner>.private)
+    function isPrivateAccount(owner) {
+      return exists(/databases/$(database)/documents/profiles/$(owner))
+        && get(/databases/$(database)/documents/profiles/$(owner)).data.get('private', false) == true;
+    }
+
+    // هل [owner] يتابعني؟ (للحساب الخاص: بس اللي يتابعهم صاحب الحساب يشوفون قصته وقوائمه)
+    function ownerFollowsMe(owner) {
+      return exists(/databases/$(database)/documents/follows/$(owner + '_' + request.auth.uid));
+    }
+
+    // هل أگدر أشوف قوائم المتابعة (متابعين/أتابعهُ) لـ [owner]؟
+    function canSeeFollowsOf(owner) {
+      return request.auth.uid == owner
+        || (!blockedBy(owner) && (!isPrivateAccount(owner) || ownerFollowsMe(owner)));
+    }
+
     // الحساب غير محظور من الإدارة (الحظر يكتبه السيرفر فقط بعد التحقق من البلاغ)
     function notBanned() {
       return !exists(/databases/$(database)/documents/bans/$(request.auth.uid))
@@ -73,7 +90,9 @@ service cloud.firestore {
     // محتوى القصة: صاحبها وأصدقاؤه دائماً، وغير الأصدقاء فقط إذا القصة "عامة"
     match /storyData/{uid} {
       allow read: if verified() && (request.auth.uid == uid
-        || (!blockedBy(uid) && (isFriendWith(uid) || resource.data.get('public', false) == true)));
+        || (!blockedBy(uid) && (isPrivateAccount(uid)
+          ? ownerFollowsMe(uid)
+          : (isFriendWith(uid) || resource.data.get('public', false) == true))));
       allow write: if verified() && request.auth.uid == uid;
     }
 
@@ -86,7 +105,7 @@ service cloud.firestore {
       allow create, update: if verified()
         && request.auth.uid == viewer
         && viewer != uid
-        && (isFriendWith(uid) || storyIsPublic(uid)) && !blockedBy(uid)
+        && (isPrivateAccount(uid) ? ownerFollowsMe(uid) : (isFriendWith(uid) || storyIsPublic(uid))) && !blockedBy(uid)
         && request.resource.data.keys().hasOnly(['uid', 'storyAt', 'liked', 'at', 'likedAt'])
         && request.resource.data.uid == viewer
         && request.resource.data.liked is bool;
@@ -97,8 +116,10 @@ service cloud.firestore {
     // استثناء الترحيل: صداقة قديمة موجودة تسمح لأي طرف يكتب وثيقتي المتابعة مرة وحدة
     match /follows/{fid} {
       allow get: if verified() && request.auth.uid in fid.split('_');
+      // قوائمي أنا دائماً. وقوائم غيري (متابعين: to == X / أتابعهُ: from == X) إذا حسابه عادي أو خاص وهو يتابعني
       allow list: if verified()
-        && (resource.data.to == request.auth.uid || resource.data.from == request.auth.uid);
+        && (resource.data.to == request.auth.uid || resource.data.from == request.auth.uid
+          || canSeeFollowsOf(resource.data.from) || canSeeFollowsOf(resource.data.to));
       allow create: if verified()
         && fid.split('_').size() == 2
         && request.resource.data.keys().hasOnly(['from', 'to', 'at'])
