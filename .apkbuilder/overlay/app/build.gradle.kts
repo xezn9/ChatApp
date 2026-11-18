@@ -17,8 +17,8 @@ android {
         minSdk = 24
         targetSdk = 34
         // ارفع versionCode (رقم صحيح أكبر) مع كل نسخة جديدة تنشرها، حتى يظهر التحديث للمستخدمين
-        versionCode = 38
-        versionName = "2.27"
+        versionCode = 39
+        versionName = "2.28"
     }
 
     // مفتاح توقيع ثابت: كل نسخة تبنيها (من أي جهاز أو GitHub Actions) تنوقّع بنفس المفتاح،
