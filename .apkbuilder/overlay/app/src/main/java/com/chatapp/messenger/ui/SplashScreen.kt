@@ -188,6 +188,7 @@ private fun BlueSplash(T: () -> Float, modifier: Modifier, useInsets: Boolean) {
             Particles(T)
             Flash(T)
 
+            val colShift = maxHeight * .04f
             // طبقة الخروج بحجم الشاشة كلها حتى ما تقص التوهج حول الشعار
             Box(
                 Modifier
@@ -204,7 +205,7 @@ private fun BlueSplash(T: () -> Float, modifier: Modifier, useInsets: Boolean) {
             Column(
                 Modifier
                     .align(Alignment.Center)
-                    .offset(y = -(maxHeight * .04f)),
+                    .offset(y = -colShift),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(gap)
             ) {
