@@ -361,7 +361,8 @@ private fun MainContent() {
                                 onOpenSupport = { supportThread = it },
                                 menuCmd = homeMenuCmd,
                                 onMenuCmdHandled = { homeMenuCmd = 0 },
-                                onSelectingChange = { homeSelecting = it }
+                                onSelectingChange = { homeSelecting = it },
+                                active = selected
                             )
                             1 -> GroupsTab(
                                 onOpenGroup = { openGroupId = it.id; groupInfoOpen = false },

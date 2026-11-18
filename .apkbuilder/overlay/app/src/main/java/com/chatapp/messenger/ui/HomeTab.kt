@@ -8,6 +8,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import com.chatapp.messenger.ActiveStory
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.SizeTransform
@@ -139,7 +140,8 @@ fun HomeTab(
     // أوامر قائمة ⋮ (الزر والقائمة يُرسمان من MainScreen فوق المبدّل): 1 تحديد، 2 مقدمة، 3 نشاط
     menuCmd: Int = 0,
     onMenuCmdHandled: () -> Unit = {},
-    onSelectingChange: (Boolean) -> Unit = {}
+    onSelectingChange: (Boolean) -> Unit = {},
+    active: Boolean = true
 ) {
     val myUid = remember { Repo.auth.currentUser?.uid ?: "" }
     val users by remember { Repo.usersFlow() }.collectAsState(initial = emptyList())
@@ -157,6 +159,8 @@ fun HomeTab(
     val previewOverrides by remember(myUid) { Repo.previewOverridesFlow(myUid) }.collectAsState(initial = emptyMap())
     // لكل واجهة بحثها المستقل (حتى ما يتلخبط البحث أثناء حركة التبديل)
     var queryChats by remember { mutableStateOf("") }
+    var searchExpanded by remember { mutableStateOf(false) }
+    LaunchedEffect(active) { if (!active) searchExpanded = false }
     // قصص كل المستخدمين (مع قصتي أولاً)
     val stories by remember { Repo.activeStoriesFlow() }.collectAsState(initial = emptyList())
     var viewIndex by remember { mutableStateOf<Int?>(null) }
@@ -294,7 +298,6 @@ fun HomeTab(
                         scaleY = sc
                     }
                 ) {
-            if (mode != 1) SearchField(query, "ابحث بالاسم أو اليوزر") { queryChats = it }
             if (q.isEmpty() && mode == 0) {
                 StoriesRow(stories, myUid) { i ->
                     storySnapshot = stories
@@ -469,6 +472,21 @@ fun HomeTab(
                 }
             }
         }
+    }
+
+    // بحث سفلي يتحول من زر دائري إلى حقل زجاجي، ويختفي عند مغادرة تبويب Home
+    AnimatedVisibility(
+        visible = active && homeMode == 0 && !selecting,
+        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 108.dp),
+        enter = fadeIn(tween(180)) + slideInVertically(spring(dampingRatio = 0.78f, stiffness = 420f)) { it / 2 },
+        exit = fadeOut(tween(140)) + slideOutVertically(tween(190)) { it / 2 }
+    ) {
+        SearchDock(
+            value = queryChats,
+            expanded = searchExpanded,
+            onExpandedChange = { searchExpanded = it },
+            onChange = { queryChats = it }
+        )
     }
 
     // قائمة الضغط المطوّل على محادثة
@@ -662,6 +680,64 @@ fun GroupsTab(onOpenGroup: (GroupItem) -> Unit, onRequestLogout: () -> Unit) {
 private fun CenterText(text: String) {
     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
         Text(text, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f))
+    }
+}
+
+/** زر البحث السفلي: تمدد نابضي إلى حقل بحث وتقلص عند الإغلاق */
+@Composable
+private fun SearchDock(
+    value: String,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    onChange: (String) -> Unit
+) {
+    val fg = MaterialTheme.colorScheme.onBackground
+    val shape = if (expanded) RoundedCornerShape(28.dp) else CircleShape
+    Row(
+        Modifier
+            .animateContentSize(spring(dampingRatio = 0.72f, stiffness = 360f))
+            .then(if (expanded) Modifier.fillMaxWidth(0.92f) else Modifier.size(54.dp))
+            .clip(shape)
+            .background(fg.copy(alpha = 0.12f))
+            .border(1.dp, fg.copy(alpha = 0.20f), shape)
+            .clickable { if (!expanded) onExpandedChange(true) }
+            .padding(horizontal = if (expanded) 17.dp else 0.dp, vertical = if (expanded) 13.dp else 0.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = if (expanded) Arrangement.Start else Arrangement.Center
+    ) {
+        Icon(
+            Icons.Filled.Search, "بحث",
+            tint = fg.copy(alpha = 0.78f),
+            modifier = Modifier.size(22.dp).clickable { onExpandedChange(!expanded) }
+        )
+        androidx.compose.animation.AnimatedVisibility(
+            visible = expanded,
+            enter = fadeIn(tween(170, delayMillis = 70)),
+            exit = fadeOut(tween(90))
+        ) {
+            Row(
+                Modifier.padding(start = 10.dp).weight(1f),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(Modifier.weight(1f)) {
+                    if (value.isEmpty()) Text("ابحث بالاسم أو اليوزر", color = fg.copy(alpha = 0.52f), fontSize = 15.sp)
+                    BasicTextField(
+                        value = value,
+                        onValueChange = onChange,
+                        singleLine = true,
+                        textStyle = TextStyle(fontFamily = AppFont, color = fg, fontSize = 15.sp),
+                        cursorBrush = SolidColor(AccentBlue),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                if (value.isNotEmpty()) {
+                    Icon(Icons.Filled.Close, "مسح", tint = fg.copy(alpha = 0.65f),
+                        modifier = Modifier.padding(start = 8.dp).size(19.dp).clickable { onChange("") })
+                }
+                Icon(Icons.Filled.Close, "إغلاق", tint = fg.copy(alpha = 0.65f),
+                    modifier = Modifier.padding(start = 10.dp).size(19.dp).clickable { onExpandedChange(false) })
+            }
+        }
     }
 }
 
