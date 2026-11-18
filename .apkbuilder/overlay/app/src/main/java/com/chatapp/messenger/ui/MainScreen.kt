@@ -152,11 +152,6 @@ private fun MainContent() {
     androidx.activity.compose.BackHandler(enabled = tab == 2) { tab = 0 }
     var homeMenuCmd by remember { mutableStateOf(0) }
     var homeSelecting by remember { mutableStateOf(false) }
-    var homeSearchQuery by remember { mutableStateOf("") }
-    var homeSearchExpanded by remember { mutableStateOf(false) }
-    LaunchedEffect(tab, homeMode, homeSelecting) {
-        if (tab != 0 || homeMode != 0 || homeSelecting) homeSearchExpanded = false
-    }
     // عدد طلبات الرسائل الجديدة (يظهر على زر "الطلبات")
     val requestCount by remember(myUid) { Repo.requestCountFlow(myUid) }.collectAsState(initial = 0)
     // إعدادات خصوصيتي: تنقرأ هنا مرة وحدة وتنتشر لكل التطبيق (حالة الاتصال، مقروء، آخر ظهور)
@@ -366,9 +361,7 @@ private fun MainContent() {
                                 onOpenSupport = { supportThread = it },
                                 menuCmd = homeMenuCmd,
                                 onMenuCmdHandled = { homeMenuCmd = 0 },
-                                onSelectingChange = { homeSelecting = it },
-                                active = selected,
-                                queryChats = homeSearchQuery
+                                onSelectingChange = { homeSelecting = it }
                             )
                             1 -> GroupsTab(
                                 onOpenGroup = { openGroupId = it.id; groupInfoOpen = false },
@@ -410,7 +403,7 @@ private fun MainContent() {
                 tabsCount = 3,
                 modifier = Modifier
                     .navigationBarsPadding()
-                    .padding(start = 67.dp, end = 5.dp, top = 24.dp, bottom = 24.dp)
+                    .padding(horizontal = 36f.dp, vertical = 24f.dp)
             ) {
                 // نفس تركيبة الكتالوج: Box + paint بدل Icon، والنص 12sp
                 tabs.forEachIndexed { index, (painter, label) ->
@@ -445,24 +438,6 @@ private fun MainContent() {
             }
         }
 
-        // زر البحث ملاصق للشريط السفلي وعلى مستواه؛ يتمدد أفقياً من مكانه ويختفي مع تبديل التبويب.
-        AnimatedVisibility(
-            visible = tab == 0 && homeMode == 0 && !homeSelecting && open == null &&
-                profileOpen == null && chatGroupId == null && supportThread == null && !overlayOpen,
-            modifier = Modifier.align(Alignment.BottomStart)
-                .navigationBarsPadding()
-                .padding(start = 10.dp, bottom = 29.dp),
-            enter = fadeIn(tween(180)) + slideInVertically(spring(dampingRatio = 0.78f, stiffness = 420f)) { it / 3 },
-            exit = fadeOut(tween(140)) + slideOutVertically(tween(190)) { it / 3 }
-        ) {
-            SearchDock(
-                value = homeSearchQuery,
-                expanded = homeSearchExpanded,
-                onExpandedChange = { homeSearchExpanded = it },
-                onChange = { homeSearchQuery = it }
-            )
-        }
-
         // مبدّل المحادثات/المجموعات: كبسولة مستقلة بتصميم مختلف عن الشريط السفلي،
         // خارج صندوق layerBackdrop حتى ما يصير كراش
         AnimatedVisibility(
@@ -493,15 +468,20 @@ private fun MainContent() {
         if (!menuBtnVisible && homeMenuOpen) homeMenuOpen = false
         val screenRtl = androidx.compose.ui.platform.LocalLayoutDirection.current ==
             androidx.compose.ui.unit.LayoutDirection.Rtl
-        if (menuBtnVisible) {
-            androidx.compose.runtime.CompositionLocalProvider(
-                androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr
+        androidx.compose.runtime.CompositionLocalProvider(
+            androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr
+        ) {
+            // ظهور/اختفاء بحركة: تكبير نابضي + تلاشي (عند الدخول لأي واجهة ثانية يختفي، وعند الرجوع يظهر)
+            AnimatedVisibility(
+                visible = menuBtnVisible,
+                modifier = Modifier.align(if (screenRtl) Alignment.TopEnd else Alignment.TopStart),
+                enter = scaleIn(spring(0.7f, 420f), initialScale = 0.4f) + fadeIn(tween(200)),
+                exit = scaleOut(tween(180), targetScale = 0.4f) + fadeOut(tween(150))
             ) {
                 GlassButton(
                     onClick = { homeMenuOpen = true },
                     backdrop = backdrop,
                     modifier = Modifier
-                        .align(if (screenRtl) Alignment.TopEnd else Alignment.TopStart)
                         .statusBarsPadding()
                         .padding(start = 12.dp, end = 12.dp, top = 10.dp)
                         .size(44.dp)

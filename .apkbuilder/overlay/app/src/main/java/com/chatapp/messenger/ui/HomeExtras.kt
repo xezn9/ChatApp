@@ -74,6 +74,7 @@ import com.chatapp.messenger.Profile
 import com.chatapp.messenger.Repo
 import com.chatapp.messenger.UserItem
 import com.chatapp.messenger.ui.glass.GlassButton
+import com.chatapp.messenger.ui.glass.LiquidToggle
 import com.chatapp.messenger.ui.theme.AppFont
 import com.chatapp.messenger.ui.theme.isAppDark
 import com.kyant.backdrop.Backdrop
@@ -344,9 +345,12 @@ internal fun ChatIntroScreen(onDismiss: () -> Unit) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("إظهار مقدمة الدردشة", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                    Switch(
-                        checked = on, onCheckedChange = { on = it },
-                        colors = SwitchDefaults.colors(checkedTrackColor = AccentBlue, checkedThumbColor = Color.White)
+                    LiquidToggle(
+                        selected = { on },
+                        onSelect = { on = it },
+                        backdrop = bd,
+                        dark = dark,
+                        accent = AccentBlue
                     )
                 }
                 Spacer(Modifier.height(12.dp))
