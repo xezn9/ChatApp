@@ -410,7 +410,7 @@ private fun MainContent() {
                 tabsCount = 3,
                 modifier = Modifier
                     .navigationBarsPadding()
-                    .padding(start = 67f.dp, end = 5f.dp, vertical = 24f.dp)
+                    .padding(start = 67.dp, end = 5.dp, top = 24.dp, bottom = 24.dp)
             ) {
                 // نفس تركيبة الكتالوج: Box + paint بدل Icon، والنص 12sp
                 tabs.forEachIndexed { index, (painter, label) ->
