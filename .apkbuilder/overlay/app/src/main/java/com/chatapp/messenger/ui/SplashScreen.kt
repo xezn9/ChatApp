@@ -188,10 +188,10 @@ private fun BlueSplash(T: () -> Float, modifier: Modifier, useInsets: Boolean) {
             Particles(T)
             Flash(T)
 
-            Column(
+            // طبقة الخروج بحجم الشاشة كلها حتى ما تقص التوهج حول الشعار
+            Box(
                 Modifier
-                    .align(Alignment.Center)
-                    .offset(y = -(maxHeight * .04f))
+                    .fillMaxSize()
                     .graphicsLayer {
                         val x = prog(T(), OUT_START, .45f, LiftE)
                         alpha = 1f - x
@@ -199,7 +199,12 @@ private fun BlueSplash(T: () -> Float, modifier: Modifier, useInsets: Boolean) {
                         scaleY = 1f + .18f * x
                         renderEffect = if (x > 0f && Build.VERSION.SDK_INT >= 31)
                             BlurEffect(10f * x * density, 10f * x * density) else null
-                    },
+                    }
+            ) {
+            Column(
+                Modifier
+                    .align(Alignment.Center)
+                    .offset(y = -(maxHeight * .04f)),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(gap)
             ) {
@@ -219,8 +224,9 @@ private fun BlueSplash(T: () -> Float, modifier: Modifier, useInsets: Boolean) {
                         }
                 )
             }
+            }
 
-            // شريط التحميل
+        // شريط التحميل
             Box(
                 Modifier
                     .align(Alignment.BottomCenter)

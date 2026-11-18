@@ -158,10 +158,10 @@ internal fun StyledSplash(style: Int, T: () -> Float, modifier: Modifier, useIns
             else -> CodeBg(T, lite, st.bg)
         }
 
-        Column(
+        // طبقة الخروج بحجم الشاشة كلها حتى ما تقص التوهج حول الشعار
+        Box(
             Modifier
-                .align(Alignment.Center)
-                .offset(y = -(maxHeight * .04f))
+                .fillMaxSize()
                 .graphicsLayer {
                     val x = spProg(T(), OUT_START, .45f, LiftE)
                     alpha = 1f - x
@@ -169,7 +169,12 @@ internal fun StyledSplash(style: Int, T: () -> Float, modifier: Modifier, useIns
                     scaleY = 1f + .18f * x
                     renderEffect = if (x > 0f && Build.VERSION.SDK_INT >= 31)
                         BlurEffect(10f * x * density, 10f * x * density) else null
-                },
+                }
+        ) {
+        Column(
+            Modifier
+                .align(Alignment.Center)
+                .offset(y = -(maxHeight * .04f)),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(gap)
         ) {
@@ -190,6 +195,7 @@ internal fun StyledSplash(style: Int, T: () -> Float, modifier: Modifier, useIns
                         translationY = 8.dp.toPx() * (1f - p)
                     }
             )
+        }
         }
 
         // شريط التحميل
