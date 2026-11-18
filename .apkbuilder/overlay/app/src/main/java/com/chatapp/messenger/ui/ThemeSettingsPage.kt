@@ -285,6 +285,7 @@ private fun ThemeSettingsContent(bd: Backdrop, dark: Boolean, accent: Color, fg:
             }
             // ------------------------------------------------------------ شاشة البداية (Splash)
             ThemeSection(5, "شاشة البداية (Splash)", "للي ما يريد يشوف السبلاش عند فتح التطبيق", fg) {
+              Column(Modifier.fillMaxWidth()) {
                 val shape = RoundedCornerShape(30.dp)
                 val skip = ThemeSettings.skipSplash
                 Row(
@@ -307,6 +308,29 @@ private fun ThemeSettingsContent(bd: Backdrop, dark: Boolean, accent: Color, fg:
                         backdrop = bd, dark = dark, accent = accent
                     )
                 }
+
+                // معاينة متحركة (تتكرر تلقائياً) لسبلاش الأيقونة المختارة حالياً
+                Spacer(Modifier.height(14.dp))
+                val splashStyle = ThemeSettings.iconIndex
+                Column(
+                    Modifier.fillMaxWidth().liquidCard(bd, shape, dark).padding(horizontal = 18.dp, vertical = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        "شكل السبلاش الحالي", fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        "سبلاش أيقونة «${ThemeSettings.icons[splashStyle.coerceIn(0, ThemeSettings.icons.lastIndex)].name}» — كل أيقونة لها سبلاش مختلف، غيّر الأيقونة وشوف التغيير هنا",
+                        fontSize = 13.sp, color = fg.copy(0.62f),
+                        modifier = Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 12.dp)
+                    )
+                    SplashPreview(
+                        style = splashStyle,
+                        modifier = Modifier.graphicsLayer { alpha = if (skip) 0.45f else 1f }
+                    )
+                }
+              }
             }
             Spacer(Modifier.height(36.dp))
         }

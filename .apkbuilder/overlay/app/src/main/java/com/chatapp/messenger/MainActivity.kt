@@ -31,12 +31,14 @@ class MainActivity : ComponentActivity() {
             ChatTheme {
                 // السبلاش يظهر مرة وحدة عند فتح التطبيق (rememberSaveable عشان تدوير الشاشة ما يعيده)
                 var showSplash by rememberSaveable { mutableStateOf(!com.chatapp.messenger.ui.theme.ThemeSettings.skipSplash) }
+                // كل أيقونة تطبيق لها سبلاش خاص: نثبّت الرقم وقت فتح التطبيق
+                val splashStyle = androidx.compose.runtime.remember { com.chatapp.messenger.ui.theme.ThemeSettings.iconIndex }
                 Box(Modifier.fillMaxSize().perfTracker()) {
                     Surface(modifier = Modifier.fillMaxSize()) {
                         App()
                     }
                     if (showSplash) {
-                        SplashScreen(onFinished = { showSplash = false })
+                        SplashScreen(style = splashStyle, onFinished = { showSplash = false })
                     }
                 }
             }

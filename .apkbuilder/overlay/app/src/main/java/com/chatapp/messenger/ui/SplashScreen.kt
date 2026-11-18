@@ -111,8 +111,12 @@ private class SParticle(
     var py = 0f
 }
 
+/** مدة السبلاش الكاملة بالثواني (تستعملها المعاينة بالإعدادات لتكرار الحركة) */
+internal const val SPLASH_TOTAL = TOTAL
+
+/** [style] = رقم أيقونة التطبيق المختارة (0 = الأساسية). كل أيقونة لها سبلاش مختلف */
 @Composable
-fun SplashScreen(onFinished: () -> Unit) {
+fun SplashScreen(style: Int = 0, onFinished: () -> Unit) {
     // التصميم إنجليزي (Chat) فنثبّت الاتجاه LTR عشان الحروف ما تنعكس بالواجهة العربية
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
         val tState = remember { mutableFloatStateOf(0f) }
@@ -146,13 +150,33 @@ fun SplashScreen(onFinished: () -> Unit) {
             }
         }
 
+        // يمنع اللمس من النفاذ للتطبيق اللي تحت السبلاش
+        SplashContent(
+            style = style, T = T,
+            modifier = Modifier.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
+            useInsets = true, lite = false
+        )
+    }
+}
+
+/** محتوى السبلاش بدون أي تأثير على النظام: يستعمله السبلاش الحقيقي والمعاينة المصغرة بالإعدادات */
+@Composable
+internal fun SplashContent(style: Int, T: () -> Float, modifier: Modifier, useInsets: Boolean, lite: Boolean) {
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        if (style in 1..5) StyledSplash(style, T, modifier, useInsets, lite)
+        else BlueSplash(T, modifier, useInsets)
+    }
+}
+
+// ───────── السبلاش الأساسي (الأزرق) ─────────
+@Composable
+private fun BlueSplash(T: () -> Float, modifier: Modifier, useInsets: Boolean) {
+    run {
         BoxWithConstraints(
-            Modifier
+            modifier
                 .fillMaxSize()
                 .background(BG)
                 .graphicsLayer { alpha = 1f - prog(T(), FADE_START, FADE_DUR) }
-                // يمنع اللمس من النفاذ للتطبيق اللي تحت السبلاش
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
         ) {
             val markSize = minOf(maxWidth * .46f, 210.dp)
             val gap = (maxHeight * .06f).coerceIn(26.dp, 46.dp)
@@ -200,7 +224,7 @@ fun SplashScreen(onFinished: () -> Unit) {
             Box(
                 Modifier
                     .align(Alignment.BottomCenter)
-                    .windowInsetsPadding(WindowInsets.navigationBars)
+                    .then(if (useInsets) Modifier.windowInsetsPadding(WindowInsets.navigationBars) else Modifier)
                     .padding(bottom = maxHeight * .09f)
                     .width(minOf(maxWidth * .36f, 150.dp))
                     .height(3.dp)
