@@ -141,7 +141,8 @@ fun HomeTab(
     menuCmd: Int = 0,
     onMenuCmdHandled: () -> Unit = {},
     onSelectingChange: (Boolean) -> Unit = {},
-    active: Boolean = true
+    active: Boolean = true,
+    queryChats: String = ""
 ) {
     val myUid = remember { Repo.auth.currentUser?.uid ?: "" }
     val users by remember { Repo.usersFlow() }.collectAsState(initial = emptyList())
@@ -158,9 +159,6 @@ fun HomeTab(
     // معاينة بديلة إذا حذفت (من عندي) آخر رسالة بمحادثة
     val previewOverrides by remember(myUid) { Repo.previewOverridesFlow(myUid) }.collectAsState(initial = emptyMap())
     // لكل واجهة بحثها المستقل (حتى ما يتلخبط البحث أثناء حركة التبديل)
-    var queryChats by remember { mutableStateOf("") }
-    var searchExpanded by remember { mutableStateOf(false) }
-    LaunchedEffect(active) { if (!active) searchExpanded = false }
     // قصص كل المستخدمين (مع قصتي أولاً)
     val stories by remember { Repo.activeStoriesFlow() }.collectAsState(initial = emptyList())
     var viewIndex by remember { mutableStateOf<Int?>(null) }
@@ -474,21 +472,6 @@ fun HomeTab(
         }
     }
 
-    // بحث سفلي يتحول من زر دائري إلى حقل زجاجي، ويختفي عند مغادرة تبويب Home
-    AnimatedVisibility(
-        visible = active && homeMode == 0 && !selecting,
-        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 108.dp),
-        enter = fadeIn(tween(180)) + slideInVertically(spring(dampingRatio = 0.78f, stiffness = 420f)) { it / 2 },
-        exit = fadeOut(tween(140)) + slideOutVertically(tween(190)) { it / 2 }
-    ) {
-        SearchDock(
-            value = queryChats,
-            expanded = searchExpanded,
-            onExpandedChange = { searchExpanded = it },
-            onChange = { queryChats = it }
-        )
-    }
-
     // قائمة الضغط المطوّل على محادثة
     actionTarget?.let { t ->
         val isBlocked by remember(t.uid) { Repo.blockedFlow(myUid, t.uid) }.collectAsState(initial = false)
@@ -685,23 +668,33 @@ private fun CenterText(text: String) {
 
 /** زر البحث السفلي: تمدد نابضي إلى حقل بحث وتقلص عند الإغلاق */
 @Composable
-private fun SearchDock(
+fun SearchDock(
     value: String,
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
     onChange: (String) -> Unit
 ) {
     val fg = MaterialTheme.colorScheme.onBackground
-    val shape = if (expanded) RoundedCornerShape(28.dp) else CircleShape
+    val dockWidth by animateDpAsState(
+        targetValue = if (expanded) 250.dp else 54.dp,
+        animationSpec = spring(dampingRatio = 0.78f, stiffness = 360f),
+        label = "searchDockWidth"
+    )
+    val corner by animateDpAsState(
+        targetValue = if (expanded) 28.dp else 27.dp,
+        animationSpec = spring(dampingRatio = 0.82f, stiffness = 420f),
+        label = "searchDockCorner"
+    )
+    val shape = RoundedCornerShape(corner)
     Row(
         Modifier
-            .animateContentSize(spring(dampingRatio = 0.72f, stiffness = 360f))
-            .then(if (expanded) Modifier.fillMaxWidth(0.92f) else Modifier.size(54.dp))
+            .width(dockWidth)
+            .height(54.dp)
             .clip(shape)
             .background(fg.copy(alpha = 0.12f))
             .border(1.dp, fg.copy(alpha = 0.20f), shape)
             .clickable { if (!expanded) onExpandedChange(true) }
-            .padding(horizontal = if (expanded) 17.dp else 0.dp, vertical = if (expanded) 13.dp else 0.dp),
+            .padding(horizontal = if (expanded) 16.dp else 0.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = if (expanded) Arrangement.Start else Arrangement.Center
     ) {
