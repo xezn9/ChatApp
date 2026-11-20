@@ -572,10 +572,29 @@ fun HomeTab(
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun GroupsTab(onOpenGroup: (GroupItem) -> Unit, onRequestLogout: () -> Unit) {
+fun GroupsTab(
+    onOpenGroup: (GroupItem) -> Unit,
+    onRequestLogout: () -> Unit,
+    /** ضغطة مطولة على مجموعة = طلب حذف محادثتها من عندي (الثاني = وقت آخر رسالة) */
+    onRequestDeleteGroup: (GroupItem, Long) -> Unit = { _, _ -> }
+) {
     val myUid = remember { Repo.auth.currentUser?.uid ?: "" }
     val groupsState by remember(myUid) { Repo.groupsFlow(myUid) }.collectAsState(initial = Repo.lastGroups(myUid))
-    val groups = groupsState ?: emptyList()
+    val allGroups = groupsState ?: emptyList()
+    // المجموعات الي حذفت محادثتها: تنخفي لين توصل رسالة جديدة (أحدث من وقت الحذف)
+    val clearedMap by remember(myUid) { Repo.clearedFlow(myUid) }
+        .collectAsState(initial = Repo.cachedCleared(myUid) ?: emptyMap())
+    val clearedGroupIds = remember(allGroups, clearedMap) {
+        allGroups.filter { clearedMap.containsKey(Repo.groupClearKey(it.id)) }.map { it.id }
+    }
+    val lastAtMap by remember(clearedGroupIds) { Repo.groupLastAtMapFlow(clearedGroupIds) }
+        .collectAsState(initial = null)
+    val groups = remember(allGroups, clearedMap, lastAtMap) {
+        allGroups.filter { g ->
+            val c = clearedMap[Repo.groupClearKey(g.id)] ?: return@filter true
+            (lastAtMap?.get(g.id) ?: 0L) > c
+        }
+    }
     var groupsTimeout by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { kotlinx.coroutines.delay(3000); groupsTimeout = true }
     val groupsReady = groupsState != null || groupsTimeout
@@ -612,6 +631,7 @@ fun GroupsTab(onOpenGroup: (GroupItem) -> Unit, onRequestLogout: () -> Unit) {
             run {
                     // المجموعة الي لقيتها باليوزر (إذا مو من مجموعاتي أصلاً)
                     val remote = remoteGroup?.takeIf { r -> groups.none { it.id == r.id } }
+                    // (لو المجموعة عضو فيها بس محذوفة المحادثة، تطلع بالبحث ونفتحها مباشرة بدون انضمام)
                     if (!groupsReady) {
                         Box(Modifier.fillMaxSize())
                     } else if (shownGroups.isEmpty() && remote == null) {
@@ -625,7 +645,11 @@ fun GroupsTab(onOpenGroup: (GroupItem) -> Unit, onRequestLogout: () -> Unit) {
                     } else {
                         LazyColumn(contentPadding = PaddingValues(bottom = 130.dp)) {
                             items(shownGroups, key = { it.id }) { g ->
-                                GroupRow(g, onClick = { onOpenGroup(g) })
+                                GroupRow(
+                                    g,
+                                    onClick = { onOpenGroup(g) },
+                                    onLongClick = { lastAt -> onRequestDeleteGroup(g, lastAt) }
+                                )
                             }
                             if (remote != null) {
                                 item(key = "remote_" + remote.id) {
@@ -633,18 +657,24 @@ fun GroupsTab(onOpenGroup: (GroupItem) -> Unit, onRequestLogout: () -> Unit) {
                                         r = remote,
                                         joining = joiningId == remote.id,
                                         onJoin = {
-                                            joiningId = remote.id
-                                            homeScope.launch {
-                                                try {
-                                                    Repo.joinGroup(remote.id)
-                                                    AppToast.show("انضممت للمجموعة")
-                                                    onOpenGroup(GroupItem(remote.id, remote.name, remote.handle, remote.bio, remote.avatar, "", 1, 0L))
-                                                } catch (e: CancellationException) {
-                                                    throw e
-                                                } catch (e: Exception) {
-                                                    AppToast.show(e.message?.takeIf { it.isNotBlank() } ?: "ما قدرت أنضم، جرّب مرة ثانية")
-                                                } finally {
-                                                    joiningId = null
+                                            // أنا عضو أصلاً (المحادثة محذوفة من عندي): نفتحها بدون انضمام
+                                            val mine = allGroups.firstOrNull { it.id == remote.id }
+                                            if (mine != null) {
+                                                onOpenGroup(mine)
+                                            } else {
+                                                joiningId = remote.id
+                                                homeScope.launch {
+                                                    try {
+                                                        Repo.joinGroup(remote.id)
+                                                        AppToast.show("انضممت للمجموعة")
+                                                        onOpenGroup(GroupItem(remote.id, remote.name, remote.handle, remote.bio, remote.avatar, "", 1, 0L))
+                                                    } catch (e: CancellationException) {
+                                                        throw e
+                                                    } catch (e: Exception) {
+                                                        AppToast.show(e.message?.takeIf { it.isNotBlank() } ?: "ما قدرت أنضم، جرّب مرة ثانية")
+                                                    } finally {
+                                                        joiningId = null
+                                                    }
                                                 }
                                             }
                                         }
@@ -845,15 +875,31 @@ private fun RemoteGroupRow(r: GroupPreview, joining: Boolean, onJoin: () -> Unit
 }
 
 @Composable
-private fun GroupRow(g: GroupItem, onClick: () -> Unit) {
+private fun GroupRow(g: GroupItem, onClick: () -> Unit, onLongClick: (Long) -> Unit = {}) {
+    val haptic = LocalHapticFeedback.current
     val last by remember(g.id) { Repo.groupLastMessageFlow(g.id) }.collectAsState(initial = null)
+    // آخر نسخة من الـ lambdas والرسالة الأخيرة (بدون ما يتغير مفتاح الـ pointerInput)
+    val clickNow by rememberUpdatedState(onClick)
+    val longNow by rememberUpdatedState(onLongClick)
+    val lastAtNow by rememberUpdatedState(last?.createdAt ?: 0L)
     val members = if (g.memberCount == 1) "عضو واحد" else "${g.memberCount} أعضاء"
     val secondary = last?.text?.takeIf { it.isNotBlank() }?.let { ChatSticker.preview(it) } ?: buildString {
         if (g.handle.isNotBlank()) append("@").append(g.handle).append(" · ")
         append(members)
     }
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp),
+        // ضغطة = فتح المجموعة، ضغطة مطولة = حذف محادثة المجموعة من عندي
+        Modifier.fillMaxWidth()
+            .pointerInput(g.id) {
+                detectTapGestures(
+                    onTap = { clickNow() },
+                    onLongPress = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        longNow(lastAtNow)
+                    }
+                )
+            }
+            .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         GroupAvatar(g.avatar, 52.dp, g.id, g.avatarGifV)

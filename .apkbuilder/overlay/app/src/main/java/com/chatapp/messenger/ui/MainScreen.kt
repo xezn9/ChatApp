@@ -80,6 +80,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.chatapp.messenger.AppState
 import com.chatapp.messenger.PrivacyState
+import com.chatapp.messenger.GroupItem
 import com.chatapp.messenger.Repo
 import com.chatapp.messenger.UserItem
 import com.chatapp.messenger.ui.glass.GlassButton
@@ -131,6 +132,8 @@ private fun MainContent() {
     var confirmLogout by remember { mutableStateOf(false) }
     // حذف محادثة من عندي فقط: (uid, الاسم, وقت آخر رسالة)
     var deleteChat by remember { mutableStateOf<Triple<String, String, Long>?>(null) }
+    // حذف محادثة مجموعة من عندي (ضغطة مطولة بتبويب المجموعات): المجموعة + وقت آخر رسالة
+    var deleteGroup by remember { mutableStateOf<Pair<GroupItem, Long>?>(null) }
     val delScope = androidx.compose.runtime.rememberCoroutineScope()
     // نتذكر آخر محادثة/بروفايل حتى تشتغل حركة الإغلاق قبل ما تختفي الشاشة
     var lastChat by remember { mutableStateOf<UserItem?>(null) }
@@ -270,8 +273,8 @@ private fun MainContent() {
     BackHandler(enabled = groupOpen) { groupOpen = false }
     BackHandler(enabled = stickerOpen) { stickerOpen = false }
     BackHandler(enabled = supportThread != null) { supportThread = null }
-    BackHandler(enabled = confirmLogout || deleteChat != null) { confirmLogout = false; deleteChat = null }
-    BackHandler(enabled = (chatWith != null || viewProfile != null) && !confirmLogout && deleteChat == null) {
+    BackHandler(enabled = confirmLogout || deleteChat != null || deleteGroup != null) { confirmLogout = false; deleteChat = null; deleteGroup = null }
+    BackHandler(enabled = (chatWith != null || viewProfile != null) && !confirmLogout && deleteChat == null && deleteGroup == null) {
         if (viewProfile != null) viewProfile = null else chatWith = null
     }
     BackHandler(enabled = openGroupId != null && !groupInfoOpen && viewProfile == null) { openGroupId = null }
@@ -365,7 +368,8 @@ private fun MainContent() {
                             )
                             1 -> GroupsTab(
                                 onOpenGroup = { openGroupId = it.id; groupInfoOpen = false },
-                                onRequestLogout = { confirmLogout = true }
+                                onRequestLogout = { confirmLogout = true },
+                                onRequestDeleteGroup = { g, lastAt -> deleteGroup = g to lastAt }
                             )
                             2 -> ActivityTab(onOpenProfile = { viewProfile = it })
                             else -> AccountTab(
@@ -655,6 +659,26 @@ private fun MainContent() {
                     Repo.clearChat(myUid, uid, lastAt)
                 },
                 onDismiss = { deleteChat = null }
+            )
+        }
+
+        // تأكيد حذف محادثة المجموعة (من عندي فقط، وتبقى عضو فيها)
+        deleteGroup?.let { (g, lastAt) ->
+            val appCtx = androidx.compose.ui.platform.LocalContext.current.applicationContext
+            GlassConfirmDialog(
+                backdrop = backdrop,
+                dark = isAppDark(),
+                title = "حذف محادثة المجموعة",
+                message = "راح تنحذف رسائل \"${g.name}\" من عندك فقط وتختفي من القائمة. تبقى عضو بالمجموعة، وإذا انرسلت رسالة جديدة ترجع تظهر بدون الرسائل القديمة.",
+                confirmText = "حذف",
+                icon = Icons.Filled.Delete,
+                onConfirm = {
+                    deleteGroup = null
+                    Repo.clearGroupChat(myUid, g.id, lastAt)
+                    // الرسائل المحذوفة ما تنعد غير مقروءة بشارة تبويب Groups
+                    if (lastAt > 0L && lastAt != Long.MAX_VALUE) com.chatapp.messenger.GroupReads.set(appCtx, myUid, g.id, lastAt)
+                },
+                onDismiss = { deleteGroup = null }
             )
         }
 

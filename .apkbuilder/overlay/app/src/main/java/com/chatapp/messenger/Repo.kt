@@ -776,6 +776,12 @@ object Repo {
             snap.children.mapNotNull { it.toGroupMsg() }.lastOrNull()
         }
 
+    /** gid -> وقت آخر رسالة بالمجموعة (0 = ما فيه رسائل). نستعملها لإخفاء المجموعات المحذوفة لين توصل رسالة جديدة */
+    fun groupLastAtMapFlow(ids: List<String>): Flow<Map<String, Long>> {
+        if (ids.isEmpty()) return flowOf(emptyMap())
+        return combine(ids.map { id -> groupLastMessageFlow(id).map { id to (it?.createdAt ?: 0L) } }) { arr -> arr.toMap() }
+    }
+
     /** المجموعات الي أنا عضو فيها، الأحدث أولاً (تتحدث فوراً) */
     @OptIn(ExperimentalCoroutinesApi::class)
     fun groupsFlow(me: String): Flow<List<GroupItem>> {
@@ -1647,6 +1653,26 @@ object Repo {
             ), SetOptions.merge()
         )
         markRead(me, other)
+    }
+
+    /** مفتاح حذف محادثة المجموعة داخل نفس خريطة cleared (حتى ما نحتاج قواعد أو حقول جديدة) */
+    fun groupClearKey(gid: String) = "group:$gid"
+
+    /**
+     * حذف محادثة المجموعة من عندي فقط (الأعضاء الباقين ما يتأثرون):
+     * - الرسائل الأقدم أو المساوية لـ [lastAt] تنخفي عندي للأبد (ما ترجع حتى لو جت رسالة جديدة)
+     * - المجموعة تختفي من القائمة، وأول ما توصل رسالة جديدة بالمجموعة ترجع تظهر (بس بالرسائل الجديدة)
+     * - أنا لسه عضو بالمجموعة (هذا حذف محادثة مو مغادرة)
+     */
+    fun clearGroupChat(me: String, gid: String, lastAt: Long) {
+        if (me.isBlank() || gid.isBlank()) return
+        val at = if (lastAt <= 0L || lastAt == Long.MAX_VALUE) serverNow() else lastAt
+        val key = groupClearKey(gid)
+        // نحفظ الحذف محلياً فوراً حتى ما ترجع المجموعة تبين لحظة عند فتح التطبيق
+        saveCleared(me, (cachedCleared(me) ?: emptyMap()) + (key to at))
+        db.collection("settings").document(me).set(
+            mapOf("cleared" to mapOf(key to at)), SetOptions.merge()
+        )
     }
 
     // ---------- متصل / آخر ظهور ----------

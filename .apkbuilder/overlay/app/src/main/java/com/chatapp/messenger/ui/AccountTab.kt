@@ -924,6 +924,7 @@ private fun EditProfileDialog(
     var avatarB64 by remember { mutableStateOf(initAvatar) }
     var bannerB64 by remember { mutableStateOf(initBanner) }
     var saving by remember { mutableStateOf(false) }
+    var saved by remember { mutableStateOf(false) }
 
     // GIF البانر: gifV = النسخة المخزّنة حالياً (0 = ما فيه)، pendingGif = GIF جديد لسا ما انرفع
     var gifV by remember { mutableLongStateOf(initBannerGifV) }
@@ -977,9 +978,11 @@ private fun EditProfileDialog(
                             Text("تعديل الحساب", fontSize = 23.sp, fontWeight = FontWeight.Bold)
                             Text("خصّص ملفك الشخصي", fontSize = 12.sp, color = fg.copy(alpha = 0.6f))
                         }
-                        GlassButton(
-                            backdrop = bd, tint = AccentBlue, modifier = Modifier.height(48.dp),
-                            enabled = !saving && name.isNotBlank() && (username.isBlank() || Repo.isValidUsername(username)),
+                        AnimatedSaveButton(
+                            backdrop = bd,
+                            canSave = name.isNotBlank() && (username.isBlank() || Repo.isValidUsername(username)),
+                            saving = saving,
+                            done = saved,
                             onClick = {
                                 saving = true
                                 scope.launch {
@@ -989,24 +992,20 @@ private fun EditProfileDialog(
                                         pendingGif?.let { finalV = Repo.uploadBannerGif(it) }
                                         Repo.saveProfileInfo(name.trim(), username.trim(), bio.trim(), avatarB64, bannerB64, finalV, bfx, bfy)
                                         if (finalV == 0L && initBannerGifV > 0L) Repo.deleteBannerGif()
+                                        // أنيميشن النجاح (✓ تنرسم + أخضر) قبل ما نسكر الصفحة
+                                        saved = true
+                                        kotlinx.coroutines.delay(750)
                                         onDismiss()
+                                    } catch (e: kotlinx.coroutines.CancellationException) {
+                                        throw e
                                     } catch (e: Exception) {
                                         saving = false
+                                        saved = false
                                         AppToast.show("فشل الحفظ: ${e.message}", long = true)
                                     }
                                 }
                             }
-                        ) {
-                            if (!saving) {
-                                Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(20.dp))
-                                Spacer(Modifier.width(6.dp))
-                            }
-                            Text(
-                                if (saving) "..." else "حفظ", color = Color.White, fontSize = 16.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(start = if (saving) 26.dp else 0.dp, end = 22.dp)
-                            )
-                        }
+                        )
                     }
                 }
 

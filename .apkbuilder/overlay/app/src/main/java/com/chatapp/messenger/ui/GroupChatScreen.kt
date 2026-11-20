@@ -271,8 +271,15 @@ fun GroupChatScreen(groupId: String, onBack: () -> Unit, onOpenInfo: () -> Unit,
         .collectAsState(initial = null)
     // عند فتح البحث نحمّل تاريخ أطول (الافتراضي آخر 300 رسالة)
     var historyLimit by remember(groupId) { mutableIntStateOf(300) }
-    val messages by remember(groupId, historyLimit) { Repo.groupMessagesFlow(groupId, historyLimit) }
+    val rawMessages by remember(groupId, historyLimit) { Repo.groupMessagesFlow(groupId, historyLimit) }
         .collectAsState(initial = emptyList())
+    // "حذف محادثة المجموعة" (من عندي فقط): الرسائل الأقدم من وقت الحذف تنخفي للأبد
+    val clearedMap by remember(me) { Repo.clearedFlow(me) }
+        .collectAsState(initial = Repo.cachedCleared(me) ?: emptyMap())
+    val clearedAt = clearedMap[Repo.groupClearKey(groupId)] ?: 0L
+    val messages = remember(rawMessages, clearedAt) {
+        if (clearedAt <= 0L) rawMessages else rawMessages.filter { it.createdAt > clearedAt }
+    }
     // ---- رسائل منتهية الوقت: تختفي عند الجميع وتنحذف تلقائياً ----
     val expiryList = remember(messages) { messages.filter { it.expiresAt > 0L }.map { it.expiresAt } }
     val expNow = rememberExpiryNow(expiryList)
