@@ -190,11 +190,8 @@ private fun MainContent() {
     val backdrop = rememberLayerBackdrop()
     val contentColor = if (isAppDark()) Color.White else Color.Black
     val iconColorFilter = ColorFilter.tint(contentColor)
-    val tabs = listOf(
-        rememberVectorPainter(Icons.Filled.Home) to "Home",
-        rememberVectorPainter(AppIcons.Group) to "Groups",
-        rememberVectorPainter(Icons.Filled.Person) to "Account"
-    )
+    // أسماء التبويبات؛ الأيقونات المتحركة تنرسم داخل الحلقة تحت (AnimatedHomeIcon / AnimatedUsersTabIcon / AnimatedProfileIcon)
+    val tabs = listOf("Home", "Groups", "Account")
     // الشريط السفلي 3 تبويبات فقط؛ Activity (tab = 2) صار يُفتح من قائمة ⋮
     val barToTab = intArrayOf(0, 1, 3)
     fun tabToBar(t: Int) = when (t) { 1 -> 1; 3 -> 2; else -> 0 }
@@ -400,18 +397,32 @@ private fun MainContent() {
                     .padding(horizontal = 36f.dp, vertical = 24f.dp)
             ) {
                 // نفس تركيبة الكتالوج: Box + paint بدل Icon، والنص 12sp
-                tabs.forEachIndexed { index, (painter, label) ->
+                tabs.forEachIndexed { index, label ->
                     LiquidBottomTab(
                         { tab = barToTab[index] },
                         // مركز الزر: منه تطلع موجة الانتقال (الشريط مرسوم مرتين لذا نكتب نفس القيمة)
                         Modifier.onGloballyPositioned { tabCenters[barToTab[index]] = it.boundsInRoot().center }
                     ) {
                         Box(Modifier.size(28f.dp)) {
-                            Box(
-                                Modifier
-                                    .matchParentSize()
-                                    .paint(painter, colorFilter = iconColorFilter)
-                            )
+                            // أيقونات متحركة: تشتغل لما ينتقل المستخدم لهذا التبويب.
+                            // اللون ثابت (بدون شفافية للغير مختار) لأن الشريط مرسوم مرتين والنسخة الثانية تتلوّن بالـ accent
+                            val tabSelected = tabToBar(tab) == index
+                            when (index) {
+                                0 -> AnimatedHomeIcon(
+                                    selected = tabSelected, size = 28f.dp,
+                                    selectedColor = contentColor, unselectedColor = contentColor,
+                                    glowColor = contentColor, animateOnStart = false
+                                )
+                                1 -> AnimatedUsersTabIcon(
+                                    selected = tabSelected, size = 28f.dp,
+                                    tint = contentColor, animateOnStart = false
+                                )
+                                else -> AnimatedProfileIcon(
+                                    selected = tabSelected, size = 28f.dp,
+                                    selectedColor = contentColor, unselectedColor = contentColor,
+                                    glowColor = contentColor, animateOnStart = false
+                                )
+                            }
                             // شارة عدد رسائل المجموعات غير المقروءة (تختفي إذا ما فيه)
                             if (index == 1 && groupUnread > 0) {
                                 Box(
