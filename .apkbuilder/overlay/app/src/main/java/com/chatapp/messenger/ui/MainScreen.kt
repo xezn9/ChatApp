@@ -75,6 +75,8 @@ import androidx.compose.ui.draw.paint
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -107,6 +109,20 @@ fun MainScreen() {
         }
     }
     if (ban.until > now) BanScreen(ban, now) else MainContent()
+}
+
+/**
+ * خلفية صفحة التبويب [index]: تنبني فقط للصفحة الظاهرة وللصفحة الي تغرق أثناء موجة الانتقال،
+ * وتنحذف من التركيب لما تختفي الصفحة (حتى ما تبقى خلفيات متحركة شغالة بالخفاء).
+ */
+@Composable
+private fun TabPageBackground(index: Int, reveal: TabRevealState, paused: Boolean) {
+    if (index != reveal.current && index != reveal.old) return
+    androidx.compose.runtime.CompositionLocalProvider(LocalAmbientPaused provides paused) {
+        // ترتيب التبويبات: 0 Home، 1 Groups، 2 Activity (تبويبه يرسم خلفيته بنفسه)، 3 Account
+        if (index == 2) Box(Modifier.fillMaxSize().background(appBackground()))
+        else AppTabBackground(if (index == 3) 2 else index, Modifier.fillMaxSize())
+    }
 }
 
 /** الشاشة الرئيسية: المحتوى + الشريط السفلي الزجاجي (Home / BDF / Account) */
@@ -280,13 +296,16 @@ private fun MainContent() {
     BackHandler(enabled = openGroupId != null && !groupInfoOpen && viewProfile == null) { openGroupId = null }
     BackHandler(enabled = groupInfoOpen && viewProfile == null) { groupInfoOpen = false }
 
-    // موضع التبويب (حركة الانزلاق): نستعمله أيضاً حتى زر إنشاء مجموعة ما يبين إلا لما تبويب المجموعات يكون ظاهر فعلاً
-    // موقع كل تبويب على محور الانزلاق: Activity (2) يقع يسار Home بموقع -1،
-    // حتى الانتقال Home/Groups <-> Account ما يمرّ عليه ويومّضه
-    fun tabSlot(t: Int) = when (t) { 2 -> -1f; 3 -> 2f; else -> t.toFloat() }
-    val tabPos by animateFloatAsState(tabSlot(tab), spring(dampingRatio = 0.85f, stiffness = 380f), label = "tabPos")
+    // حالة موجة الزجاج بين التبويبات (TabReveal): زر إنشاء مجموعة ما يبين إلا لما موجة تبويب المجموعات توصل نصف الطريق
+    val reveal = rememberTabRevealState(tab)
+    // مراكز أزرار التبويبات بإحداثيات الشاشة (تبويب -> مركز الزر): منها تطلع الموجة. Activity (2) من زر ⋮
+    val tabCenters = remember { HashMap<Int, androidx.compose.ui.geometry.Offset>() }
     // نقرأ بس عبور العتبة (مو القيمة كل فريم) حتى ما ينعاد تركيب الشاشة كلها أثناء حركة التبويب
-    val groupsFabReady by remember { derivedStateOf { tabPos > 0.55f } }
+    val groupsFabReady by remember {
+        derivedStateOf { reveal.current == 1 && (reveal.old == null || reveal.progress.value > 0.55f) }
+    }
+    // الموجة أطول (900ms) من باقي الانتقالات: نجمّد الخلفيات المتحركة لين تخلص
+    LaunchedEffect(tab) { PerfGate.hold(950) }
     Box(Modifier.fillMaxSize()) {
         // المحتوى: هذا الي يظهر خلف الزجاج
         Box(
@@ -309,49 +328,21 @@ private fun MainContent() {
                     scaleX = backScale; scaleY = backScale; alpha = backAlpha
                 }.hideWhenCovered(coverOpen)
             ) {
-            // خلفية متحركة بألوان مختلفة لكل تبويب
-            // كل واجهة لها خلفيتها (افتراضية/جاهزة/صورة أو GIF)، والتبديل بينها بتلاشي ناعم
-            androidx.compose.runtime.CompositionLocalProvider(LocalAmbientPaused provides (coverOpen || overlayOpen)) {
-            androidx.compose.animation.Crossfade(
-                targetState = tab,
-                animationSpec = androidx.compose.animation.core.tween(500),
-                label = "tabBg"
-            ) { t ->
-                // ترتيب التبويبات: 0 Home، 1 Groups، 2 Activity (تبويبه يرسم خلفيته بنفسه)، 3 Account
-                if (t == 2) Box(Modifier.fillMaxSize().background(appBackground()))
-                else AppTabBackground(if (t == 3) 2 else t, Modifier.fillMaxSize())
-            }
-            }
             // التبويبات الأربعة تنبني مرة وحدة عند فتح التطبيق وتبقى حيّة بالخلفية:
-            // التنقل بينها بس انزلاق/تلاشي (بدون إعادة بناء)، وأي تحديث ببياناتها يصير بالخفاء.
-            Box(Modifier.fillMaxSize()) {
-                for (i in 0..3) {
+            // التنقل بينها بموجة الزجاج السائل (TabReveal) بدون إعادة بناء، وأي تحديث ببياناتها يصير بالخفاء.
+            // كل صفحة تحمل خلفيتها معها، فالموجة تكشف الخلفية الجديدة مع المحتوى.
+            TabRevealHost(
+                selected = tab,
+                pageCount = 4,
+                tabCenterInRoot = { tabCenters[it] },
+                modifier = Modifier.fillMaxSize(),
+                state = reveal
+            ) { i ->
                     val selected = tab == i
-                    Box(
-                        Modifier
-                            .fillMaxSize()
-                            // التبويب الحالي دائماً فوق الباقين
-                            .zIndex(if (selected) 1f else 0f)
-                            .graphicsLayer {
-                                val d = tabSlot(i) - tabPos
-                                alpha = (1f - kotlin.math.abs(d)).coerceIn(0f, 1f)
-                                translationX = d * size.width * 0.25f
-                            }
-                            // التبويب المخفي تماماً (alpha = 0) ما يرسم ولا يسجّل شي: يوفر blur/lens 3 تبويبات
-                            .drawWithContent {
-                                if (kotlin.math.abs(tabSlot(i) - tabPos) < 1f) drawContent()
-                            }
-                            // التبويبات المخفية ما تستقبل لمس (حتى ما تنضغط أزرارها بالغلط)
-                            .then(
-                                if (selected) Modifier else Modifier.pointerInput(Unit) {
-                                    awaitPointerEventScope {
-                                        while (true) {
-                                            awaitPointerEvent(PointerEventPass.Initial).changes.forEach { it.consume() }
-                                        }
-                                    }
-                                }
-                            )
-                    ) {
+                    Box(Modifier.fillMaxSize()) {
+                        // خلفية متحركة بألوان مختلفة لكل تبويب (افتراضية/جاهزة/صورة أو GIF)؛
+                        // تنبني فقط للصفحة الظاهرة والصفحة الي تغرق أثناء الموجة
+                        TabPageBackground(i, reveal, paused = coverOpen || overlayOpen)
                         when (i) {
                             0 -> HomeTab(
                                 onOpenChat = { chatWith = it },
@@ -381,7 +372,6 @@ private fun MainContent() {
                             )
                         }
                     }
-                }
             }
             }
         }
@@ -411,7 +401,11 @@ private fun MainContent() {
             ) {
                 // نفس تركيبة الكتالوج: Box + paint بدل Icon، والنص 12sp
                 tabs.forEachIndexed { index, (painter, label) ->
-                    LiquidBottomTab({ tab = barToTab[index] }) {
+                    LiquidBottomTab(
+                        { tab = barToTab[index] },
+                        // مركز الزر: منه تطلع موجة الانتقال (الشريط مرسوم مرتين لذا نكتب نفس القيمة)
+                        Modifier.onGloballyPositioned { tabCenters[barToTab[index]] = it.boundsInRoot().center }
+                    ) {
                         Box(Modifier.size(28f.dp)) {
                             Box(
                                 Modifier
@@ -489,6 +483,8 @@ private fun MainContent() {
                         .statusBarsPadding()
                         .padding(start = 12.dp, end = 12.dp, top = 10.dp)
                         .size(44.dp)
+                        // مركز زر ⋮: منه تطلع موجة الانتقال لتبويب Activity
+                        .onGloballyPositioned { tabCenters[2] = it.boundsInRoot().center }
                 ) {
                     Icon(Icons.Filled.MoreVert, "المزيد", tint = contentColor, modifier = Modifier.size(24.dp))
                 }

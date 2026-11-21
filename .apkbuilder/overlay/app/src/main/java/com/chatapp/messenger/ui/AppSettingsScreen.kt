@@ -317,6 +317,10 @@ internal fun AppSettingsScreen(profile: Profile, onDismiss: () -> Unit, onLogout
         // صفحة "ثيم التطبيق" تتمدد من مكان الصف لين تغطي الشاشة كلها
         var themeOpen by remember { mutableStateOf(false) }
         var themeOrigin by remember { mutableStateOf<Rect?>(null) }
+        // مكان الصف المضغوط: منه يكبر القسم (PushMorph) وتطلع عناصره
+        var sectionOrigin by remember { mutableStateOf<Rect?>(null) }
+        val sectionPush = rememberPushMorph(selected != null, sectionOrigin)
+        val themePush = rememberPushMorph(themeOpen, themeOrigin)
         // محادثة الدعم (من زر "الدعم والشكاوي" بصفحة حول التطبيق)
         var supportOpen by remember { mutableStateOf(false) }
         // انتقال صفحات (فتح/إغلاق قسم): نجمّد حركة الخلفية خلال الحركة حتى الزجاج ما ينعاد حسابه والصفحة تنزلق
@@ -332,38 +336,30 @@ internal fun AppSettingsScreen(profile: Profile, onDismiss: () -> Unit, onLogout
             // صفحات معتمة تغطي الشاشة كلها: الرئيسية والخلفية والكرات تحتها ما لها داعي ترسم
             val opaquePageOpen = (selected != null && last.title in OpaqueSettingsPages) || themeOpen || supportOpen
             AppSettingsScene(covered = opaquePageOpen) { bd ->
-                val shift by animateFloatAsState(
-                    if (selected != null) 1f else 0f, spring(dampingRatio = 0.9f, stiffness = 260f), label = "homeShift"
-                )
+                // الرئيسية تذوب مكانها (تتغبّش وتصغر وتخفت) لما ينفتح قسم فوقها، وترجع لما ننسحب (PushMorph)
                 Box(
-                    Modifier.fillMaxSize().graphicsLayer {
-                        alpha = 1f - 0.7f * shift
-                        val s = 1f - 0.06f * shift
-                        scaleX = s; scaleY = s
-                        translationX = shift * size.width * 0.12f
-                    }.hideWhenCovered(opaquePageOpen, 700L)
+                    Modifier.fillMaxSize()
+                        .pushUnder(sectionPush, themePush)
+                        .hideWhenCovered(opaquePageOpen, 700L)
                 ) {
                     AppSettingsHome(
                         profile = profile, bd = bd, onBack = onDismiss, onLogout = onLogout,
                         onOpen = { sec, rect ->
                             if (sec.title == "ثيم التطبيق") { themeOrigin = rect; themeOpen = true }
                             else if (sec.title == "الإشعارات") { NotifHealthUi.show = true }
-                            else { last = sec; selected = sec }
+                            else { sectionOrigin = rect; last = sec; selected = sec }
                         }
                     )
                 }
-                AnimatedVisibility(
-                    visible = selected != null,
-                    enter = slideInHorizontally(spring(dampingRatio = 0.86f, stiffness = 320f)) { -it } + fadeIn(tween(200)),
-                    exit = slideOutHorizontally(tween(280, easing = FastOutSlowInEasing)) { -it } + fadeOut(tween(220))
-                ) {
+                // القسم: الصف المضغوط يكبر ويصير الصفحة، وعناصرها تطلع منه. الرجوع: تنزلق يسار (RTL)
+                PushMorphLayer(sectionPush, popDir = -1f) {
                     if (last.title == "الحساب") AccountSettingsPage(onBack = { selected = null })
                     else if (last.title == "الخصوصية") PrivacySettingsPage(onBack = { selected = null })
                     else if (last.title == "مطور التطبيق") DeveloperPage(onBack = { selected = null })
                     else if (last.title == "حول التطبيق") AboutAppPage(parentBd = bd, onBack = { selected = null }, onOpenSupport = { supportOpen = true })
                     else AppSettingsSectionPage(section = last, bd = bd, onBack = { selected = null })
                 }
-                LiquidRevealOverlay(visible = themeOpen, origin = themeOrigin) {
+                PushMorphLayer(themePush, popDir = -1f) {
                     ThemeSettingsPage(onBack = { themeOpen = false })
                 }
                 AnimatedVisibility(
@@ -378,10 +374,10 @@ internal fun AppSettingsScreen(profile: Profile, onDismiss: () -> Unit, onLogout
     }
 }
 
-/** نفس StaggerIn بس يبدي بعد ما تنفتح الشاشة */
+/** ظهور عناصر الرئيسية بتتابع (Reveal من HyperSpring) يبدي بعد ما تنفتح الشاشة */
 @Composable
 private fun SetIn(index: Int, modifier: Modifier = Modifier, step: Long = 55L, content: @Composable () -> Unit) {
-    StaggerIn(index, modifier, step = step, startDelay = 240L, content = content)
+    Reveal(delayMs = (240L + minOf(index * step, 700L)).toInt(), modifier = modifier, content = content)
 }
 
 /** زر رجوع Liquid Glass: عدسة قوية، لمعة، حافة ضوئية، ويستطيل ويتحرك السهم عند الضغط */
@@ -454,14 +450,14 @@ private fun AppSettingsHome(
         SetIn(0, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
             Row(Modifier.fillMaxWidth()) { LiquidBackButton(bd, onBack) }
         }
-        SetIn(1, Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
-            Column(Modifier.fillMaxWidth()) {
-                Text(
-                    "الإعدادات",
-                    style = TextStyle(fontFamily = AppFont, brush = Brush.linearGradient(listOf(AccentBlue, SetViolet, SetMint)),
-                        fontSize = 38.sp, fontWeight = FontWeight.ExtraBold
-                    )
-                )
+        Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
+            // العنوان يدخل كلمة كلمة (SplitTitle)، والسطر الصغير يظهر وراه
+            SplitTitle(
+                "الإعدادات", delayMs = 300, modifier = Modifier.fillMaxWidth(),
+                fontSize = 38.sp, fontWeight = FontWeight.ExtraBold, fontFamily = AppFont,
+                gradient = listOf(AccentBlue, SetViolet, SetMint)
+            )
+            SetIn(1) {
                 Text("خصّص التطبيق على كيفك", fontSize = 15.sp, color = fg.copy(alpha = 0.65f), modifier = Modifier.padding(top = 2.dp))
             }
         }

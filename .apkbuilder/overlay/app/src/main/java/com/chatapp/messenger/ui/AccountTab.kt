@@ -219,6 +219,7 @@ fun AccountTab(
     // إعدادات التطبيق: تنبعث من زر القائمة (الثلاث خطوط)
     var showSettings by remember { mutableStateOf(false) }
     var menuBounds by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
+    val settingsPush = rememberPushMorph(showSettings, menuBounds)
     // الصورة المعروضة بملء الشاشة (بانر أو صورة شخصية): null = مغلق
     var viewImage by remember { mutableStateOf<String?>(null) }
     var friendsCenter by remember { mutableStateOf<Offset?>(null) }
@@ -281,7 +282,7 @@ fun AccountTab(
     // نرفع الـ backdrop لهنا حتى نافذة الحالة (برا الصندوق) تكدر تنكسر الشاشة من خلفها بالزجاج
     val glass = rememberLayerBackdrop()
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-        BoxWithConstraints(Modifier.fillMaxSize().hideWhenCovered(showSettings, 1000L)) {
+        BoxWithConstraints(Modifier.fillMaxSize().pushUnder(settingsPush).hideWhenCovered(showSettings, 1000L)) {
             val u = maxWidth / 1440f
             val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
             // البانر مثل تيك توك: قصير، يبدأ من أعلى الشاشة (خلف شريط الحالة) ويذوب بالخلفية
@@ -481,12 +482,17 @@ fun AccountTab(
             transitionSpec = { tween(320, easing = FastOutSlowInEasing) },
             label = "editEdge"
         ) { if (it == EnterExitState.Visible) 0f else 1f }
+        val penView = androidx.compose.ui.platform.LocalView.current
+        val penPx = remember(penView.width, penView.height) {
+            Offset(penOrigin.pivotFractionX * penView.width, penOrigin.pivotFractionY * penView.height)
+        }
         Box(
             Modifier.fillMaxSize().graphicsLayer {
                 shape = RoundedCornerShape((edge * 120f).dp)
                 clip = edge > 0.001f
             }
         ) {
+            CompositionLocalProvider(LocalPushOrigin provides penPx) {
             EditProfileDialog(
                 initName = name,
                 initUsername = profile.username,
@@ -498,6 +504,7 @@ fun AccountTab(
                 initBannerFy = profile.bannerFy,
                 onDismiss = { showEdit = false }
             )
+            }
         }
     }
     // نافذة الحالة النصية
@@ -563,7 +570,8 @@ fun AccountTab(
         QrCodeScreen(name = name, username = profile.username, avatar = profile.avatar, onDismiss = { showQr = false })
     }
     // إعدادات التطبيق: الشاشة تتمدد من زر القائمة نفسه (حجمه وشكله) لين تغطي الشاشة كلها
-    LiquidRevealOverlay(visible = showSettings, origin = menuBounds) {
+    // (PushMorph): زر القائمة يكبر ويصير صفحة الإعدادات، والتبويب تحته يذوب، وعناصر الإعدادات تطلع منه
+    PushMorphLayer(settingsPush) {
         AppSettingsScreen(profile = profile, onDismiss = { showSettings = false }, onLogout = onRequestLogout)
     }
     // عرض البانر / الصورة الشخصية بملء الشاشة مع حفظ بالمعرض
@@ -590,12 +598,17 @@ internal fun OriginOverlay(
             transitionSpec = { tween(320, easing = FastOutSlowInEasing) },
             label = "overlayEdge"
         ) { if (it == EnterExitState.Visible) 0f else 1f }
+        // نقطة الفتح بإحداثيات الشاشة: منها تطلع عناصر الشاشة (StaggerIn / Emerge)
+        val view = androidx.compose.ui.platform.LocalView.current
+        val originPx = remember(origin, view.width, view.height) {
+            Offset(origin.pivotFractionX * view.width, origin.pivotFractionY * view.height)
+        }
         Box(
             Modifier.fillMaxSize().graphicsLayer {
                 shape = RoundedCornerShape((edge * startRadius).dp)
                 clip = edge > 0.001f
             }
-        ) { content() }
+        ) { CompositionLocalProvider(LocalPushOrigin provides originPx) { content() } }
     }
 }
 
