@@ -614,9 +614,9 @@ internal fun HomeMoreMenu(
                 androidx.compose.runtime.CompositionLocalProvider(
                     androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Rtl
                 ) {
-                    HomeMenuRow(AppIcons.CheckBox, "تحديد الدردشات", fg, onSelect)
-                    HomeMenuRow(AppIcons.ChatLines, "مقدمة الدردشة", fg, onIntro)
-                    HomeMenuRow(AppIcons.Activity, "Activity", fg, onActivity)
+                    HomeMenuRow(MenuIconKind.Checkbox, "تحديد الدردشات", fg, onSelect)
+                    HomeMenuRow(MenuIconKind.Menu, "مقدمة الدردشة", fg, onIntro)
+                    HomeMenuRow(MenuIconKind.CalendarClock, "Activity", fg, onActivity)
                 }
             }
         }
@@ -624,16 +624,27 @@ internal fun HomeMoreMenu(
 }
 
 @Composable
-private fun HomeMenuRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, color: Color, onClick: () -> Unit) {
+private fun HomeMenuRow(kind: MenuIconKind, label: String, color: Color, onClick: () -> Unit) {
+    // الأيقونة ثابتة بشكلها الطبيعي، وتتحرك مرة وحدة عند الضغط ثم ينفذ الأمر
+    var play by remember { mutableStateOf(0) }
+    var busy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     Row(
         Modifier.fillMaxWidth().height(50.dp)
             .clip(RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick)
+            .clickable(enabled = !busy) {
+                busy = true
+                play++
+                scope.launch {
+                    kotlinx.coroutines.delay(kind.durationMs + 60L)
+                    onClick()
+                }
+            }
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, null, tint = color, modifier = Modifier.size(24.dp))
-        Spacer(Modifier.width(14.dp))
+        AnimatedMenuIcon(kind, play, size = 28.dp, color = color)
+        Spacer(Modifier.width(10.dp))
         Text(label, color = color, fontSize = 16.sp, fontWeight = FontWeight.Medium)
     }
 }
