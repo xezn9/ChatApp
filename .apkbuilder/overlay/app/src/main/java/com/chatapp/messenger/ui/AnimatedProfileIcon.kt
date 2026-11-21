@@ -68,6 +68,8 @@ fun AnimatedProfileIcon(
         firstRun.value = false
 
         if (!selected) {
+            // الانتقال قبل ما تخلص الحركة يوقفها بنص الطريق، فنكمّل الأيقونة فوراً لحالتها الكاملة
+            body.snapTo(1f); head.snapTo(1f); nod.snapTo(0f); ring.snapTo(1f)
             launch { pop.animateTo(1f, tween(150)) }
             return@LaunchedEffect
         }
@@ -115,11 +117,13 @@ fun AnimatedProfileIcon(
     }
 
     Canvas(modifier.size(size)) {
-        val s = this.size.width / 512f
+        // نقص مساحة العرض حول الرسمة (330 بدل 512) عشان الأيقونة تملأ الصندوق وتتساوى بحجم باقي الأيقونات
+        val s = this.size.width / 330f
         val iconColor = color
 
         withTransform({
             scale(s, s, Offset.Zero)
+            translate(-88.5f, -80f)
             scale(pop.value, pop.value, Offset(256f, 256f))
         }) {
             // الموجة

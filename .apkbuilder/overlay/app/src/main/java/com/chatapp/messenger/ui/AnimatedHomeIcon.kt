@@ -78,7 +78,9 @@ fun AnimatedHomeIcon(
         firstRun.value = false
 
         if (!selected) {
-            // رجوع هادئ للحالة العادية
+            // الانتقال قبل ما تخلص الحركة يوقفها بنص الطريق، فنكمّل الأيقونة فوراً لحالتها الكاملة
+            body.snapTo(1f); roof.snapTo(1f); door.snapTo(1f); chimney.snapTo(1f)
+            wobble.snapTo(0f); smoke.snapTo(1f); glow.snapTo(0f)
             launch { pop.animateTo(1f, tween(150)) }
             return@LaunchedEffect
         }
